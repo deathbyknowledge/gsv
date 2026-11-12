@@ -316,6 +316,18 @@ describe("message requests", () => {
     await alice.run((ctx) => handleContactBlockSet({ did: bob.account.did, blocked: false }, ctx));
     expect(await alice.run((ctx) => handleContactBlockList({}, ctx).blocks)).toEqual([]);
   });
+
+  it("lets an owner send 50 new message requests a day", async () => {
+    await alice.run((ctx) => {
+      for (let sent = 0; sent < 49; sent++) {
+        ctx.federation.consumeRateLimits([{ scope: `owner:${SPACE_OWNER_UID}`, operation: "approach.outgoing.day", maximum: 50, windowMs: 86_400_000 }], Date.now());
+      }
+    });
+    await alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)));
+    const another = await publishProfile(mallory, "requests");
+    await expect(alice.run((ctx) => handleApproachCreate({ ...request(another), idempotencyKey: "fifty-first" }, held(ctx))))
+      .rejects.toThrow("Daily message request limit reached");
+  });
 });
 
 describe("a Ship its host took down", () => {

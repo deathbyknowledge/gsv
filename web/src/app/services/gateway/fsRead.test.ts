@@ -68,4 +68,17 @@ describe("requestFsRead", () => {
     expect(calls.map((entry) => entry.args.target)).toEqual(["laptop", undefined]);
     expect(calls.every((entry) => entry.call === "fs.read")).toBe(true);
   });
+
+  it("forwards the line and byte bounds of a bounded read", async () => {
+    const calls: { call: string; args: { path: string; limit?: number; maxBytes?: number } }[] = [];
+    const directory = { ok: true as const, path: "~", files: [], directories: [] };
+    const request = async (call: string, args: { path: string; limit?: number; maxBytes?: number }) => {
+      calls.push({ call, args });
+      return { data: directory };
+    };
+    // SAFETY: the stub answers the single fs.read this test makes with a directory result, which is the shape the helper reads.
+    const client = { request } as FsReadClient;
+    await requestFsRead(client, { path: "~/notes.md", limit: 200, maxBytes: 65_536 });
+    expect(calls).toEqual([{ call: "fs.read", args: { path: "~/notes.md", limit: 200, maxBytes: 65_536 } }]);
+  });
 });

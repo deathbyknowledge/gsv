@@ -24,6 +24,7 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { ExecutionDeadlines, type ExecutionDeadline } from "../shared/execution-deadline";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
@@ -163,7 +164,17 @@ import {
 import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
-import { handleMailStatus } from "./outbound-status";
+import { handleMailSent, handleMailStatus } from "./outbound-status";
+import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
+import {
+  handleEventEmit,
+  handleEventList,
+  handleEventSourceAdd,
+  handleEventSourceList,
+  handleEventSourceRemove,
+  handleEventSourceRotate,
+  handleEventSourceUpdate,
+} from "./event-sources";
 import {
   handleConversationForProcess,
   handleConversationHistory,
@@ -351,9 +362,10 @@ async function dispatchLocal(
   if (ctx.approvedTarget) {
     return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
   }
-  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const executionDeadlines = ctx.executionDeadlines ?? new ExecutionDeadlines();
+  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx), executionDeadlines };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
-    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
     const body = deadline ? deadline.body : options?.body;
     const signal = withDeadline(options?.signal ?? nativeContext.requestSignal, deadline);
     try {
@@ -374,7 +386,7 @@ async function dispatchLocal(
   };
   const fsTransport: FsDeviceTransport = {
     requestTarget: async (targetId, call, args, options) => {
-      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
       // SAFETY: Native filesystem operations construct the matching syscall arguments;
       // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
       const request = {
@@ -469,8 +481,43 @@ async function dispatchKernel(
       case "mail.search":
         data = handleMailSearch(frame.args, ctx);
         break;
+      case "mail.sent":
+        data = handleMailSent(frame.args, ctx);
+        break;
       case "mail.read":
         data = await handleMailRead(frame.args, ctx);
+        break;
+
+      case "notify.rule.list":
+        data = handleNotifyRuleList(ctx);
+        break;
+      case "notify.rule.set":
+        data = handleNotifyRuleSet(frame.args, ctx);
+        break;
+      case "notify.rule.reset":
+        data = handleNotifyRuleReset(frame.args, ctx);
+        break;
+
+      case "event.source.list":
+        data = handleEventSourceList(ctx);
+        break;
+      case "event.source.add":
+        data = await handleEventSourceAdd(frame.args, ctx);
+        break;
+      case "event.source.update":
+        data = await handleEventSourceUpdate(frame.args, ctx);
+        break;
+      case "event.source.rotate":
+        data = await handleEventSourceRotate(frame.args, ctx);
+        break;
+      case "event.source.remove":
+        data = handleEventSourceRemove(frame.args, ctx);
+        break;
+      case "event.emit":
+        data = handleEventEmit(frame.args, ctx);
+        break;
+      case "event.list":
+        data = handleEventList(frame.args, ctx);
         break;
 
       case "conversation.ship":
@@ -758,6 +805,7 @@ async function dispatchKernel(
       case "account.recovery.code.start":
       case "account.recovery.code.redeem":
       case "account.recovery.redeem":
+      case "account.recovery.options":
         return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
       case "account.password.set":
         data = await ctx.accountRecovery.resetPersonalPassword(frame.args, ctx);
@@ -1112,13 +1160,13 @@ type AnswerDeadline = { signal: AbortSignal; body: FrameBody | undefined; clear(
  * last byte has been read, so an upload's length never counts against it;
  * the body's idle timeout guards the upload itself.
  */
-function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadline {
+function answerDeadline(ttlMs: number, body: FrameBody | undefined, deadlines: ExecutionDeadlines): AnswerDeadline {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ExecutionDeadline | undefined;
   const arm = () => {
-    timer = setTimeout(
-      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+    deadline = deadlines.start(
       ttlMs,
+      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
     );
   };
   if (!body) {
@@ -1127,7 +1175,7 @@ function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadl
   return {
     signal: controller.signal,
     body: body && { ...body, stream: body.stream.pipeThrough(new TransformStream({ flush: arm })) },
-    clear: () => clearTimeout(timer),
+    clear: () => deadline?.clear(),
   };
 }
 

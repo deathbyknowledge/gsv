@@ -121,6 +121,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         context,
       ),
       actions: true,
+      choices: true,
     });
   }
 

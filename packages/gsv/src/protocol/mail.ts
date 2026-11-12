@@ -14,6 +14,12 @@ export type ManagedMailAttachmentMetadata = {
   contentId?: string;
 };
 
+/**
+ * Mail no person wrote to the Ship: an automatic reply such as an out-of-office
+ * (`Auto-Submitted: auto-replied`), or a report that a message couldn't be delivered.
+ */
+export type ManagedMailAutomatic = "reply" | "delivery-report";
+
 export type ManagedInboundMailMetadata = {
   version: 1;
   intakeId: string;
@@ -34,6 +40,8 @@ export type ManagedInboundMailMetadata = {
   text?: string;
   html?: string;
   attachments: ManagedMailAttachmentMetadata[];
+  /** Absent for mail a person wrote. A Gateway that predates it rejects the field. */
+  automatic?: ManagedMailAutomatic;
 };
 
 export type ManagedInboundMailAccepted = {
@@ -67,9 +75,27 @@ export type ManagedOutboundMailCommand =
   | (ManagedOutboundMailReference & { installationId: string })
   | (ManagedOutboundMailLookup & { version: 2; installationId: string });
 
+/** The message a reply answers, quoted below the reply as mail clients do. */
+export type ManagedOutboundMailQuote = {
+  /** The original sender as the mailbox shows them, e.g. `Mike <mike@example.com>`. */
+  from: string;
+  /** When the original was sent, or received when it carried no date. */
+  sentAt: number;
+  /** The owner's IANA timezone, for the "On …, Mike wrote:" line. */
+  timeZone: string;
+  /** Plain text, already cut to the quote limit. */
+  text: string;
+};
+
 export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   from: string;
-  to: string;
+  /**
+   * The recipient, or the list of To recipients. The Kernel sends a list
+   * whenever a message has several recipients or copies, which a Worker that
+   * predates them refuses rather than dropping anyone.
+   */
+  to: string | string[];
+  cc?: string[];
   subject: string;
   bodyDigest: string;
   textSize: number;
@@ -77,6 +103,13 @@ export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   replyToMessageId?: string;
   inReplyTo?: string;
   references?: string;
+  /**
+   * Presentation the Kernel derives when the adapter claims the message: the
+   * owner's current name for the From line, and the quoted original of a
+   * reply. Neither is part of the fingerprinted intent.
+   */
+  fromName?: string;
+  quote?: ManagedOutboundMailQuote;
 };
 
 export type ManagedOutboundMailClaim = {

@@ -3,10 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Hint } from "../../../components/ui/Tooltip";
-import { es } from "../../../i18n/es";
-import { applyLanguagePreference } from "../../../i18n/locale";
-import { ptBR } from "../../../i18n/pt-BR";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { ProfileNotice } from "./ProfileNotice";
@@ -33,11 +29,6 @@ async function mount(seen: string | null) {
   return request;
 }
 
-/** "open network" in the notice, with the tip it opens. */
-function openNetwork() {
-  return collectNodes(tree).find((node) => node.type === Hint);
-}
-
 beforeEach(() => {
   vi.stubGlobal("document", { documentElement: {} });
   vi.stubGlobal("window", { location: { protocol: "https:", host: "space.example" }, addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -49,16 +40,14 @@ beforeEach(() => {
 afterEach(async () => {
   await root.unmount();
   cache.clear();
-  await applyLanguagePreference("en");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("the public profile notice", () => {
-  it("shows to someone who hasn't dismissed it, explains the open network, and stays dismissed once they do", async () => {
+  it("shows to someone who hasn't dismissed it and stays dismissed once they do", async () => {
     const request = await mount(null);
-    expect(collectText(openNetwork())).toBe("open network");
-    expect(openNetwork()?.props.text).toBe("Bluesky and other apps can show a public profile, and any app or search engine can save it and make it searchable. Your Ship doesn't see follows, replies or messages on Bluesky.");
+    expect(collectText(tree)).toContain("Your profile is on the open network, where Bluesky and other apps can show it.");
     const dismiss = collectNodes(tree).find((node) => node.props.label === "got it");
     await act(async () => { await dismiss!.props.onClick!(); });
     expect(request).toHaveBeenCalledWith("sys.config.set", { key: KEY, value: "1" });
@@ -68,12 +57,5 @@ describe("the public profile notice", () => {
   it("stays dismissed for someone who dismissed it before it named Bluesky", async () => {
     await mount("1");
     expect(tree).toBeNull();
-  });
-
-  it.each([["es", es], ["pt-BR", ptBR]] as const)("explains the open network in %s", async (tag, catalog) => {
-    await applyLanguagePreference(tag);
-    await mount(null);
-    expect(collectText(openNetwork())).toBe(catalog["people.profile.openNetwork"]);
-    expect(openNetwork()?.props.text).toBe(catalog["people.profile.openNetworkTip"]);
   });
 });

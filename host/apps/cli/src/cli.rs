@@ -18,6 +18,7 @@ Talk
 Look after things
   work               What your Ship and its helpers are doing
   routines           Things your Ship does on a schedule
+  event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
 
@@ -139,6 +140,12 @@ pub(crate) enum Commands {
 
         #[command(subcommand)]
         action: Option<WorkAction>,
+    },
+
+    /// Tell your Ship something happened, from a script on any computer
+    Event {
+        #[command(subcommand)]
+        action: EventAction,
     },
 
     /// Things your Ship does on a schedule
@@ -547,14 +554,22 @@ pub(crate) enum MailAction {
     },
     /// Send mail from your Ship's address; the body comes from MESSAGE or stdin
     Send {
-        /// Recipient address
+        /// Recipient address; separate several with commas
         to: String,
+        /// Copy someone; repeat or separate addresses with commas
+        #[arg(long, value_delimiter = ',')]
+        cc: Vec<String>,
         /// Subject line
         #[arg(long, short = 's')]
         subject: Option<String>,
         /// Message body (default: read from stdin)
         #[arg(num_args = 0..)]
         message: Vec<String>,
+    },
+    /// List mail your Ship sent, newest first
+    Sent {
+        #[command(flatten)]
+        page: MailPage,
     },
     /// Check a sent message's delivery
     Status {
@@ -626,6 +641,30 @@ pub(crate) struct Cadence {
     /// Once, at this time: "tomorrow 09:00", "today 18:30" or "2026-10-29 18:00"
     #[arg(long, value_name = "WHEN")]
     pub(crate) at: Option<String>,
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum EventAction {
+    /// Record an event
+    Emit {
+        /// The source's name
+        source: String,
+        /// What happened, on one line
+        #[arg(long)]
+        title: Option<String>,
+        /// A stable id; repeating one is ignored
+        #[arg(long)]
+        id: Option<String>,
+        /// A short summary
+        #[arg(long)]
+        preview: Option<String>,
+        /// The whole thing
+        #[arg(long)]
+        body: Option<String>,
+        /// Read one JSON object per line from standard input
+        #[arg(long)]
+        stdin: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]

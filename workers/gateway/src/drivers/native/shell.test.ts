@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
+import { recordStorageCalls } from "../../test-support/storage-calls";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
@@ -10,6 +11,7 @@ import {
 } from "./shell";
 import {
   handleFsCopy,
+  handleFsDelete,
   handleFsRead,
   handleFsTransferReceive,
   handleFsTransferSend,
@@ -19,6 +21,8 @@ import {
 import * as inferenceService from "../../inference/execution-client";
 import { ModelMetadataResolver } from "../../inference/model-metadata";
 import * as federationService from "../../kernel/federation";
+import * as outboundMail from "../../kernel/outbound-mail";
+import { authorizeNestedOperation } from "../../kernel/tool-approval";
 import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
@@ -215,6 +219,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   media?: InferenceExecutor["media"];
   ripgit?: Fetcher;
+  storage?: R2Bucket;
   requestSignal?: AbortSignal;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
@@ -262,7 +267,7 @@ function makeContext(options?: {
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
-    STORAGE: env.STORAGE,
+    STORAGE: options?.storage ?? env.STORAGE,
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
@@ -619,6 +624,58 @@ describe("native shell execution", () => {
     });
   });
 
+  describe("while a person is asked to approve", () => {
+    const MAIL_COMMAND = "mail send --to person@example.invalid --subject Hello --message Hi --delivery-id window";
+
+    function mailAwaitingAnswer() {
+      let answer!: (approved: boolean) => void;
+      sendFrameToProcessMock.mockImplementation(async (_installation: string, _pid: string, frame: { id?: string }) =>
+        await new Promise((resolve) => {
+          // SAFETY: the authorization caller reads only ok and data.approved.
+          answer = (approved) => resolve({ type: "res", id: frame.id ?? "approval", ok: true, data: { approved } } as never);
+        }));
+      const dispatched = vi.fn();
+      const send = vi.spyOn(outboundMail, "handleMailSend").mockImplementation(async (input, mailCtx) => {
+        // SAFETY: the Process mock never reads these arguments.
+        await authorizeNestedOperation(mailCtx, "mail.send", input as never);
+        dispatched();
+        return { ok: true, deliveryId: "window", outboundId: "outbound", state: "queued", from: "a@example.invalid", to: "b@example.invalid", subject: "Hello", replayed: false };
+      });
+      const ctx = makeContext({ capabilities: ["shell.exec", "mail.send"], processRunId: "run" });
+      ctx.toolOwner = { runId: "run", requestId: "shell" };
+      ctx.defer = () => {};
+      return { ctx, send, dispatched, answer: (approved: boolean) => answer(approved) };
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    it("does not count the wait against the command timeout", async () => {
+      const { ctx, send, dispatched, answer } = mailAwaitingAnswer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const running = handleShellExec({ input: MAIL_COMMAND }, ctx);
+        await vi.advanceTimersByTimeAsync(DEFAULT_NATIVE_SHELL_TIMEOUT_MS * 4);
+        expect(dispatched).not.toHaveBeenCalled();
+        answer(true);
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(running).resolves.toMatchObject({ status: "completed", exitCode: 0 });
+        expect(dispatched).toHaveBeenCalledOnce();
+      } finally { send.mockRestore(); }
+    });
+
+    it("still applies the command timeout once the person has answered", async () => {
+      const { ctx, send, answer } = mailAwaitingAnswer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const running = handleShellExec({ input: `${MAIL_COMMAND} && sleep 600`, timeout: 10_000 }, ctx);
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        answer(true);
+        await vi.advanceTimersByTimeAsync(10_001);
+        await expect(running).resolves.toMatchObject({ status: "failed", error: "Command timed out after 10000ms" });
+      } finally { send.mockRestore(); }
+    });
+  });
+
   it("preserves the request cancellation reason under just-bash cancellation", async () => {
     const controller = new AbortController();
     const resultPromise = handleShellExec(
@@ -687,6 +744,39 @@ describe("native shell execution", () => {
       status: "completed",
       stdout: "substitution works",
     });
+  });
+
+  it("keeps built-in commands when storage holds files under /usr/bin", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const result = await handleShellExec({ input: "printf 'a\\nb\\n' | wc -l" }, makeContext());
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(result.stdout.trim()).toBe("2");
+    } finally {
+      await env.STORAGE.delete("usr/bin/marker");
+    }
+  });
+
+  it("looks for commands only where storage can hold them, one round trip each", async () => {
+    const storage = recordStorageCalls(env.STORAGE);
+    const result = await handleShellExec(
+      { input: "echo hi | sed s/hi/ho/" },
+      makeContext({ storage: storage.bucket }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", stdout: "ho\n" });
+    expect(storage.calls.map(({ method, key }) => `${method} ${key}`).sort()).toEqual([
+      "head usr/local/bin/echo",
+      "head usr/local/bin/sed",
+      "list usr/local/bin/echo/",
+      "list usr/local/bin/sed/",
+    ]);
+    for (const name of ["echo", "sed"]) {
+      const head = storage.calls.find((call) => call.method === "head" && call.key === `usr/local/bin/${name}`);
+      const list = storage.calls.find((call) => call.method === "list" && call.key === `usr/local/bin/${name}/`);
+      // The directory listing goes out before the object lookup answers.
+      expect(list?.started).toBeLessThan(head?.settled ?? -1);
+    }
   });
 
   it("keeps command stderr visible on non-zero exits", async () => {
@@ -1234,7 +1324,7 @@ describe("native shell capability discovery", () => {
     expect(page.ok).toBe(true);
     expect(page.exitCode).toBe(0);
     expect(page.stdout).toContain("SEND(1)");
-    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(25);
+    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(26);
     for (const parameter of Object.keys(SEND_TOOL.parameters.properties ?? {})) {
       expect(page.stdout).toMatch(new RegExp(`^  ${parameter}\\b`, "m"));
     }
@@ -2359,6 +2449,32 @@ describe("proc native command", () => {
       ipcCalls.create.mock.calls[0]?.[0].deadlineAt,
     );
     expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
+  });
+
+  it("shows a responsibility as JSON with or without --json, as list does", async () => {
+    const responsibility: ResponsibilityRecord = {
+      id: "r12y:33333333-3333-4333-8333-333333333333",
+      ownerUid: IDENTITY.uid,
+      title: "Welcome to Ship",
+      source: { kind: "system", component: "onboarding" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "high",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const ctx = makeContext({
+      capabilities: ["r12y.get"],
+      responsibilities: { get: vi.fn(() => responsibility), revision: vi.fn(() => 1), isVisibleToProcess: vi.fn(() => true) },
+    });
+
+    const plain = await handleShellExec({ input: "r12y show 33333333-3333-4333-8333-333333333333" }, ctx);
+    const json = await handleShellExec({ input: "r12y show 33333333-3333-4333-8333-333333333333 --json" }, ctx);
+
+    expect(plain).toMatchObject({ ok: true, exitCode: 0, stderr: "" });
+    expect(json).toEqual(plain);
+    expect(JSON.parse(json.ok ? json.stdout : "").responsibility.title).toBe("Welcome to Ship");
   });
 
   it("returns a responsibility to Ship when delegated admission fails", async () => {
@@ -3854,7 +3970,7 @@ describe("native administration shell commands", () => {
       resolveGids: vi.fn(() => IDENTITY.gids),
     };
     const ctx = makeContext({
-      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      capabilities: ["shell.exec", "sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.*"]),
@@ -4023,7 +4139,7 @@ describe("native administration shell commands", () => {
     };
     const ctx = makeContext({
       identity: agent,
-      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      capabilities: ["shell.exec", "sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.exec"]),
@@ -4097,6 +4213,117 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("crontab:/var/spool/cron/sam-agent:1");
     expect(result.stdout).toContain("cron /var/spool/cron/sam-agent:1");
     expect(result.stdout).toContain("cmd:printf 'agent cron fired\\n'");
+  });
+
+  describe("crontab default timezone", () => {
+    const AGENT: ProcessIdentity = { uid: 2000, gid: 2000, gids: [2000], username: "sam-agent", home: "/home/sam-agent", cwd: "/home/sam-agent" };
+    const ROOT: ProcessIdentity = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+    const OWNER_PREFERENCE = { "users/1000/locale/timezone": "Asia/Tokyo" };
+    const SERVER_DEFAULT = { "config/server/timezone": "Europe/Amsterdam" };
+
+    function cronContext(identity: ProcessIdentity, config: Record<string, string>) {
+      const accounts = [IDENTITY, AGENT, ROOT].map((account) => ({
+        username: account.username,
+        uid: account.uid,
+        gid: account.gid,
+        gecos: "",
+        home: account.home,
+        shell: "/bin/init",
+      }));
+      const cronFiles = new Map<string, { path: string; ownerUid: number | null; content: string; createdAtMs: number; updatedAtMs: number }>();
+      const create = vi.fn((input) => ({
+        ...input,
+        id: "sched-cron",
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: { nextRunAtMs: input.now + 60_000, runningAtMs: null, lastRunAtMs: null, lastStatus: null, lastError: null, lastDurationMs: null, runCount: 0 },
+      }));
+      const ctx = makeContext({
+        identity,
+        config,
+        capabilities: ["shell.exec", "fs.write", "fs.read", "sched.add", "sched.remove", "sched.list"],
+        auth: {
+          getPasswdByUsername: vi.fn((username: string) => accounts.find((account) => account.username === username) ?? null),
+          getPasswdByUid: vi.fn((uid: number) => accounts.find((account) => account.uid === uid) ?? null),
+          getPersonalAgentUid: vi.fn(() => AGENT.uid),
+          resolveGids: vi.fn(() => [...identity.gids]),
+        },
+        caps: { resolve: vi.fn(() => ["shell.exec"]) },
+        procs: { getOwnerUid: vi.fn(() => IDENTITY.uid) },
+        schedules: {
+          create,
+          setWakeScheduleId: vi.fn(),
+          getStored: vi.fn(() => null),
+          getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+          upsertCronFile: vi.fn((input) => {
+            const record = { path: input.path, ownerUid: input.ownerUid, content: input.content, createdAtMs: input.now, updatedAtMs: input.now };
+            cronFiles.set(input.path, record);
+            return record;
+          }),
+          cronFileScheduleIds: vi.fn(() => []),
+          clearCronFileScheduleLinks: vi.fn(),
+          linkCronFileSchedule: vi.fn(),
+        },
+        scheduleScheduleWake: vi.fn(async () => "wake-1"),
+      });
+      return { ctx, create };
+    }
+
+    it.each([
+      { label: "a human's own crontab", identity: IDENTITY, path: "/var/spool/cron/sam", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "an agent process's crontab", identity: AGENT, path: "/var/spool/cron/sam-agent", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "a human's crontab written by root", identity: ROOT, path: "/var/spool/cron/sam", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "an owner with no preference", identity: IDENTITY, path: "/var/spool/cron/sam", config: SERVER_DEFAULT, expected: "Europe/Amsterdam" },
+    ])("uses the owner's timezone for $label written through the filesystem", async ({ identity, path, config, expected }) => {
+      const { ctx, create } = cronContext(identity, config);
+
+      const result = await handleShellExec({ input: `printf '0 9 * * * echo hi\\n' > ${path}` }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.ok).toBe(true);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: expected },
+      }));
+    });
+
+    it("uses the owner's timezone for crontab FILE", async () => {
+      const { ctx, create } = cronContext(IDENTITY, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+      await env.STORAGE.put("home/sam/owner-tz.cron", "0 9 * * * echo hi\n");
+
+      const result = await handleShellExec({ input: "crontab owner-tz.cron" }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.ok).toBe(true);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "Asia/Tokyo" },
+      }));
+    });
+
+    it.each(["CRON_TZ", "TZ"])("lets a %s line override the owner's timezone", async (variable) => {
+      const { ctx, create } = cronContext(IDENTITY, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+
+      const result = await handleShellExec({
+        input: `printf '${variable}=America/New_York\\n0 9 * * * echo hi\\n' > /var/spool/cron/sam`,
+      }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "America/New_York" },
+      }));
+    });
+
+    it("keeps system crontabs on the server timezone", async () => {
+      const { ctx, create } = cronContext(ROOT, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+
+      const result = await handleShellExec({ input: "printf '0 9 * * * sam echo hi\\n' > /etc/cron.d/nightly" }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        ownerUid: IDENTITY.uid,
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" },
+      }));
+    });
   });
 
   it("keeps sched add as a low-level JSON compatibility path", async () => {
@@ -4594,6 +4821,49 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain(`conversation=${conversation.id}`);
     expect(history.stdout).toContain("Flynn (contact:friend)");
     expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("reads the Ship conversation when message history names no conversation, as search does", async () => {
+    const ship = {
+      id: "conversation:ship",
+      ownerUid: IDENTITY.uid,
+      kind: "ship" as const,
+      title: "Ship",
+      handlerPid: "proc:ship",
+      latestSequence: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    getConversationByIdMock.mockReturnValue({
+      history: vi.fn(async () => ({
+        messages: [{
+          id: "msg:hello",
+          conversationId: ship.id,
+          sequence: 1,
+          author: { kind: "human", uid: IDENTITY.uid },
+          text: "hi from telegram",
+          origin: { kind: "adapter", adapter: "telegram" },
+          createdAt: 1,
+        }],
+        hasMore: false,
+        latestSequence: 1,
+      })),
+    });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "conversation.history"],
+      procs: { get: vi.fn(() => makeProcess({ processId: "proc:ship", isPersonalController: true })) },
+      processId: "proc:ship",
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      get: vi.fn(() => ship),
+      getShip: vi.fn(() => ship),
+    });
+
+    const history = await handleShellExec({ input: "message history --limit 5" }, ctx);
+
+    expect(history).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(history.stdout).toContain(`conversation=${ship.id}`);
+    expect(history.stdout).toContain("hi from telegram");
   });
 
   it("links a contact send to Ship work and rejects that option for other destinations", async () => {
@@ -5708,7 +5978,7 @@ describe("native administration shell commands", () => {
       vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
     });
     afterEach(() => {
-      vi.restoreAllMocks();
+      vi.mocked(Date.now).mockRestore();
     });
 
     it.each([
@@ -6115,6 +6385,67 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("/src/repos/root/gsv-manual/index.md\t4\tAuth overview.");
   });
 
+  it("searches every wiki at once and keeps each wiki in the results", async () => {
+    const wikis = new Map([
+      ["root/gsv-manual", { id: "gsv-manual", title: "GSV Manual", matches: 40 }],
+      ["root/personal", { id: "personal", title: "Personal", matches: 2 }],
+    ]);
+    const active = { read: 0, search: 0 };
+    const peak = { read: 0, search: 0 };
+    const ripgit = focusedFixture<Fetcher>({
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        const [, repo = "", action = ""] = /^\/hyperspace\/repos\/([^/]+\/[^/]+)\/([a-z]+)$/.exec(url.pathname) ?? [];
+        const kind = action === "read" ? "read" : action === "search" ? "search" : null;
+        if (!kind) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        active[kind] += 1;
+        peak[kind] = Math.max(peak[kind], active[kind]);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active[kind] -= 1;
+        const wiki = wikis.get(repo);
+        if (kind === "read") {
+          if (!wiki || url.searchParams.get("path") !== "wiki.json") return new Response("missing", { status: 404 });
+          return new Response(JSON.stringify({ kind: "gsv.wiki", version: 1, id: wiki.id, title: wiki.title }), {
+            headers: { "Content-Type": "text/plain", "X-Blob-Size": "80" },
+          });
+        }
+        if (!wiki) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        return Response.json({
+          ok: true,
+          matches: Array.from({ length: wiki.matches }, (_, index) => ({
+            path: `pages/${wiki.id}-${index}.md`,
+            line: 1,
+            content: `${wiki.title} birthday ${index}`,
+          })),
+        });
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "wiki search birthday" },
+      makeContext({
+        capabilities: ["repo.list", "repo.read", "repo.search"],
+        config: {
+          "repos/root/gsv-manual/created_at": "1",
+          "repos/root/gsv-manual/visibility": "public",
+          "repos/root/personal/created_at": "1",
+          "repos/root/personal/visibility": "public",
+        },
+        ripgit,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
+    const rows = result.stdout.trim().split("\n").slice(1);
+    expect(rows).toHaveLength(30);
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-0.md\t1\tPersonal birthday 0");
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-1.md\t1\tPersonal birthday 1");
+    expect(rows[0]).toBe("/src/repos/root/gsv-manual/pages/gsv-manual-0.md\t1\tGSV Manual birthday 0");
+    expect(peak.read).toBeGreaterThan(1);
+    expect(peak.search).toBe(2);
+  });
+
   it("aborts native shell execution with its request", async () => {
     const controller = new AbortController();
     const ctx = makeContext();
@@ -6141,5 +6472,240 @@ describe("native administration shell commands", () => {
     } finally {
       exec.mockRestore();
     }
+  });
+});
+
+describe("crontab approval", () => {
+  const JOBS = "# refresh the digest\nCRON_TZ=Europe/Amsterdam\n0 9 * * * proc list\n\n30 18 * * 1-5 cat notes.txt\n";
+  const JOBS_TO_APPROVE = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt";
+  const PREVIOUS = "0 1 * * * echo previous\n";
+  const USER_PATH = "/var/spool/cron/sam";
+  const OWNER = { runId: "run-cron", requestId: "call-owner" };
+  type CronFileRecord = { path: string; ownerUid: number | null; content: string; createdAtMs: number; updatedAtMs: number };
+
+  /** An installed crontab with one linked schedule, in the state a later install must either replace or leave alone. */
+  function cronContext(options: {
+    capabilities?: string[];
+    inRun?: boolean;
+    identity?: ProcessIdentity;
+  } = {}) {
+    const identity = options.identity ?? IDENTITY;
+    const previousPath = identity.uid === 0 ? "/etc/cron.d/nightly" : USER_PATH;
+    const cronFiles = new Map<string, CronFileRecord>([
+      [previousPath, { path: previousPath, ownerUid: identity.uid, content: PREVIOUS, createdAtMs: 1, updatedAtMs: 1 }],
+    ]);
+    const links = new Map<string, string[]>([[previousPath, ["sched-previous"]]]);
+    const schedules = new Map<string, { id: string; wakeScheduleId: string | null }>([
+      ["sched-previous", { id: "sched-previous", wakeScheduleId: null }],
+    ]);
+    const create = vi.fn((input: { target: unknown; expression: unknown; name: string }) => {
+      const record = { ...input, id: `sched-${schedules.size + 1}`, wakeScheduleId: null, state: { nextRunAtMs: null } };
+      schedules.set(record.id, record);
+      return record;
+    });
+    const entry = (username: string) => username === identity.username || username === "sam"
+      ? { username, uid: identity.uid, gid: identity.gid, gecos: "", home: identity.home, shell: "/bin/init" }
+      : null;
+    const ctx = makeContext({
+      identity,
+      capabilities: options.capabilities ?? ["shell.exec", "fs.write", "fs.read", "sched.add", "sched.remove", "sched.list"],
+      processId: options.inRun === false ? null : "task:cron",
+      processRunId: options.inRun === false ? undefined : OWNER.runId,
+      auth: {
+        getPasswdByUsername: vi.fn(entry),
+        getPasswdByUid: vi.fn((uid: number) => uid === identity.uid ? entry(identity.username) : null),
+        resolveGids: vi.fn(() => identity.gids),
+      },
+      caps: { resolve: vi.fn(() => ["shell.*"]) },
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+        getStored: vi.fn((id: string) => schedules.get(id) ?? null),
+        remove: vi.fn((id: string) => {
+          const existing = schedules.get(id) ?? null;
+          schedules.delete(id);
+          return existing;
+        }),
+        getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+        listCronFiles: vi.fn(() => [...cronFiles.values()]),
+        upsertCronFile: vi.fn((input: { path: string; ownerUid: number | null; content: string; now: number }) => {
+          const record = { path: input.path, ownerUid: input.ownerUid, content: input.content, createdAtMs: input.now, updatedAtMs: input.now };
+          cronFiles.set(input.path, record);
+          return record;
+        }),
+        removeCronFile: vi.fn((path: string) => {
+          const existing = cronFiles.get(path) ?? null;
+          cronFiles.delete(path);
+          return existing;
+        }),
+        cronFileScheduleIds: vi.fn((path: string) => links.get(path) ?? []),
+        clearCronFileScheduleLinks: vi.fn((path: string) => links.delete(path)),
+        linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
+          links.set(path, [...(links.get(path) ?? []), scheduleId]);
+        }),
+      },
+      scheduleScheduleWake: vi.fn(async () => "wake-1"),
+    });
+    if (options.inRun !== false) ctx.requestId = OWNER.requestId;
+    return { ctx, cronFiles, schedules, create };
+  }
+
+  function answerApprovals(approved: boolean) {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
+      frame.type === "req" && frame.call === "proc.tool.authorize"
+        ? { type: "res", id: frame.id, ok: true, data: { approved } }
+        : null
+    ));
+  }
+
+  function approvalRequests() {
+    return sendFrameToProcessMock.mock.calls
+      .map(([, , frame]) => frame)
+      .filter((frame) => frame.type === "req" && frame.call === "proc.tool.authorize");
+  }
+
+  async function installByCommand(ctx: KernelContext) {
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+    const result = await handleShellExec({ input: "crontab jobs.cron" }, ctx);
+    return { installed: result.ok === true && result.exitCode === 0, error: result.ok ? result.stderr : result.error };
+  }
+
+  async function installByWrite(ctx: KernelContext) {
+    const result = await handleFsWrite({ path: USER_PATH, content: JOBS }, ctx);
+    return { installed: result.ok, error: result.ok ? "" : result.error };
+  }
+
+  async function installByRedirect(ctx: KernelContext) {
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+    const result = await handleShellExec({ input: `cat jobs.cron > ${USER_PATH}` }, ctx);
+    return { installed: result.ok === true && result.exitCode === 0, error: result.ok ? result.stderr : result.error };
+  }
+
+  const ROUTES = [
+    ["crontab FILE", installByCommand],
+    ["a write to the spool path", installByWrite],
+    ["a shell redirect to the spool path", installByRedirect],
+  ] as const;
+
+  it.each(ROUTES)("asks once for the whole file on %s", async (_route, install) => {
+    answerApprovals(true);
+    const { ctx, cronFiles, create } = cronContext();
+
+    const { installed, error } = await install(ctx);
+
+    expect(error).toBe("");
+    expect(installed).toBe(true);
+    expect(approvalRequests()).toHaveLength(1);
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { ...OWNER, syscall: "sched.add", args: { path: USER_PATH, jobs: JOBS_TO_APPROVE } },
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(cronFiles.get(USER_PATH)?.content).toBe(JOBS);
+  });
+
+  it.each(ROUTES.slice(0, 2))("leaves the previous crontab untouched when %s is refused", async (_route, install) => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+
+    const { installed, error } = await install(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain("not approved");
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+    expect([...schedules.keys()]).toEqual(["sched-previous"]);
+  });
+
+  it("installs nothing when a shell redirect is refused, though the redirect has already emptied the file", async () => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+
+    const { installed, error } = await installByRedirect(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain("not approved");
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe("");
+    expect([...schedules.keys()]).toEqual([]);
+  });
+
+  it("asks once for an appended crontab, showing the jobs it keeps, and keeps them when refused", async () => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+
+    await handleShellExec({ input: `cat jobs.cron >> ${USER_PATH}` }, ctx);
+
+    expect(approvalRequests()).toHaveLength(1);
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { syscall: "sched.add", args: { path: USER_PATH, jobs: `0 1 * * * echo previous\n${JOBS_TO_APPROVE}` } },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+    expect([...schedules.keys()]).toEqual(["sched-previous"]);
+  });
+
+  it("asks before a process writes a system crontab, naming the account each job runs as", async () => {
+    answerApprovals(false);
+    const root: ProcessIdentity = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+    const { ctx, cronFiles, create } = cronContext({ identity: root });
+
+    const result = await handleFsWrite({ path: "/etc/cron.d/nightly", content: "0 4 * * * sam proc list\n" }, ctx);
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("not approved") });
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { syscall: "sched.add", args: { path: "/etc/cron.d/nightly", jobs: "0 4 * * * sam proc list" } },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get("/etc/cron.d/nightly")?.content).toBe(PREVIOUS);
+  });
+
+  it.each(ROUTES)("does not prompt a human installing through %s", async (_route, install) => {
+    const { ctx, create } = cronContext({ inRun: false });
+
+    const { installed, error } = await install(ctx);
+
+    expect(error).toBe("");
+    expect(installed).toBe(true);
+    expect(approvalRequests()).toHaveLength(0);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask to remove a crontab or install one with no jobs", async () => {
+    const removal = cronContext();
+    expect(await handleShellExec({ input: "crontab -r" }, removal.ctx)).toMatchObject({ ok: true, exitCode: 0 });
+    expect(removal.cronFiles.has(USER_PATH)).toBe(false);
+
+    const emptied = cronContext();
+    expect(await handleFsWrite({ path: USER_PATH, content: "# nothing yet\n" }, emptied.ctx)).toMatchObject({ ok: true });
+    expect([...emptied.schedules.keys()]).toEqual([]);
+
+    expect(approvalRequests()).toHaveLength(0);
+  });
+
+  it.each([
+    ["sched.add", ["shell.exec", "fs.write", "sched.remove"]],
+    ["sched.remove", ["shell.exec", "fs.write", "sched.add"]],
+    ["shell.exec", ["fs.write", "sched.add", "sched.remove"]],
+  ])("refuses a spool write without %s before asking", async (capability, capabilities) => {
+    answerApprovals(true);
+    const { ctx, cronFiles, create } = cronContext({ capabilities, inRun: false });
+
+    const { installed, error } = await installByWrite(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain(`Permission denied: ${capability}`);
+    expect(approvalRequests()).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+  });
+
+  it("requires sched.remove to remove a crontab through the spool path", async () => {
+    const { ctx, cronFiles } = cronContext({ capabilities: ["fs.delete", "fs.write"], inRun: false });
+
+    const result = await handleFsDelete({ path: USER_PATH }, ctx);
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Permission denied: sched.remove") });
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
   });
 });

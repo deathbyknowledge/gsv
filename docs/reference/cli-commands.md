@@ -15,6 +15,7 @@ Talk
 Look after things
   work               What your Ship and its helpers are doing
   routines           Things your Ship does on a schedule
+  event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
 
@@ -189,7 +190,8 @@ request; `decline` on your own request withdraws it.
 gsv mail [--page N] [-n N]
 gsv mail search WORDS [--page N] [-n N]
 gsv mail read ID
-gsv mail send TO [-s SUBJECT] [MESSAGE]
+gsv mail send TO [--cc ADDRESS]... [-s SUBJECT] [MESSAGE]
+gsv mail sent [--page N] [-n N]
 gsv mail status DELIVERY_ID
 ```
 
@@ -203,9 +205,15 @@ can follow the `next` cursor of a `--json` result with the hidden
 `--before CURSOR` option instead. `search` uses `mail.search` with the same
 paging. `read` prints the message's header, then its body.
 
-`send` sends from your Ship's address. The body comes from `MESSAGE` or, when
-it is omitted, from stdin. It prints a delivery id for `status`. Sending
-follows the ordinary `mail.send` approval policy.
+`send` sends from your Ship's address. Separate several recipients in `TO`
+with commas; `--cc` copies someone and can repeat. A message reaches at most
+10 people. The body comes from `MESSAGE` or, when it is omitted, from stdin. It
+prints a delivery id for `status`. Sending follows the ordinary `mail.send`
+approval policy.
+
+`sent` lists what your Ship sent, newest first, with the same paging, using
+`mail.sent`: who got each message, its subject, and whether the mail service
+took it, with the reason when it failed.
 
 ## Look After Things
 
@@ -236,6 +244,20 @@ app or on a messenger.
 archives the history and tears the work down for good with `proc.kill`; your
 Ship itself can't be ended. Both ask first and report how many messages were
 archived. Without a terminal they refuse unless `--yes` is given.
+
+### Events
+
+```bash
+gsv event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
+gsv event emit SOURCE --stdin
+```
+
+Lets a script on any computer tell you something happened, without a public address. Add the
+source first, in Work or with `gsv run event source add NAME`, and read what arrived there or with
+`gsv run event list`. A new source tells you and leaves your Ship out; change that under
+Settings → When things happen.
+With `--stdin`, each line is one JSON object with a `title` and optionally `id`, `preview` and `body`.
+Repeating an `id` is ignored, so a script can re-read the same items.
 
 ### Routines
 
@@ -273,6 +295,8 @@ gsv memory standing
 
 `memory` lists your wikis. `read` prints a page, such as
 `gsv memory read notes/index.md`, and `search` searches every wiki or one.
+It finds pages that hold all of your words, in any order and ignoring case and
+accents, and shows each line where one of them appears.
 `standing` shows the notes your Ship reads in every conversation, from your
 `~/context.d`.
 
@@ -387,9 +411,11 @@ manage the human owner's invitations. See [Connect devices](../how-to/connect-de
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
 The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
-release. Download and unzip the extension, load its folder from
-`chrome://extensions` with developer mode enabled, then open **Your Ship** from
-the toolbar or Extensions button and paste `code` into its panel.
+release. The extension is not in the Chrome Web Store yet, so it is added in
+developer mode: download and unzip it, turn on **Developer mode** in
+`chrome://extensions`, choose **Load unpacked** and pick the unzipped folder, then
+open **Your Ship** from the toolbar or Extensions button and paste `code` into
+its panel.
 
 
 ```bash
@@ -661,10 +687,10 @@ message route list [--json]
 message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
-message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
-message send [--message TEXT]
+message send [--message TEXT] [--choice TEXT]...
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact find @HANDLE|ADDRESS
@@ -686,7 +712,7 @@ atproto delete COLLECTION RKEY
 atproto apply (--json WRITES | --file PATH)
 atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
-r12y show ID
+r12y show ID [--json]
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
 r12y update ID --json PATCH
 r12y start ID
@@ -780,7 +806,9 @@ Ship responsibility for each message; enabling it affects future completions.
 installation's managed-mail domain (for example `<handle>@gsv.space` on the
 public service), which the runtime facts also list; `man --search` ranks `mail`
 for sign-up, verification code, receipt and tracking questions, and reports it
-unavailable when the installation has no mailbox.
+unavailable when the installation has no mailbox. `mail send` and `mail reply`
+take the body in Markdown: recipients see it formatted, with a plain-text copy,
+and a reply quotes the original below it.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
@@ -799,6 +827,7 @@ Search returns newest matches first, with literal word prefixes combined with AN
 A signed-in user or their Ship may search;
 delegated work does not inherit conversation access. Use `message history` with
 the match's sequence plus one as `--before` and `--limit 1` to read it in full.
+`message history` without `--with` reads the Ship conversation too.
 
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination
@@ -1036,13 +1065,21 @@ answer to appear in a chat:
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the
-linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Use
+linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Jobs
+in a per-user crontab use your timezone unless the file sets `CRON_TZ` or `TZ`,
+and system crontabs default to the server timezone. The timezone is fixed when
+the file is installed, so reinstall it to pick up a changed preference. Use
 `sched list` to inspect next fire time, last status, error, source, and target.
 For a command that invokes `proc spawn`, status `ok` means the command was
 dispatched and the spawn was accepted; it does not mean the child finished or
 delivered output. `sched list --all` includes disabled schedules; it does not
 mean all users. `sched add --json` is a low-level compatibility path for direct
 `sched.*` payloads.
+
+An agent's crontab install, by `crontab FILE` or a write to the file, may wait
+for the person to approve its jobs under the
+[`sched.add` rule](./configuration.md#tool-approval-policy). A person installing
+their own crontab is not asked.
 
 ## Version
 

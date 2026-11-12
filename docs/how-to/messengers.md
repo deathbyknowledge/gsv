@@ -10,10 +10,21 @@ apps offered in **Messengers**. You connect your account on that messenger with
 a short-lived code.
 You do not need to create a bot or paste its token into your Ship.
 
+When Ship asks something with a few likely answers, the messenger offers them
+as buttons where it can, and as a numbered list everywhere else. Tapping one
+sends it as your reply; you can always type the number, the words or something
+else instead.
+
 When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
-`@alice (alice.ship.space)`, whatever else Ship wrote.
+`@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
+crontab likewise shows the file and its jobs.
+
+A request raised while Ship is already running a command waits up to 9 minutes
+for your answer. If you answer a request that has ended, whether it timed out,
+was interrupted by a new message or was answered elsewhere, the messenger says
+your answer wasn't used; ask Ship to try again if it still needs doing.
 
 ## Ask Ship to connect
 
@@ -35,10 +46,22 @@ even when the deployment enables pairing. Existing links can still be inspected
 or disconnected. The Slack and Discord instructions below describe the adapter
 flows used through Ship; they are not currently available in Settings.
 
+## Quote a message
+
+Reply to a message by quoting it, and Ship sees what you quoted and who wrote it, so "yes, that
+one" is enough. This works in Telegram, Discord and WhatsApp, for your own messages and Ship's.
+Slack has no quote action: replying in a thread continues that thread instead.
+
+Long quotes are shortened. For a photo or file, Ship sees what it was, not the file again. Ship
+can't see quotes of messages more than 90 days old, sent before this feature, or sent elsewhere, and
+it can't see quotes of approval requests or notices. In those cases it knows that you quoted something
+it can't see, and it asks rather than guesses.
+
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and use the link to open the official
-   Ship bot.
+1. In Ship, open **Messengers → Telegram** and choose **Connect**. It opens a
+   chat with the official Ship bot. To message it manually instead, find the
+   bot handle shown under the instructions.
 2. Send the bot any private message. It replies with a short-lived code.
 3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric ID that requested it.
@@ -50,6 +73,9 @@ flows used through Ship; they are not currently available in Settings.
 If your Telegram account was connected to another Ship, requesting or inspecting
 a code does not interrupt it. The route moves only after confirmation succeeds.
 Use **Disconnect** on the connected account to revoke it.
+
+When Ship offers answers, they take the place of your keyboard until you tap
+one, and Ship's next text message removes them.
 
 Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 
@@ -96,6 +122,8 @@ Reconnecting a Slack account moves future messages only after confirmation
 succeeds; delayed messages and replies from the old connection are rejected.
 
 Slack supports incoming files and Ship resource attachments in addressed messages.
+Links in Ship's replies unfurl the way links from any member do, so a page
+or image shows its preview card.
 With personal Slack authorization, the connected workspace can also appear as a
 read-only filesystem and command target. The operator-owned app performs writes;
 your personal OAuth token determines read visibility. See the Slack messenger's
@@ -120,11 +148,12 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp**. It shows the Ship number
-   and a link that opens WhatsApp on it.
-2. Send the number any message. It replies with instructions and a separate
-   code-only message you can copy. The code expires in 10 minutes. If your
-   number is already connected to another Ship, send `/link` to get a new code.
+1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Connect**.
+   It opens a chat with the Ship number, with the pairing message already filled
+   in. To message Ship manually instead, send `/link` to the number shown under
+   the instructions.
+2. Send that message. It replies with instructions and a separate code-only
+   message you can copy. The code expires in 10 minutes.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
@@ -134,10 +163,18 @@ Platform. You message that number from your own WhatsApp account.
 You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
-code blocks, lists, tables and quotations stay together. Approval
-prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
-decision comes back as a reply quoting the prompt. **Always allow** adds the
-same rule as in the app, shown in **Settings → Permissions**.
+code blocks, lists, tables and quotations stay together. When a message
+contains a link, WhatsApp shows the preview card for the first one. Approval
+prompts arrive with **Allow once**, **Always allow** and **Block** buttons.
+Once the decision is made, Ship reacts to the button you tapped: ✅ for
+**Allow once**, ♾️ for **Always allow** and 🚫 for **Block**. If it could
+not do what you tapped, or the request has already ended, it replies quoting the
+prompt instead. **Always allow** adds the same rule as in the app, shown in
+**Settings → Permissions**.
+
+When Ship offers up to three short answers, they arrive as buttons under its
+message; up to ten arrive behind a **Choose one** button. Answers too long for
+WhatsApp's buttons arrive as a numbered list.
 
 While Ship works on a message you sent from WhatsApp, it reacts to that message
 with 👀 and removes the reaction when it replies, asks for approval or stops.
@@ -176,10 +213,10 @@ service is offered for your number.
 Meta restricts WhatsApp Business messaging across the borders of Brazil (+55)
 and Indonesia (+62). A Ship number registered elsewhere cannot deliver the
 code to numbers in either country, and a number registered in one of
-them cannot reach the other. The WhatsApp page in **Settings → Messengers**
-names the countries the Ship number cannot reach, and Ship says so when you
-ask it to connect, offering Telegram, Discord, Slack, email, or the Ship app
-instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
+them cannot reach the other. When your device's language points to one of
+those countries, such as Portuguese (Brazil) or Indonesian, the first-run screen
+and the WhatsApp page in **Settings → Messengers** warn that the Ship number
+cannot reach it; pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 

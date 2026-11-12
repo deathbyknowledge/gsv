@@ -122,6 +122,35 @@ describe("Conversation Durable Object", () => {
     expect((await stub.search({ query: "message" })).hits).toHaveLength(1);
   });
 
+  it("keeps the replies a process message offers and refuses them on any other message", async () => {
+    const stub = conversation("choices");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const asked = {
+      ...message(1),
+      author: { kind: "process" as const, pid: "proc:test", uid: 1000 },
+      origin: { kind: "process" as const, pid: "proc:test", runId: "run:1" },
+      text: "Mornings or nights?",
+      choices: ["Morning person", "Night owl"],
+    };
+
+    const first = await stub.append(asked);
+    expect(first.message.choices).toEqual(["Morning person", "Night owl"]);
+    expect(await stub.append(asked)).toEqual({ message: first.message, created: false });
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...asked, choices: ["Night owl", "Morning person"] })
+    ))).rejects.toThrow("idempotency key payload changed");
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...message(2), choices: ["Yes"] })
+    ))).rejects.toThrow("Only a process message offers choices");
+    await expect(runInDurableObject(stub, (instance: Conversation) => (
+      instance.append({ ...asked, messageId: "msg:3", idempotencyKey: "input:3", choices: ["Yes", "Yes"] })
+    ))).rejects.toThrow("Choices are distinct");
+
+    expect((await stub.history()).messages).toEqual([first.message]);
+    await evictDurableObject(stub);
+    expect((await stub.history()).messages[0]?.choices).toEqual(["Morning person", "Night owl"]);
+  });
+
   it("builds a bounded preview around a match without storing a text copy in the index", async () => {
     const stub = conversation("snippet");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
@@ -192,6 +221,21 @@ describe("Conversation Durable Object", () => {
       ...message(1), selectedTarget: "macbook", social: { ...social, provenance: { kind: "process", processId: "proc:forged" } },
     }))).rejects.toThrow("idempotency key payload changed");
   }, 30_000);
+
+  it("reads one message by its reference from the hot set and from an archive segment", async () => {
+    const stub = conversation("read-message");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let index = 1; index <= 1_001; index += 1) await instance.append(message(index));
+    });
+    await stub.compact();
+
+    await expect(stub.readMessage({ sequence: 1_000, messageId: "msg:1000" })).resolves.toMatchObject({ text: "message 1000" });
+    await expect(stub.readMessage({ sequence: 2, messageId: "msg:2" })).resolves.toMatchObject({ text: "message 2" });
+    await expect(stub.readMessage({ sequence: 2, messageId: "msg:3" })).resolves.toBeNull();
+    await expect(stub.readMessage({ sequence: 1_000, messageId: "msg:999" })).resolves.toBeNull();
+    await expect(stub.readMessage({ sequence: 9_999, messageId: "msg:9999" })).resolves.toBeNull();
+  });
 
   it("reads experimental archive text without exposing retired metadata or rewriting bytes", async () => {
     const stub = conversation("legacy-request-archive");

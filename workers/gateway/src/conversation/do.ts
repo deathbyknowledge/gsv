@@ -11,7 +11,7 @@ import type {
   OriginMessageRef,
   SocialMessageMetadata,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
+import { messageChoicesSchema, resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
 import type { GatewayEnv } from "../runtime-env";
@@ -278,6 +278,20 @@ export class Conversation extends DurableObject<GatewayEnv> {
     return { hits, nextBeforeSequence: hasMore ? sequences.at(-1)! : null };
   }
 
+  /** One message by the reference a caller retained; sequence finds it after archival, id confirms it. */
+  async readMessage(input: { sequence: number; messageId: string }): Promise<ConversationMessage | null> {
+    this.assertAvailable();
+    let message = this.store.messageAt(input.sequence);
+    if (!message) {
+      const segment = this.store.archiveSegmentsBefore(input.sequence + 1)
+        .find(({ fromSequence, toSequence }) => input.sequence >= fromSequence && input.sequence <= toSequence);
+      message = segment
+        ? (await this.readArchive(segment)).find(({ sequence }) => sequence === input.sequence) ?? null
+        : null;
+    }
+    return message?.id === input.messageId ? message : null;
+  }
+
   async history(input: ConversationHistoryInput = {}): Promise<{
     messages: ConversationMessage[];
     hasMore: boolean;
@@ -510,6 +524,11 @@ function requireAppendInput(input: ConversationAppendRequest): void {
   if (!input.text.trim() && !input.media?.length) {
     throw new Error("Conversation message requires text or media");
   }
+  if (input.choices !== undefined) {
+    if (input.author.kind !== "process") throw new Error("Only a process message offers choices");
+    if (!input.text.trim()) throw new Error("Conversation message choices need text to answer");
+    messageChoicesSchema.parse(input.choices);
+  }
   if (!Number.isSafeInteger(input.createdAt) || input.createdAt <= 0) {
     throw new Error("Conversation message timestamp is invalid");
   }
@@ -525,6 +544,8 @@ async function hashAppendInput(
     selectedTarget: input.selectedTarget,
     ...(input.social ? { social: input.social } : undefined),
     media: input.media ?? [],
+    // Absent from the hash when there are none, so receipts written before choices existed still match.
+    ...(input.choices?.length ? { choices: input.choices } : undefined),
     origin: input.origin,
     processId: input.processId ?? null,
     runId: input.runId ?? null,

@@ -7,6 +7,8 @@ import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { InitialOnboarding } from "./onboarding-responsibility";
+import { ResponsibilityStore } from "./responsibility-store";
 import { IdentityLinkStore } from "./identity-links";
 import { RunRouteStore } from "./run-routes";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
@@ -1492,6 +1494,7 @@ describe("Kernel canonical message commits", () => {
     };
     kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
     kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
+    kernel.welcome = { markWelcomeDelivered: vi.fn(() => null) };
     return kernel;
   }
 
@@ -1554,6 +1557,65 @@ describe("Kernel canonical message commits", () => {
     });
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
     expect(kernel.runRoutes.deleteMessageRoute).toHaveBeenCalledWith("draft:run-1:send-1");
+  });
+
+  function captureTelemetry(kernel: ReturnType<typeof buildCommitKernel>) {
+    kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    return { emitted, restore: () => log.mockRestore() };
+  }
+
+  it("reports the reply timing a run attached, and drops a bad value without losing the commit", async () => {
+    const route = { kind: "connection", runId: "run-1", processId: "proc-1", uid: 1000, connectionId: "origin", clientPlatform: "phone" };
+    for (const [replyMs, expected] of [[1234, 1234], [undefined, undefined], [-1, undefined], [Number.NaN, undefined]] as const) {
+      const kernel = buildCommitKernel(route);
+      kernel.connections = new Map([["origin", { state: { step: "connected", peer: connectedPeer("human", "origin", 1000) }, send: vi.fn() }]]);
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValueOnce(conversationStub());
+      const telemetry = captureTelemetry(kernel);
+      const args: Parameters<typeof kernel.processOutput.commitProcessMessage>[1] = {
+        runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "hello",
+      };
+      if (replyMs !== undefined) args.replyMs = replyMs;
+      try {
+        await kernel.processOutput.commitProcessMessage("proc-1", args);
+      } finally {
+        telemetry.restore();
+      }
+      const committed = telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed");
+      expect(committed).toHaveLength(1);
+      // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+      const properties = (committed[0] as any).event.properties;
+      expect(properties).toMatchObject({ delivery: "client", platform: "phone", hasMedia: false });
+      expect(properties.replyMs).toBe(expected);
+    }
+  });
+
+  it("reports the welcome once, from first sign-in to the first Ship message", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const kernel = buildCommitKernel(null);
+      const responsibilities = new ResponsibilityStore(storage);
+      kernel.welcome = new InitialOnboarding(storage, responsibilities);
+      kernel.welcome.prepare(1000, 1_000);
+      kernel.welcome.activate(1000, 2_000);
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValue(conversationStub());
+      const telemetry = captureTelemetry(kernel);
+      try {
+        await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "Hi, I'm Ship." });
+        await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-2", conversationId: conversation.id, text: "Tell me about yourself." });
+      } finally {
+        telemetry.restore();
+      }
+      const delivered = telemetry.emitted.filter((record: any) => record?.event?.name === "onboarding.welcome.delivered");
+      expect(delivered).toHaveLength(1);
+      // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+      const properties = (delivered[0] as any).event.properties;
+      expect(properties).toMatchObject({ delivery: "background", platform: "background" });
+      expect(properties.durationMs).toBeGreaterThanOrEqual(0);
+      expect(telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed")).toHaveLength(2);
+    });
   });
 
   it("keeps a silenced client route until the terminal run signal", async () => {
@@ -1986,6 +2048,115 @@ describe("Kernel process signal routing", () => {
     const [typingOrder, stopOrder] = adapterSetActivity.mock.invocationCallOrder;
     expect(typingOrder).toBeLessThan(adapterFrame.mock.invocationCallOrder[0]!);
     expect(stopOrder).toBeGreaterThan(adapterFrame.mock.invocationCallOrder[0]!);
+  });
+
+  describe("provider message references", () => {
+    function deliveredKernel(sendResult: Record<string, KernelTestValue>) {
+      const route = {
+        kind: "adapter",
+        runId: "run-refs",
+        processId: "proc-1",
+        uid: 1000,
+        destination: {
+          kind: "adapter",
+          adapter: "whatsapp",
+          accountId: "managed",
+          actorId: "34600000000",
+          surface: { kind: "dm", id: "34600000000" },
+        },
+        routeGeneration: "generation-1",
+      };
+      const kernel = buildKernel(route);
+      const adapterFrame = vi.fn(async (_installation: { installationId: string }, context: { deliveryId: string }, frame: { id: string }) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "whatsapp",
+          accountId: "managed",
+          surfaceId: "34600000000",
+          deliveryId: context.deliveryId,
+          ...sendResult,
+        },
+      }));
+      kernel.installationEnv = { CHANNEL_WHATSAPP: { adapterFrame, adapterSetActivity: vi.fn(async () => ({ ok: true })) } };
+      kernel.adapters.messageRefs = { record: vi.fn() };
+      kernel.buildProcessContext = vi.fn(() => ({
+        env: kernel.installationEnv,
+        installationId: TEST_INSTALLATION_ID,
+        adapters: {
+          identityLinks: {
+            get: vi.fn(() => ({
+              uid: 1000,
+              metadata: { managed: true, surfaceKind: "dm", surfaceId: "34600000000", routeGeneration: "generation-1" },
+            })),
+          },
+          surfaceRoutes: { get: vi.fn(() => null) },
+          privateDestinations: { clearIfMatches: vi.fn() },
+        },
+      }));
+      // SAFETY: this fixture binds the private method to a Kernel-shaped test double.
+      kernel.adapterDelivery.deliverAdapterRouteEvent = (AdapterDelivery.prototype as any).deliverAdapterRouteEvent.bind(kernel.adapterDelivery);
+      return { kernel, route };
+    }
+    const SCOPE = {
+      ownerUid: 1000,
+      adapter: "whatsapp",
+      accountId: "managed",
+      surface: { kind: "dm", id: "34600000000" },
+    };
+    const TARGET = { conversationId: "conv:home", messageId: "message-1", sequence: 2 };
+
+    it("maps every provider message of a committed message to its canonical reference", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", messageIds: ["wamid.a", "wamid.b"], deliveryState: "sent" });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toEqual({ state: "delivered" });
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining(SCOPE), TARGET, ["wamid.a", "wamid.b"],
+      );
+    });
+
+    it("offers a committed message's choices to the adapter", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", deliveryState: "sent" });
+      const committed = committedMessageFrame(route, "message-1", "Mornings or nights?");
+      const frame = { ...committed, payload: { message: { ...committed.payload.message, choices: ["Morning person", "Night owl"] } } };
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, frame)).resolves.toEqual({ state: "delivered" });
+      expect(kernel.installationEnv.CHANNEL_WHATSAPP.adapterFrame).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          call: "adapter.send",
+          args: expect.objectContaining({ text: "Mornings or nights?", choices: ["Morning person", "Night owl"] }),
+        }),
+      );
+    });
+
+    it("maps a retried delivery from the ledger's replayed ids", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", messageIds: ["wamid.a", "wamid.b"], deliveryState: "deduplicated" });
+      await kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply"));
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledWith(expect.anything(), TARGET, ["wamid.a", "wamid.b"]);
+    });
+
+    it("maps the single id of an adapter that reports only one", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "discord-1", deliveryState: "sent" });
+      await kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply"));
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledWith(expect.anything(), TARGET, ["discord-1"]);
+    });
+
+    it("maps nothing for an ambiguous delivery, whose provider id is unknown", async () => {
+      const { kernel, route } = deliveredKernel({ deliveryState: "ambiguous" });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toMatchObject({ state: "ambiguous" });
+      expect(kernel.adapters.messageRefs.record).not.toHaveBeenCalled();
+    });
+
+    it("never turns a delivered message into a retry when mapping it fails", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", deliveryState: "sent" });
+      kernel.adapters.messageRefs.record.mockImplementation(() => { throw new Error("sql"); });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toEqual({ state: "delivered" });
+    });
   });
 
   function historyResponse(pendingHil: ReturnType<typeof hilPayload> | null) {

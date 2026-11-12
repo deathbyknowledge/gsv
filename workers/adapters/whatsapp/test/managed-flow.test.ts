@@ -339,7 +339,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     });
     await vi.waitFor(async () => {
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ text: { preview_url: false, body: "Connected to https://test.gsv.space" } }),
+        body: expect.objectContaining({ text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
       }));
     });
 
@@ -434,29 +434,23 @@ describe("managed WhatsApp clean-instance flow", () => {
           remember: true,
         },
       }));
-      expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({
-          text: expect.objectContaining({ body: expect.stringContaining("Allowed from now on. Change this in Settings → Permissions.") }),
-          context: { message_id: approvalMessageId },
-        }),
+      // The decision the person tapped is acknowledged on their tap, ♾️ for Always allow, not with another message.
+      expect(await graphRecords()).toContainEqual(expect.objectContaining({
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.3", emoji: "♾️" } }),
       }));
     });
-    const resolution = (await sentMessages()).findLast((record) => record.body.context?.message_id === approvalMessageId);
-    expect(resolution?.body.text?.body).toContain("Check the current time.");
-    expect(resolution?.body.text?.body).not.toContain("\"date\"");
-    expect(resolution?.body.text?.body).not.toContain("I need your confirmation");
-    expect(resolution?.body.text?.body).not.toContain("hil[");
+    expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId)).toHaveLength(0);
 
     const approvalCalls = (await gatewayCalls()).filter((call) => call.call === "proc.hil");
-    const statusCount = (await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId).length;
     expect((await SELF.fetch(await notification("wamid.in.4", {
       type: "interactive",
       context: { from: "34600000000", id: approvalMessageId },
       interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always allow" } },
     }))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId))
-        .toHaveLength(statusCount + 1);
+      expect(await graphRecords()).toContainEqual(expect.objectContaining({
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.4", emoji: "♾️" } }),
+      }));
     });
     expect((await gatewayCalls()).filter((call) => call.call === "proc.hil")).toHaveLength(approvalCalls.length);
 
@@ -616,6 +610,18 @@ describe("managed WhatsApp clean-instance flow", () => {
       replyToId: "wamid.in.7",
     })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
     const paragraphRecords = (await graphRecords()).slice(recordsBeforeParagraphs);
+    // Every message of the split delivery is reported, in order, so a quote of any of them can resolve.
+    const paragraphIds = paragraphRecords.filter((record) => record.kind === "message").map((record) => record.result.id);
+    expect(paragraphIds).toHaveLength(5);
+    expect(paragraphIds.every((id) => id?.startsWith("wamid.out."))).toBe(true);
+    await expect(peer.sendMessage("installation_test", {
+      deliveryId: "outbound-paragraphs-1",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: relinked.route.generation,
+      text: `Hi Hank!\n\nHere is the **report**.\n\n${"word ".repeat(1_000).trimEnd()}\n\nAnything else?`,
+      replyToId: "wamid.in.7",
+    })).resolves.toMatchObject({ ok: true, deduplicated: true, messageId: paragraphIds[0], messageIds: paragraphIds });
     expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message", "read", "message", "read", "message"]);
     const paragraphMessages = paragraphRecords.filter((record) => record.kind === "message");
     expect(paragraphMessages.map((record) => record.body.text?.body)).toEqual([
@@ -633,6 +639,25 @@ describe("managed WhatsApp clean-instance flow", () => {
       status: "read",
       message_id: "wamid.in.7",
       typing_indicator: { type: "text" },
+    });
+
+    // Quoting a message on WhatsApp sends only its provider id; the Kernel owns what that id means.
+    expect((await SELF.fetch(await notification("wamid.in.quote", {
+      type: "text",
+      text: { body: "yes, that one" },
+      context: { from: "34600000000", id: "wamid.out.1" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          message: expect.objectContaining({
+            messageId: "wamid.in.quote",
+            text: "yes, that one",
+            replyToId: "wamid.out.1",
+          }),
+        }),
+      }));
     });
 
     // Binary audio is uploaded first and sent by media id; audio carries no caption,
@@ -657,7 +682,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       body: expect.objectContaining({ to: ACTOR, type: "audio", audio: { id: upload!.result.id } }),
     }));
     expect(await sentMessages()).toContainEqual(expect.objectContaining({
-      body: expect.objectContaining({ type: "text", text: { preview_url: false, body: "audio reply" } }),
+      body: expect.objectContaining({ type: "text", text: { preview_url: true, body: "audio reply" } }),
     }));
     const sentAudioCount = (await sentMessages()).filter((record) => record.body.type === "audio").length;
     await expect(peer.sendMessage("installation_test", {

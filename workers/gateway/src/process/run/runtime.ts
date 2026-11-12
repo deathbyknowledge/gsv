@@ -35,7 +35,9 @@ import {
   terminalResponsibilitySnapshot, unhandledTerminalResponsibilityIds, terminalResponsibilityAdmissionKey,
 } from "../internal/events";
 import type { Process } from "../do";
-import type { RunFinishOptions, RunFinishPayload, RunResult } from "./finish";
+import {
+  replyFailureFromFinish, type RunFinishOptions, type RunFinishPayload, type RunFinishReason, type RunResult,
+} from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
@@ -53,7 +55,7 @@ import {
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
-import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, withRunControlInstructions } from "./helpers";
 import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
@@ -195,6 +197,7 @@ export class ProcessRun {
       text: command.text,
       finish: command.finish,
       media,
+      ...(command.choices ? { choices: command.choices } : undefined),
     });
     if (!sent.ok || !command.finish) return sent;
     const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
@@ -291,6 +294,7 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
+    choices?: string[];
   }): Promise<RunControlResult> {
     try {
       await this.host.streams.complete(options.runId, options.actionId, options.text);
@@ -318,6 +322,7 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
+    choices?: string[];
   }): Promise<RunControlResult> {
     const releaseCommit = this.beginRunControlCommit(options.runId);
     try {
@@ -342,6 +347,10 @@ export class ProcessRun {
         };
       }
       const request = this.buildRunControlMessageCommitRequest(run, options);
+      // Only the run's first reply carries the timing; a correction notice never does.
+      if (run.inputAt !== undefined && !run.replied) {
+        request.args.replyMs = Math.max(0, Date.now() - run.inputAt);
+      }
       const committedMessage = await this.commitRunControlMessage(
         options.runId,
         options.actionId,
@@ -359,6 +368,9 @@ export class ProcessRun {
           deliveryId: options.actionId,
         },
       });
+      if (request.args.replyMs !== undefined) {
+        this.host.mutateActiveRun(options.runId, (current) => ({ ...current, replied: true }));
+      }
       this.consumeRunOutputMedia(options.runId, options.media);
       this.host.streams.deleteAction(options.runId, options.actionId);
       return {
@@ -411,6 +423,7 @@ export class ProcessRun {
       actionId: string;
       text: string;
       media: RunOutputMedia[];
+      choices?: string[];
     },
   ): InternalRequestFrame<"proc.message.commit"> {
     const args: InternalRequestFrame<"proc.message.commit">["args"] = {
@@ -422,6 +435,7 @@ export class ProcessRun {
     if (options.media.length > 0) {
       args.media = options.media.map((item) => this.host.resources.runOutputMediaResource(item));
     }
+    if (options.choices?.length) args.choices = options.choices;
     return {
       type: "req",
       id: crypto.randomUUID(),
@@ -639,7 +653,7 @@ export class ProcessRun {
 
   async failWithHistoryEvent(
     runId: string,
-    payload: ProcHistoryEventPayload<"context.failed">,
+    payload: ProcHistoryEventPayload<"context.failed"> & { reason: Extract<RunFinishReason, `context.${string}`> },
   ): Promise<void> {
     const event = {
       kind: "context.failed", payload, severity: "error", audience: "both",
@@ -728,6 +742,7 @@ export class ProcessRun {
     const newlyFinished = this.host.finishDelivery.record(payload);
     return {
       run,
+      reason: options.reason,
       payload,
       startedAt,
       newlyFinished,
@@ -770,6 +785,23 @@ export class ProcessRun {
           properties: telemetryProperties,
         },
       });
+      // A person's run that ended without a normal completion: category only, no cause.
+      if (run.inputAt !== undefined && payload.status !== "ok") {
+        emitTelemetry(this.host.env, {
+          installationId: this.host.installationId,
+          component: "gateway",
+          event: {
+            stream: "product",
+            name: "conversation.reply.failed",
+            properties: {
+              outcome: payload.status,
+              failure: replyFailureFromFinish(effects.reason),
+              replied: run.replied === true,
+              durationMs: Math.max(0, payload.timestamp - run.inputAt),
+            },
+          },
+        });
+      }
     }
     this.host.startBackground(
       `finish delivery for ${run.runId}`,
@@ -1950,6 +1982,9 @@ export class ProcessRun {
       case "onRunFinishDelivery":
         await this.host.finishDelivery.deliver(task.payload);
         return;
+      case "onNestedApprovalKeepAlive":
+        await this.host.tools.keepNestedApprovalAlive(task.payload);
+        return;
       case "onToolDispatchTimeout":
         await this.onToolDispatchTimeout(task.payload);
         return;
@@ -2161,9 +2196,17 @@ export class ProcessRun {
     settledRun: RunState,
   ): Promise<RunTickInputs | null> {
     let run = settledRun;
+    // Configuration, tools and context are separate Kernel reads, so ask for them at
+    // once. They still apply in this order, and a stopped tick leaves the rest unread.
+    const loadTools = () => this.traced(runId, "Load tools", () => this.host.kernel.kernelRpc("ai.tools", {}));
+    const contextSnapshot = this.host.settings.resolveAiContext(this.runAbortSignal(runId));
+    const pendingTools = run.tools ? null : loadTools();
+    contextSnapshot.catch(() => {});
+    pendingTools?.catch(() => {});
     if (!run.config) {
       const aiTextGenerateConfig = this.host.settings.aiTextGenerateConfig;
-      const config = await this.host.settings.resolveAiConfig(this.runAbortSignal(runId));
+      const config = await this.traced(runId, "Load configuration",
+        () => this.host.settings.resolveAiConfig(this.runAbortSignal(runId)));
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         aiTextGenerateConfig,
@@ -2176,7 +2219,8 @@ export class ProcessRun {
     if (!activeConfig) throw new Error("Process AI configuration was not loaded");
 
     if (!run.tools) {
-      const toolsResult = await this.host.kernel.kernelRpc("ai.tools", {});
+      // Tools cleared while configuration loaded were not asked for above.
+      const toolsResult = await (pendingTools ?? loadTools());
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
@@ -2205,7 +2249,20 @@ export class ProcessRun {
       offeredToolNames,
     }));
     if (!offeredRun) return null;
-    return { run: offeredRun, activeConfig, workTools, tools };
+    return { run: offeredRun, activeConfig, workTools, tools, contextSnapshot };
+  }
+
+  /** One context span around a Kernel read that precedes the first generation. */
+  private async traced<T>(runId: string, name: string, read: () => Promise<T>): Promise<T> {
+    const spanId = this.host.trace.start({ runId, kind: "context", name });
+    let status: Exclude<ProcTraceSpanStatus, "running"> = "error";
+    try {
+      const value = await read();
+      status = "ok";
+      return value;
+    } finally {
+      this.host.trace.finish(spanId, status);
+    }
   }
 
   async prepareRunTickContext(
@@ -2299,10 +2356,13 @@ export class ProcessRun {
     runId: string,
     state: RunTickContextState,
   ): Promise<ContextEpochRecord | null> {
-    const contextSnapshot = await this.host.settings.resolveAiContext(this.runAbortSignal(runId));
+    // Only the tick's first build uses the context asked for with its inputs; rebuilds ask again.
+    const prefetched = state.contextSnapshot;
+    delete state.contextSnapshot;
+    const contextSnapshot = await (prefetched ?? this.host.settings.resolveAiContext(this.runAbortSignal(runId)));
     const fallbackProjection =
       parseContextProjection(this.host.store.epochs.getLiveContextEpoch()?.observedProjection) ??
-      createContextProjection(contextSnapshotFromRun(state.run, state.activeConfig));
+      { targets: state.run.devices ?? [] };
     const currentProjection = createContextProjection(
       contextSnapshot,
       new Date(),

@@ -55,6 +55,16 @@ on source changes; selected-target annotations belong to each selected message.
 Messages that omit the field receive no inferred target. Typed queue records,
 history, archives, and compaction input retain the selection without changing the
 human's original text or the Process's defaults and permissions.
+Incoming adapter messages may also carry `quote`, the resolved excerpt of the message the
+person quoted, or a record that it could not be resolved. The model renderer places it above the
+message as `>` lines naming who wrote it. When it is unavailable, the renderer tells the model
+plainly that it cannot see the quoted message and must not guess. The message `text` and canonical
+Message remain what the person wrote. Hydrated media uses the same rendering, and compaction input, being typed records, retains the field.
+A Shell result reaches the model as a terminal would show it: `exit N` (or `running in session ID`),
+then each of `stdout:` and `stderr:` once, and a line when the output was cut off. The reason a
+command stopped without an exit code, such as a timeout or a signal, follows `failed:`. The stored
+result keeps the full `shell.exec` shape for clients; its combined `output` and the `error` that
+repeats stderr or the exit code are left out of model context.
 Scheduled events name an explicit reply target once in their body. Without one,
 they retain ordinary run destination annotations and do not redirect an active run.
 Target connection text names only the target ID and the connection change;

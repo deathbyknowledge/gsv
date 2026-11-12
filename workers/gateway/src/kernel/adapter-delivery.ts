@@ -8,6 +8,7 @@ import type {
   AdapterActivity,
   AdapterMedia,
   AdapterMediaPart,
+  AdapterSendResult,
   BinaryBody,
   MessageAttachment,
   ProcHilRequest,
@@ -47,8 +48,10 @@ import {
   deliverAdapterDestination,
 } from "./adapter-send";
 import {
+  logAdapterBoundaryFailure,
   setAdapterRouteActivity,
 } from "./adapter-service";
+import type { AdapterMessageTarget } from "./adapter-message-refs";
 import type {
   AdapterDeliveryPresentation,
 } from "./adapter-send";
@@ -118,6 +121,7 @@ const adapterConversationMessageSchema = z.object({
   }),
   text: z.string(),
   media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  choices: z.array(z.string()).optional(),
   origin: z.object({
     kind: z.literal("process"),
     pid: z.string(),
@@ -450,6 +454,12 @@ async deliverAdapterRouteEvent(
         deliveryId: message.id,
         text: message.text,
         media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
+        choices: message.choices?.length ? message.choices : undefined,
+        canonical: {
+          conversationId: message.conversationId,
+          messageId: message.id,
+          sequence: message.sequence,
+        },
       };
       return await this.deliverWithTyping(
         route,
@@ -498,8 +508,11 @@ async deliverAdapterRouteReply(
       deliveryId: string;
       text: string;
       media?: AdapterMedia[];
+      choices?: string[];
       replyToId?: string;
       hil?: ProcHilRequest;
+      /** The canonical message this delivery carries, for a later quote of it to resolve. */
+      canonical?: AdapterMessageTarget;
     },
     body?: BinaryBody,
     presentationKind: "process" | "system" = "process",
@@ -550,6 +563,7 @@ async deliverAdapterRouteReply(
       deliveryId: message.deliveryId,
       text: message.text,
       ...(message.media === undefined ? undefined : { media: message.media }),
+      ...(message.choices === undefined ? undefined : { choices: message.choices }),
       replyToId: message.replyToId ?? route.replyToId,
       ...(route.routeGeneration === undefined
         ? undefined
@@ -571,7 +585,27 @@ async deliverAdapterRouteReply(
         error: `Adapter delivery ${message.deliveryId} is ambiguous`,
       };
     }
+    if (message.canonical) this.recordMessageRefs(route, message.canonical, result);
     return { state: "delivered" };
+  }
+
+  /** The message is out by now, so a failure here costs a later quote and never a retry. */
+  private recordMessageRefs(
+    route: AdapterDeliveryRoute,
+    canonical: AdapterMessageTarget,
+    result: Extract<AdapterSendResult, { ok: true }>,
+  ): void {
+    const providerMessageIds = result.messageIds ?? (result.messageId ? [result.messageId] : []);
+    try {
+      this.host.adapters.messageRefs.record({
+        ownerUid: route.uid,
+        adapter: route.destination.adapter,
+        accountId: route.destination.accountId,
+        surface: route.destination.surface,
+      }, canonical, providerMessageIds);
+    } catch {
+      logAdapterBoundaryFailure("error", "message_ref_write_failed");
+    }
   }
 
 async bundleConversationReplyMedia(

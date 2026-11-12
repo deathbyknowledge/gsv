@@ -23,6 +23,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  shipPlatformFromAdapter,
 } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
 import { principalOf,
@@ -81,6 +82,8 @@ import {
 import {
   validateAdapterMediaItems,
 } from "./adapter-send";
+import { resolveAdapterQuote } from "./adapter-quotes";
+import { logAdapterBoundaryFailure } from "./adapter-service";
 
 /** Inbound adapter messages: replay claims, media retention, command handling, and Process delivery. */
 type AdapterCommandResult = {
@@ -657,6 +660,17 @@ async function deliverAdapterInboundToProcess(input: {
     appendRequest,
   );
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
+  const messageScope = { ownerUid: uid, adapter, accountId, surface: message.surface };
+  try {
+    ctx.adapters.messageRefs.record(messageScope, {
+      conversationId: conversation.id,
+      messageId: appended.message.id,
+      sequence: appended.message.sequence,
+    }, [message.messageId]);
+  } catch {
+    // The map is an aid to later quotes; it never costs this message its delivery.
+    logAdapterBoundaryFailure("error", "message_ref_write_failed");
+  }
   if (conversation.kind === "ship" && (recovery.replyPreferenceOrder !== undefined || appended.created)) {
     ctx.shipReplies.recordAdapter(uid, recovery.replyPreferenceOrder);
   }
@@ -669,6 +683,22 @@ async function deliverAdapterInboundToProcess(input: {
       conversationId: conversation.id,
       latestSequence: appended.message.sequence,
     });
+    if (conversation.kind === "ship") {
+      emitTelemetry(ctx.env, {
+        installationId: ctx.installationId,
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "ship.message.received",
+          properties: {
+            source: "adapter",
+            platform: shipPlatformFromAdapter(adapter),
+            hasText: appendRequest.text.length > 0,
+            hasMedia: Boolean(media),
+          },
+        },
+      });
+    }
   }
   if (message.surface.kind !== "dm") {
     ctx.adapters.surfaceRoutes.setRoute({
@@ -718,6 +748,9 @@ async function deliverAdapterInboundToProcess(input: {
         conversationId: conversation.id,
         messageId: appended.message.id,
       },
+      ...(message.replyToId === undefined
+        ? undefined
+        : { quote: await resolveAdapterQuote(ctx, messageScope, message.replyToId) }),
     },
   };
   const response: InternalResponseFrame<"proc.adapter.deliver"> | null = await withInitialOnboarding(

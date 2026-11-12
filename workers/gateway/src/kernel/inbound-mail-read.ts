@@ -24,8 +24,12 @@ const searchArgsSchema = z.extend(pageArgsSchema, { query: z.string() });
 const readArgsSchema = z.object({ messageId: z.string().check(z.minLength(1), z.maxLength(300)) });
 
 export function handleMailList(value: MailListArgs, ctx: KernelContext): MailListResult {
-  const args = parseArgs(pageArgsSchema, value ?? {}, "mail.list");
-  return publicPage(ctx.mailboxes.list(resolveCallerOwnerUid(ctx), args));
+  return publicPage(ctx.mailboxes.list(resolveCallerOwnerUid(ctx), parseMailPageArgs(value, "mail.list")));
+}
+
+/** A page request for a mail list: at most 200 entries before a cursor. */
+export function parseMailPageArgs(value: MailListArgs | undefined, call: string): MailListArgs {
+  return parseArgs(pageArgsSchema, value ?? {}, call);
 }
 
 export function handleMailSearch(value: MailSearchArgs, ctx: KernelContext): MailSearchResult {

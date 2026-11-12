@@ -86,12 +86,16 @@ cleanly.
 
 ## Prompt Assembly
 
-On the first tick for a run, the process asks the Kernel for runtime inputs:
+On the first tick for a run, the process asks the Kernel for its runtime inputs
+at once:
 
 - `ai.config` resolves provider, model, reasoning, output limit, system context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
+- `ai.context` returns what the prompt is built from: reachable targets, ready
+  MCP servers, system context files, the skill index, the Ship's address, and
+  the managed mailbox. Every later tick asks for it again.
 
 The process then assembles a system prompt from explicit context providers in
 this order:
@@ -135,7 +139,8 @@ an ordered ledger transition and must deliberately inspect the record and mailbo
 before acting. Mail therefore uses the same ordinary Ship loop, tool surface, yield
 rules, and responsibility lifecycle as other unresolved work. If the owner has
 disabled the `mail.received` responsibility source, mail remains durably stored and
-classified but does not create ledger work or wake Ship.
+classified but does not create ledger work or wake Ship. Automatic replies and
+delivery reports are handled the same way regardless of that setting.
 
 Endpoint routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its
@@ -195,6 +200,9 @@ The model response can contain text, thinking blocks, and tool calls:
   assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
   `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
   command, for people, scripts, and the model alike.
+- A message that asks something can offer `choices`, up to ten short replies, or `--choice TEXT`
+  repeated on `message send`. Tapping one sends its text as the person's next ordinary message, so the
+  run that answers it reads a tap and a typed reply alike; the person can always write anything else.
 - The originating client receives `message.started` and `message.delta` while the model is still
   writing a Send's `text`; a Shell `message send` streams once the Process validates it. Adapters
   wait for `message.committed`.

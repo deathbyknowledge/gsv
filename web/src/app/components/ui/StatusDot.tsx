@@ -1,20 +1,31 @@
+import "./StatusDot.css";
+
 export type StatusTone = "online" | "error" | "idle" | "update" | "live" | "warn";
 
 export interface StatusDotProps {
   tone?: StatusTone;
-  /** Diameter in px (4–24). */
+  /** Side length in px (4–24). */
   size?: number;
   glow?: boolean;
 }
 
+/* Dots read the --dot-* tokens where a theme defines them (the light themes use
+   lighter shades than their AA text tones) and fall back to the text tone. */
 const TONE_VAR = {
-  online: "var(--online)",
-  error: "var(--error)",
-  idle: "var(--idle)",
-  update: "var(--update)",
-  live: "var(--live)",
-  warn: "var(--warn)",
+  online: "var(--dot-online, var(--online))",
+  error: "var(--dot-error, var(--error))",
+  idle: "var(--dot-idle, var(--idle))",
+  update: "var(--dot-update, var(--update))",
+  live: "var(--dot-live, var(--live))",
+  warn: "var(--dot-warn, var(--warn))",
 } satisfies Record<StatusTone, string>;
+
+/** The soft glow behind a status dot: a short blur of the dot colour at partial
+ *  opacity, via --gsv-dot-glow so the light themes can switch it off. Shared by
+ *  StatusDot, the ListRow dot and the Tag dot so every dot glows the same. */
+export function dotGlow(color: string): string {
+  return `0 0 var(--gsv-dot-glow, 4px) color-mix(in srgb, ${color} 60%, transparent)`;
+}
 
 /** StatusDot — ported from StatusDot.dc.html. */
 export function StatusDot({ tone = "online", size = 8, glow }: StatusDotProps) {
@@ -23,13 +34,12 @@ export function StatusDot({ tone = "online", size = 8, glow }: StatusDotProps) {
   return (
     <span
       style={{
-        borderRadius: "50%",
         display: "inline-block",
         flex: "none",
         width: `${size}px`,
         height: `${size}px`,
         background: color,
-        boxShadow: showGlow ? `0 0 7px ${color}` : "none",
+        boxShadow: showGlow ? dotGlow(color) : "none",
       }}
     />
   );

@@ -30,6 +30,24 @@ describe("conversation schema upgrades", () => {
     });
   });
 
+  it("reads messages from before choices and keeps the replies a later message offers", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, CONVERSATION_MIGRATIONS.filter((migration) => migration.id < 10));
+      sql.exec("INSERT INTO conversation_meta (conversation_id, owner_uid, kind, created_at) VALUES ('conversation', 1000, 'ship', 1)");
+      const author = { kind: "process" as const, pid: "proc:ship", uid: 1000 };
+      sql.exec("INSERT INTO messages (message_id, idempotency_key, author_json, text, origin_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "old", "old", JSON.stringify(author), "Before choices", JSON.stringify({ kind: "client" }), 1);
+      runConversationSqlMigrations(storage);
+      runConversationSqlMigrations(storage);
+
+      const store = new ConversationStore(sql);
+      expect(store.messageAt(1)).not.toHaveProperty("choices");
+      store.append({ messageId: "new", idempotencyKey: "new", payloadHash: "fixture", text: "Mornings or nights?", author,
+        origin: { kind: "client" }, createdAt: 2, choices: ["Morning person", "Night owl"] });
+      expect(store.messageAt(2)?.choices).toEqual(["Morning person", "Night owl"]);
+    });
+  });
+
   it("drops origin details from before DIDs and keeps their messages readable", async () => {
     await runWithRealKernelSql((sql, storage) => {
       runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, CONVERSATION_MIGRATIONS.filter((migration) => migration.id < 8));

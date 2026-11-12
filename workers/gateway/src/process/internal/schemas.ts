@@ -4,7 +4,7 @@ import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@humansandmachines/gsv/services/inference-context";
-import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema, type ResourceBlock } from "@humansandmachines/gsv/protocol";
+import { MESSAGE_CHOICE_LIMIT, jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema, type ResourceBlock } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";
 
@@ -60,6 +60,12 @@ export const SEND_TOOL: Tool = {
         items: { type: "string" },
         description: "Files to send: a path on the cloud home, target:path for a file on a place, or [target]:path when the target id itself has a colon.",
       },
+      choices: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: MESSAGE_CHOICE_LIMIT,
+        description: "Short replies the person can tap when you ask something with a few likely answers. A tap arrives as their next message.",
+      },
     },
     additionalProperties: false,
   },
@@ -71,6 +77,7 @@ export const sendToolArgsSchema = z.object({
   text: z.string().optional(),
   yield: z.boolean().optional(),
   attach: z.array(z.string()).max(MAX_MESSAGE_MEDIA_ITEMS).optional(),
+  choices: z.array(z.string()).optional(),
 }).strict();
 
 export const routedFetchOptionsSchema = z.object({

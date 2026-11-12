@@ -1,9 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { rich, useT } from "../../../i18n/locale";
+import { useT } from "../../../i18n/locale";
 import { Button } from "../../../components/ui/Button";
-import { openNetworkTerm } from "./openNetwork";
 import "./own-profile.css";
 
 const NOTICE_SEEN = "ui/profile_notice_seen";
@@ -30,7 +29,7 @@ export function ProfileNotice({ ownerUid, published }: { ownerUid: number; publi
   if (!published || seen.data !== false) return null;
   return <aside class="people-profile-notice" aria-labelledby="people-profile-notice-title">
     <h2 id="people-profile-notice-title">{t("people.profile.noticeTitle")}</h2>
-    <p>{rich(t("people.profile.noticeBody"), { network: openNetworkTerm(t) })}</p>
+    <p>{t("people.profile.noticeBody")}</p>
     <p>{t("people.profile.noticePrivate")}</p>
     {dismiss.isError && <p class="people-error" role="alert">{t("people.profile.noticeFailed")}</p>}
     <div class="people-actions">

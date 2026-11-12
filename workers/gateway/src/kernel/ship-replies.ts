@@ -2,6 +2,8 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import { hasCapability } from "./capabilities";
 import { CLIENT_ACTIVITY_INTERVAL_MS } from "@humansandmachines/gsv/protocol";
 import type { RunRouteStore } from "./run-routes";
+import type { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
+import type { AdapterMessageDestination } from "@humansandmachines/gsv/protocol";
 
 // Allow one reporting interval so throttled input never expires a client early.
 export const SHIP_CLIENT_IDLE_MS = 5 * 60 * 1000 + CLIENT_ACTIVITY_INTERVAL_MS;
@@ -31,6 +33,22 @@ export class ShipReplies {
     const receiptId = `client-input:${JSON.stringify([conversationId, idempotencyKey])}`;
     this.storage.transactionSync(() => routes.pinMessageRoute(receiptId, () => {
       this.recordClient(uid, connectionId);
+      return null;
+    }));
+  }
+
+  /**
+   * A completed messenger pairing, as a message from its DM: the person just wrote there for the code. Only the
+   * operation's first completion selects it, so a replayed confirmation cannot override a newer message.
+   */
+  recordAdapterPairing(
+    uid: number, operationId: string, destination: AdapterMessageDestination,
+    destinations: PrivateAdapterDestinationStore, routes: RunRouteStore,
+  ): void {
+    const receiptId = `adapter-pairing:${operationId}`;
+    this.storage.transactionSync(() => routes.pinMessageRoute(receiptId, () => {
+      destinations.recordActivity(uid, destination, receiptId, Date.now());
+      this.recordAdapter(uid);
       return null;
     }));
   }

@@ -18,6 +18,14 @@ import { KERNEL_V081_APPROVAL_RULES_REPLACE_CODE_DEFAULTS } from "./v081_approva
 import { KERNEL_V082_OWNER_NOTICES } from "./v082_owner_notices";
 import { KERNEL_V083_MAIL_SEARCH } from "./v083_mail_search";
 import { KERNEL_V084_DROP_LINK_CHALLENGES } from "./v084_drop_link_challenges";
+import { KERNEL_V086_ADAPTER_MESSAGE_REFS } from "./v086_adapter_message_refs";
+import { KERNEL_V087_NOTICE_RULES } from "./v087_notice_rules";
+import { KERNEL_V088_PERSONAL_RECOVERY_CLAIMS } from "./v088_personal_recovery_claims";
+import { KERNEL_V089_HAPPENING_RULES } from "./v089_happening_rules";
+import { KERNEL_V090_EVENT_SOURCES } from "./v090_event_sources";
+import { KERNEL_V091_OUTSIDE_TEXT_LABELS } from "./v091_outside_text_labels";
+import { KERNEL_V092_OUTBOUND_MAIL_COPIES } from "./v092_outbound_mail_copies";
+import { KERNEL_V093_AUTOMATIC_MAIL } from "./v093_automatic_mail";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -220,6 +228,14 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V082_OWNER_NOTICES,
   KERNEL_V083_MAIL_SEARCH,
   KERNEL_V084_DROP_LINK_CHALLENGES,
+  KERNEL_V086_ADAPTER_MESSAGE_REFS,
+  KERNEL_V087_NOTICE_RULES,
+  KERNEL_V088_PERSONAL_RECOVERY_CLAIMS,
+  KERNEL_V089_HAPPENING_RULES,
+  KERNEL_V090_EVENT_SOURCES,
+  KERNEL_V091_OUTSIDE_TEXT_LABELS,
+  KERNEL_V092_OUTBOUND_MAIL_COPIES,
+  KERNEL_V093_AUTOMATIC_MAIL,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

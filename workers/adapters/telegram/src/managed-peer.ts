@@ -10,6 +10,7 @@ import {
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
+  MAX_DELIVERY_MESSAGE_IDS,
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
 import {
@@ -28,6 +29,7 @@ import {
   validateAdapterMediaBody,
 } from "../../shared/src/media-body";
 import { adapterActionText } from "../../../../packages/gsv/src/protocol/adapters.js";
+import { messageChoicesText } from "../../../../packages/gsv/src/protocol/message-choices.js";
 import type {
   AdapterOutboundMessage,
   AdapterDeliveryContext,
@@ -119,7 +121,8 @@ type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }> };
 type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 /** One provider message of a delivery; resolves to the Telegram message id it produced. */
-type DeliveryPart = () => Promise<string | undefined>;
+/** The messages one provider call sent, in order: an album is several. */
+type DeliveryPart = () => Promise<string[]>;
 
 const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
@@ -234,7 +237,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         : null;
       const [renderedMessage, options] = controls
         ? [{ ...withoutAction(message), text: controls.text }, { replyMarkup: controls.replyMarkup }]
-        : telegramActionMessage(message);
+        : telegramControlledMessage(message);
       const result = await this.deliverMessage(renderedMessage, {
         kind: "installation",
         installationId,
@@ -756,7 +759,14 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       let anchor = 0;
       if (media.length === 0) {
         const splitParagraphs = context.kind !== "platform" || context.splitParagraphs === true;
-        const chunks = telegramTextChunks(text, legacyGrouping || (splitParagraphs && !options.replyMarkup), legacyGrouping);
+        // Buttons under a message belong to all of its text; a keyboard of replies sits below the chat instead.
+        const inline = options.replyMarkup !== undefined && "inline_keyboard" in options.replyMarkup;
+        const chunks = telegramTextChunks(text, legacyGrouping || (splitParagraphs && !inline), legacyGrouping);
+        const markup = (index: number): TelegramTextMessageOptions => {
+          if (options.replyMarkup) return index === chunks.length - 1 ? options : {};
+          // A newer message withdraws the replies an earlier one offered, as Chat does.
+          return index === 0 ? { replyMarkup: { remove_keyboard: true } } : {};
+        };
         for (const [index, chunk] of chunks.entries()) {
           parts.push(async () => {
             const sent = await sendManagedTelegramText(
@@ -765,12 +775,12 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
               chunk,
               index === 0 ? replyToMessageId : undefined,
               fetcher,
-              index === chunks.length - 1 ? options : {},
+              markup(index),
             );
-            return String(sent.message_id);
+            return [String(sent.message_id)];
           });
         }
-        if (options.replyMarkup) anchor = parts.length - 1;
+        if (inline) anchor = parts.length - 1;
       } else {
         const callApi = <T>(method: string, payload: TelegramApiPayload) =>
           callManagedTelegramApi<T>(token, method, payload, fetcher);
@@ -781,24 +791,24 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           const deliveryBytes = mediaBytes.slice(mediaOffset, mediaOffset + delivery.length);
           mediaOffset += delivery.length;
           parts.push(async () => {
-            const firstSent = delivery.length === 1
-              ? await sendTelegramMediaMessage(
+            const sent = delivery.length === 1
+              ? [await sendTelegramMediaMessage(
                   callApi,
                   chatId,
                   delivery[0],
                   deliveryBytes[0],
                   caption,
                   replyToMessageId,
-                )
-              : (await sendTelegramMediaGroupMessage(
+                )]
+              : await sendTelegramMediaGroupMessage(
                   callApi,
                   chatId,
                   delivery,
                   deliveryBytes,
                   caption,
                   replyToMessageId,
-                ))[0];
-            return firstSent ? String(firstSent.message_id) : undefined;
+                );
+            return sent.map((item) => String(item.message_id));
           });
         }
       }
@@ -806,20 +816,27 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // Every accepted part is recorded before the next provider call, so a
       // retry of this delivery resumes after the parts the person already has.
       let anchorMessageId = claim.progress.messageId;
+      const messageIds = [...claim.progress.messageIds ?? []];
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.pauseBetweenParts(chatId, fetcher);
         attemptedProviderSend = true;
-        const messageId = await parts[index]!();
+        const sent = await parts[index]!();
         sentInAttempt += 1;
-        if (index === anchor) anchorMessageId = messageId;
+        if (index === anchor) anchorMessageId = sent[0];
+        messageIds.push(...sent);
         await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
           sent: index + 1,
           messageId: anchorMessageId,
+          messageIds,
           formatVersion: legacyGrouping ? 0 : 1,
         });
       }
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
-      return { ok: true, messageId: anchorMessageId };
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId, messageIds);
+      return {
+        ok: true,
+        messageId: anchorMessageId,
+        ...(messageIds.length > 1 ? { messageIds: messageIds.slice(0, MAX_DELIVERY_MESSAGE_IDS) } : undefined),
+      };
     } catch (error) {
       // A definite rejection resumes at the first unsent part on retry; an
       // unknown provider outcome stays ambiguous and is never replayed.
@@ -927,16 +944,29 @@ function withoutAction(message: AdapterOutboundMessage): AdapterOutboundMessage 
   return rest;
 }
 
-// Telegram opens only https links from a button; anything else, and a message with media, keeps the link as text.
-function telegramActionMessage(
+/**
+ * Telegram opens only https links from a button; anything else, and a message
+ * with media, keeps the link as text. Choices become a keyboard of replies,
+ * which media and a link button leave no room for, so beside them the text
+ * lists the choices instead.
+ */
+function telegramControlledMessage(
   message: AdapterOutboundMessage,
 ): [AdapterOutboundMessage, TelegramTextMessageOptions] {
-  const { action, ...rest } = message;
-  if (!action) return [message, {}];
-  if (rest.media?.length || new URL(action.url).protocol !== "https:") {
-    return [{ ...rest, text: adapterActionText(rest.text, action) }, {}];
+  const { action, choices, ...rest } = message;
+  const media = Boolean(rest.media?.length);
+  const linkButton = action && !media && new URL(action.url).protocol === "https:" ? action : undefined;
+  const keyboard = choices && !media && !action ? choices : undefined;
+  let text = choices && !keyboard ? messageChoicesText(rest.text, choices) : rest.text;
+  if (action && !linkButton) text = adapterActionText(text, action);
+  const rendered = { ...rest, text };
+  if (linkButton) return [rendered, { replyMarkup: { inline_keyboard: [[{ text: linkButton.label, url: linkButton.url }]] } }];
+  if (keyboard) {
+    return [rendered, {
+      replyMarkup: { keyboard: keyboard.map((choice) => [{ text: choice }]), one_time_keyboard: true, resize_keyboard: true },
+    }];
   }
-  return [rest, { replyMarkup: { inline_keyboard: [[{ text: action.label, url: action.url }]] } }];
+  return [rendered, {}];
 }
 
 function telegramFingerprintMessage(

@@ -3,6 +3,7 @@ import { FileReader } from "./FileReader";
 import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
+import { fileName } from "../../../services/files/domain/paths";
 import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import type { ActivityRequest } from "../zen/chatContextModel";
@@ -42,7 +43,9 @@ import {
   type LedgerLine,
   type Place,
   shortPid,
+  sourceRow,
   fleetReferenceRow,
+  fileRowLocation,
   isApprovalReference,
   isConnectReference,
   type FleetReference,
@@ -52,7 +55,10 @@ import { CloudBrowserActions, StartCloudBrowser } from "../browser/CloudInstance
 import { useBrowserControl, useCloudInstances } from "../browser/BrowserControl";
 import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
+import { NewSource, SourceInspector, SourcesSection } from "./FleetSources";
+import { useEventSources } from "../shared/useEventSources";
 import { canConfigure } from "../settings/settingsModel";
+import { navigateApp } from "../../../services/navigation/appNavigation";
 import { useT } from "../../../i18n/locale";
 import "./fleet.css";
 
@@ -80,7 +86,7 @@ function useNow(active: boolean): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "more:", "dir:", "file:", "source:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -97,6 +103,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
+  /* a file linked from Chat opens in the full reader, whose back action returns to the chat */
+  const requestedLocation = fileRowLocation(initialRow);
 
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
@@ -119,6 +127,10 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
   const work = useResponsibilities(viewer, { routines: false });
+  // Sources belong to a person, so root administration has none.
+  const hasSources = !!viewer && viewer.uid >= 1000 && canConfigure(viewer, "event.source.list");
+  const canChangeSources = connected && !!viewer && canConfigure(viewer, "event.source.update");
+  const events = useEventSources(hasSources);
 
   // The cloud home's name is interface text, so the list follows the language.
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
@@ -139,15 +151,20 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [inspectorOpen, setInspectorOpen] = useState(Boolean(initialRow || initialConnect));
   const [creatingProcess, setCreatingProcess] = useState(false);
+  const [creatingSource, setCreatingSource] = useState(false);
   const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
     setFilesPlace(null);
     setOpenFile(null);
-    setExpandedFile(null);
+    const requestedFile = requestedLocation?.kind === "file"
+      ? { target: requestedLocation.target, path: requestedLocation.path, name: fileName(requestedLocation.path) } : null;
+    setExpandedFile(requestedFile);
+    setExpandedFrom(requestedFile ? "chat" : "work");
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(initialConnect);
-    setInspectorOpen(Boolean(initialRow || initialConnect));
+    setInspectorOpen(Boolean(initialRow || initialConnect) && !requestedFile);
     if (initialRow) focusedRow.current = initialRow;
   }, [openRequest]);
 
@@ -169,6 +186,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );
+  const selectedSource = selected?.startsWith("source:") ? events.sources.find((source) => sourceRow(source.name) === selected) ?? null : null;
   const requestedProcess = selected?.startsWith("proc:") ?? false;
   const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
@@ -180,12 +198,15 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [filesPlace, setFilesPlace] = useState<Place | null>(null);
   const [expandedFile, setExpandedFile] = useState<OpenFile | null>(null);
+  /** Where the reader returns to: Work's own list, or the chat that linked the file. */
+  const [expandedFrom, setExpandedFrom] = useState<"work" | "chat">("work");
   const savedScroll = useRef(0);
   const selectRow = useCallback((row: FleetRow) => {
     setSelected(row);
     setFilesPlace(null);
     setOpenFile(null);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(null);
     setInspectorOpen(true);
   }, []);
@@ -193,6 +214,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setSelected(`file:${file.target}:${file.path}`);
     setOpenFile(file);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(null);
     setInspectorOpen(true);
   }, []);
@@ -255,6 +277,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setSelected(null);
     setOpenFile(null);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(to);
     setFilesPlace(null);
     setInspectorOpen(true);
@@ -271,6 +294,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
   const closeInspector = () => {
     setInspectorOpen(false);
+    events.clearRevealed();
     requestAnimationFrame(() => {
       const manifest = manifestRef.current;
       if (!manifest || manifest.closest("[hidden]") || manifest.contains(document.activeElement)) return;
@@ -280,14 +304,17 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     });
   };
   const inspectorTitle = connecting === "place" ? t("fleet.connect.title")
-    : creatingProcess ? t("fleet.newProcess.title") : openFile ? t("fleet.inspector.file") : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
+    : creatingSource ? t("fleet.sources.newTitle") : selected?.startsWith("source:") ? t("fleet.sources.inspector")
+    : creatingProcess ? t("fleet.newProcess.title") : openFile ? openFile.name : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
       : selected?.startsWith("proc:") ? t("fleet.field.process") : t("fleet.field.place");
 
   return (
     <main class="fleet" aria-label={t("shell.help.work")}>
-      {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty} onClose={(deleted) => {
-        if (deleted) { setOpenFile(null); setInspectorOpen(false); }
+      {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty}
+        backLabel={expandedFrom === "chat" ? t("shell.file.backToChat") : undefined} onClose={(deleted) => {
         setExpandedFile(null);
+        if (expandedFrom === "chat") { onZen(); return; }
+        if (deleted) { setOpenFile(null); setInspectorOpen(false); }
         requestAnimationFrame(() => { if (manifestRef.current) manifestRef.current.scrollTop = savedScroll.current; });
       }} />}
       <div class="fleet-body" hidden={Boolean(expandedFile)}>
@@ -409,23 +436,43 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
             </div>
           </section>
 
+          {hasSources && <SourcesSection events={events} canChange={canChangeSources} now={now} onSelect={selectRow} onCreate={() => {
+            setSelected(null);
+            setOpenFile(null);
+            setFilesPlace(null);
+            setCreatingProcess(false);
+            setConnecting(null);
+            setCreatingSource(true);
+            setInspectorOpen(true);
+          }} />}
+
         </div>
 
-        <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} onClose={closeInspector}>
+        <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} className={openFile ? "is-file" : ""} onClose={closeInspector}>
           {connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
+          ) : creatingSource ? (
+            <NewSource events={events} disabled={!canChangeSources} onAdded={(name) => selectRow(sourceRow(name))} />
+          ) : selected?.startsWith("source:") ? (
+            selectedSource ? (
+              <SourceInspector key={selectedSource.sourceId} source={selectedSource} events={events} canChange={canChangeSources} canRead={!!viewer && canConfigure(viewer, "event.list")} now={now}
+                onChoices={() => navigateApp("/chat/settings?section=standing")} onRemoved={closeInspector} />
+            ) : events.loading ? <LoadingState>{t("common.loading")}</LoadingState> : <p class="note" role="status">{t("fleet.sources.gone")}</p>
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
           ) : filesPlace || openFile ? (
             <>
               {filesPlace && <RetainedView active={active && inspectorOpen && !expandedFile && !openFile}>
-                <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
+                <button type="button" class="fleet-text-action chat-context-back" onClick={() => { setSelected(targetRow(filesPlace.id)); setFilesPlace(null); }}>← {filesPlace.label}</button>
                 <div class="fleet-tree"><PlaceTree key={filesPlace.id} place={filesPlace} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
-              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
+              {openFile && filesPlace && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setOpenFile(null)}>← {filesPlace.label}</button>}
+              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)}
+                onAsk={(text) => onZen(undefined, undefined, text)} open={{ label: t("shell.file.expand"), onOpen: () => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
+              setExpandedFrom("work");
               setExpandedFile(openFile);
-            }} />}
+            } }} />}
             </>
           ) : selectedPlace ? (
             <PlaceInspector

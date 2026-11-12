@@ -35,7 +35,7 @@ export async function handleInstallationOwnerRequest(request: Request, env: Inst
   if (emailEnabled && path !== "/owner/callback" && !path.startsWith("/owner/identity/")) {
     return new InstallationOwnerEmailHttp(authentication(),
       owners, env.OWNER_EMAIL!, { from: env.GSV_OWNER_EMAIL_FROM!, replyTo: env.GSV_OWNER_EMAIL_REPLY_TO }, env.ACCOUNTS_GATEWAY_RECOVERY, env.GSV_ADMIN_ORIGIN,
-      Boolean(env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID)).handle(request);
+      { existingIdentityProvider: Boolean(env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID), signup: Boolean(signupFlow) && env.GSV_SIGNUP_ENABLED === "true" }).handle(request);
   }
   if (env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID) {
     return new InstallationOwnerHttp(owners, new OwnerIdentityProvider({ issuer: env.GSV_OWNER_OIDC_ISSUER,

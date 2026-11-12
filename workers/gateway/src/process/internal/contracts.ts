@@ -1,13 +1,14 @@
 /** Internal Process contracts primitives. */
 
+import type { ExecutionDeadline } from "../../shared/execution-deadline";
 import type {
-  AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
+  AiConfigResult, AiContextResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import type { AssistantTurnClassification } from "../run-tick-policy";
 import type { FrameBody, ResponseFrame } from "../../protocol/frames";
 import type { MessageMetadata, QueuedRun } from "../store";
-import type { RunDelivery, RunFinishOptions, RunFinishPayload } from "../run/finish";
+import type { RunDelivery, RunFinishOptions, RunFinishPayload, RunFinishReason } from "../run/finish";
 import type { RunOutputMedia, RunState } from "../run/state";
 import type { SyscallName } from "../../syscalls";
 import type { TelemetryEvent } from "@humansandmachines/gsv/telemetry";
@@ -50,6 +51,8 @@ export type RunTickInputs = {
   activeConfig: AiConfigResult;
   workTools: Tool[];
   tools: Tool[];
+  /** Context asked for alongside configuration and tools; the tick's first context build uses it. */
+  contextSnapshot?: Promise<AiContextResult>;
 };
 
 export type RunTickContextState = RunTickInputs & {
@@ -153,6 +156,8 @@ export type StreamSeqCounter = {
 
 export type RunFinishEffects = {
   run: RunState;
+  /** The typed reason the payload was built from; the payload keeps it as a stored string. */
+  reason: RunFinishReason;
   payload: RunFinishPayload;
   startedAt: number | null;
   newlyFinished: boolean;
@@ -172,7 +177,7 @@ export type CodeModeResponseWaiter = {
   args: JsonObject;
   resolve: (frame: ResponseFrame) => void;
   reject: (error: Error) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
+  deadline: ExecutionDeadline;
 };
 
 export type CodeModeApprovalWaiter = {

@@ -182,6 +182,18 @@ const adapterDeliveryFinishedSchema = z.strictObject({
   }),
 });
 
+const adapterQuoteResolvedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("adapter.quote.resolved"),
+  properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
+    adapter: adapterNameSchema,
+    surface: z.enum(["dm", "group", "channel", "thread"]),
+    outcome: z.enum(["resolved", "unmapped", "unavailable", "failed", "timed_out"]),
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
 const adapterRouteDeliveryFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.route_delivery.failed"),
@@ -207,7 +219,7 @@ const delegationFinishedSchema = z.strictObject({
   }),
 });
 
-export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "gsv", "other"]);
+export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]);
 
 const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
@@ -297,6 +309,69 @@ const shipMessageCommittedSchema = z.strictObject({
     hasMedia: z.boolean(),
     // Optional only for compatibility with producers during rolling upgrades.
     platform: z.optional(shipPlatformSchema),
+    // Present only on the first message a run commits after the person's own
+    // message: the time from Process receipt to that commit.
+    replyMs: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+// The person's own message to Ship, reported when the Conversation accepts
+// it. Text and media never leave the Kernel; only their presence does.
+const shipMessageReceivedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("ship.message.received"),
+  properties: z.strictObject({
+    source: z.enum(["client", "adapter"]),
+    platform: shipPlatformSchema,
+    hasText: z.boolean(),
+    hasMedia: z.boolean(),
+  }),
+});
+
+// Closed categories for a run that a person's conversation message started
+// and that ended without a normal completion. The cause stays in Process
+// history; the record carries the category only.
+export const conversationReplyFailureSchema = z.enum([
+  "generation",
+  "context",
+  "media",
+  "no_send",
+  "command",
+  "delivery",
+  "runtime",
+  "superseded",
+  "cancelled",
+  "killed",
+  "other",
+]);
+
+const conversationReplyFailedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("conversation.reply.failed"),
+  properties: z.strictObject({
+    outcome: z.enum(["error", "aborted"]),
+    failure: conversationReplyFailureSchema,
+    // Whether the run had already committed a message before it ended.
+    replied: z.boolean(),
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+const onboardingWelcomeActivatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.activated"),
+  properties: z.strictObject({}),
+});
+
+// The first Ship message accepted after the welcome responsibility opened,
+// once per owner, with the time it took to arrive.
+const onboardingWelcomeDeliveredSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.delivered"),
+  properties: z.strictObject({
+    durationMs: nonNegativeIntegerSchema,
+    delivery: z.enum(["client", "adapter", "background"]),
+    platform: shipPlatformSchema,
   }),
 });
 
@@ -439,28 +514,34 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("mail.delivery.finished"),
     properties: z.strictObject({
+      ...exceptionDiagnosticProperties,
       outcome: z.enum(["accepted", "failed", "unknown"]),
-      reason: z.enum(["none", "disabled", "quota", "inactive", "invalid", "provider_unknown"]),
+      reason: z.enum(["none", "disabled", "quota", "inactive", "invalid", "provider_refused", "provider_unknown"]),
       durationMs: nonNegativeIntegerSchema,
     }),
   }),
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("mail.work.deferred"),
     properties: z.strictObject({
-      stage: z.enum(["storage", "summary", "completion", "outbound_claim", "outbound_callback"]),
-      reason: z.enum(["quota", "unavailable"]),
+      stage: z.enum(["storage", "summary", "completion", "outbound_claim", "outbound_send", "outbound_callback"]),
+      reason: z.enum(["quota", "rate_limited", "unavailable"]),
     }),
   }),
   processRunFinishedSchema,
   processCompactionCompletedSchema,
   adapterIngressFinishedSchema,
   adapterDeliveryFinishedSchema,
+  adapterQuoteResolvedSchema,
   adapterRouteDeliveryFailedSchema,
   delegationFinishedSchema,
   inferenceRequestFinishedSchema,
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   shipMessageCommittedSchema,
+  shipMessageReceivedSchema,
+  conversationReplyFailedSchema,
+  onboardingWelcomeActivatedSchema,
+  onboardingWelcomeDeliveredSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
@@ -485,12 +566,17 @@ export const telemetryEventComponents = {
   "process.compaction.failed": ["gateway"],
   "adapter.ingress.finished": ["gateway"],
   "adapter.delivery.finished": ["gateway"],
+  "adapter.quote.resolved": ["gateway"],
   "adapter.route_delivery.failed": ["gateway"],
   "delegation.finished": ["gateway"],
   "inference.request.finished": ["inference"],
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
   "ship.message.committed": ["gateway"],
+  "ship.message.received": ["gateway"],
+  "conversation.reply.failed": ["gateway"],
+  "onboarding.welcome.activated": ["gateway"],
+  "onboarding.welcome.delivered": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
@@ -520,6 +606,7 @@ export type InferenceFailureStage = z.infer<
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
+export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]

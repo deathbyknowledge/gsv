@@ -7,6 +7,7 @@ import type {
   ProcMediaInput,
   ProcSendResult,
   ProcHistoryEvent,
+  ProcHistoryMessageQuote,
   ResourceBlock,
   ResponseErrEnvelope,
   TypedRequest,
@@ -153,6 +154,8 @@ export type ProcessAdapterDeliverArgs = {
     conversationId: string;
     messageId: string;
   };
+  /** Present only when the person quoted a message. */
+  quote?: ProcHistoryMessageQuote;
 };
 
 export type ProcessRunAttachArgs = {
@@ -198,6 +201,10 @@ export type ProcessMessageCommitArgs = {
   conversationId?: string;
   text: string;
   media?: ResourceBlock[];
+  /** Replies the person can tap, already normalized by the Process. */
+  choices?: string[];
+  /** Time from the person's message reaching the Process to this commit; only on a run's first reply. */
+  replyMs?: number;
 };
 
 /**

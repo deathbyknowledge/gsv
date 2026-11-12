@@ -88,6 +88,16 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ], ["atproto.write"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
+  event: command("Record events from the owner's own sources and choose what each one does.", "Turn something a script, routine or outside service noticed into a notice for the owner or work for Ship, or create and manage where those events come from.", ["event", "webhook", "source", "alert", "monitor", "poll", "notify", "ingest"], [], [
+    "event sources [--json]",
+    "event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--webhook none|url|standard|hmac] [--expect-every DURATION] [--sender-secret] [--stdin] [--header NAME --encoding hex|base64 [--prefix TEXT] [--timestamp-key KEY --signature-key KEY] [--id-header NAME] [--type-header NAME]]",
+    "event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--pause|--resume] [--expect-every DURATION|never]",
+    "event source rotate NAME [--stdin]",
+    "event source remove NAME",
+    "event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]",
+    "event emit SOURCE --stdin",
+    "event list [SOURCE] [--limit N] [--json]",
+  ], ["event.emit"]),
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
     "r12y list [--all] [--json]",
     "r12y show ID",
@@ -109,17 +119,18 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
     "message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "message delivery show DELIVERY_ID [--json]",
-    "message send [--message TEXT]",
+    "message send [--message TEXT] [--choice TEXT]...",
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, list sent email, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "sent", "outbox", "reply", "status", "delivery"], [], [
     "mail address",
     "mail list [--limit N] [--before CURSOR]",
     "mail search QUERY [--limit N] [--before CURSOR]",
     "mail show MESSAGE_ID [--raw]",
-    "mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
-    "mail reply MESSAGE_ID [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail reply MESSAGE_ID [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail sent [--limit N] [--before CURSOR]",
     "mail status DELIVERY_ID",
   ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
@@ -416,7 +427,10 @@ function discoveryScore(
     } else if (primaryTokens.has(token)) {
       score += 10;
       matched += 1;
-    } else if ([...primaryTokens].some((candidate) => candidate.startsWith(token) || token.startsWith(candidate))) {
+    } else if ([...primaryTokens].some((candidate) =>
+      // A prefix needs three letters, or "or" would match "organize".
+      Math.min(candidate.length, token.length) >= 3 && (candidate.startsWith(token) || token.startsWith(candidate))
+    )) {
       score += 5;
       matched += 1;
     } else if (bodyTokens.has(token)) {
@@ -428,8 +442,10 @@ function discoveryScore(
   return score;
 }
 
+// A lone letter is what's left of a possessive or abbreviation ("person's",
+// "e.g."); as a prefix it would match every word that starts with it.
 function significantTokens(value: string): string[] {
-  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token && !STOP_WORDS.has(token)))];
+  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token.length > 1 && !STOP_WORDS.has(token)))];
 }
 
 function normalizeText(value: string): string {

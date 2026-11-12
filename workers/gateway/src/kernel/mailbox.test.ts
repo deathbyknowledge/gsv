@@ -14,6 +14,8 @@ import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { MailboxStore } from "./mailbox-store";
 import { ResponsibilityStore } from "./responsibility-store";
+import { NoticeRuleStore } from "./notice-rules";
+import { OwnerNoticeStore } from "./owner-notice-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import {
   acceptManagedInboundMail,
@@ -302,6 +304,48 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
+  it("tells the person about mail when a rule asks, without waking Ship if it doesn't act", async () => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
+      const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
+      ctx.noticeRules.set(1000, "mail.received", { notify: "messenger", ship: "context" }, "person", 1);
+      ctx.reconcileResponsibilityWake = vi.fn(async () => {});
+      const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
+      await completeManagedInboundMail({
+        version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId,
+        summary: { summary: "Mike approved the contract.", category: "work", requiresAttention: true, confidence: 0.9 },
+      }, ctx);
+      expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "mail.received", pendingCount: 1, subject: { preview: "Mike approved the contract." } });
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+      expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(["reply", "delivery-report"] as const)(
+    "keeps an automatic %s and its notice without asking the Ship to review it",
+    async (automatic) => {
+      await runWithRealKernelSql(async (sql, kernelStorage) => {
+        const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
+        ctx.noticeRules.set(1000, "mail.received", { notify: "messenger", ship: "wake" }, "person", 1);
+        ctx.reconcileResponsibilityWake = vi.fn(async () => {});
+        const accepted = await acceptManagedInboundMail({ ...METADATA, automatic }, bodyFromBytes(RAW), ctx);
+
+        await completeManagedInboundMail({
+          version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId,
+          summary: { summary: "Mike is away until Monday.", category: "other", requiresAttention: false, confidence: 0.9 },
+        }, ctx);
+
+        expect(ctx.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
+          automatic,
+          summary: "Mike is away until Monday.",
+          eventDeliveredAt: expect.any(Number),
+        });
+        expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "mail.received", pendingCount: 1 });
+        expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+        expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+      });
+    },
+  );
+
   it("stores mail without waking the Ship when incoming-mail responsibilities are disabled", async () => {
     await runWithRealKernelSql(async (sql, kernelStorage) => {
       const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
@@ -508,6 +552,7 @@ function mailboxContext(
     isAccountDisabled: () => false,
     resolveGids: (_username: string, gid: number) => [gid, 100],
   };
+  const sources = new ResponsibilitySourcePolicyStore(sql);
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -523,7 +568,10 @@ function mailboxContext(
     adapters: new AdapterStore(sql),
     mailboxes: new MailboxStore(sql),
     responsibilities: new ResponsibilityStore(kernelStorage),
-    responsibilitySources: new ResponsibilitySourcePolicyStore(sql),
+    responsibilitySources: sources,
+    noticeRules: new NoticeRuleStore(kernelStorage, sources),
+    ownerNotices: new OwnerNoticeStore(kernelStorage),
+    queueOwnerNotices: async () => {},
     procs: { list: () => [], get: () => null },
     reconcileResponsibilityWake: async () => {},
     defer: (promise) => {

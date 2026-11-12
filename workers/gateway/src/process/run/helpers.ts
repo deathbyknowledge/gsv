@@ -14,6 +14,7 @@ export type ProcessTask =
   | { callback: "onMediaPreparationTimeout"; payload: string; }
   | { callback: "onRunFinishDelivery"; payload: string; }
   | { callback: "onMemoryReview"; payload: null; }
+  | { callback: "onNestedApprovalKeepAlive"; payload: string; }
   | {
     callback: "onToolDispatchTimeout";
     payload: { runId: string; dispatchId: string; };
@@ -30,6 +31,10 @@ export const PROCESS_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({
     callback: z.literal("onRunFinishDelivery"),
+    payload: z.string(),
+  }),
+  z.object({
+    callback: z.literal("onNestedApprovalKeepAlive"),
     payload: z.string(),
   }),
   z.object({
@@ -53,8 +58,7 @@ export function contextSnapshotFromRun(
       timezone: config.system?.timezone ?? "UTC",
       language: config.system?.language,
     },
-    skillIndex: config.skillIndex ?? [],
-    skillIndexMode: config.skillIndexMode ?? "summary",
+    skillIndexMode: "summary",
     ship: null,
     mailbox: null,
   };

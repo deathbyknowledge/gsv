@@ -2,9 +2,12 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import { createPairingSecret } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
-export type AccountRecoveryAttempt = { id: string; secret: string; proof: string };
+export type RecoveryAccount = "personal" | "administrator";
+export type AccountRecoveryAttempt = { id: string; secret: string; proof: string; account?: RecoveryAccount };
 const RECOVERY_STORAGE = "gsv.ui.account-recovery.v1";
-const attemptSchema = z.strictObject({ id: z.uuid(), secret: z.string().min(32).max(256), proof: z.string().min(32).max(256) });
+const attemptSchema = z.strictObject({ id: z.uuid(), secret: z.string().min(32).max(256), proof: z.string().min(32).max(256), account: z.enum(["personal", "administrator"]).optional() });
+const optionsSchema = z.object({ emailUrl: z.url({ protocol: /^https?$/ }).optional() });
+const personalUnavailableSchema = z.object({ details: z.object({ recovery: z.literal("personal-unavailable") }) });
 
 /** Persist the receiver's proof before a redeem request; a lost reply never permits a second receiver. */
 export function readAccountRecoveryAttempt(): AccountRecoveryAttempt | null {
@@ -30,7 +33,24 @@ function readCredentialClaim(storageKey: string): AccountRecoveryAttempt | null 
   return attempt;
 }
 
-export async function redeemAccountRecovery(client: Pick<GSVClient, "requestOnce">, url: string, attempt: AccountRecoveryAttempt, password: string): Promise<void> {
-  await client.requestOnce(url, "account.recovery.redeem", { ...attempt, password });
+/** The account choice is saved with the proof: a retry after a lost reply must repeat the same request. */
+export async function redeemAccountRecovery(client: Pick<GSVClient, "requestOnce">, url: string, attempt: AccountRecoveryAttempt, password: string, account: RecoveryAccount): Promise<void> {
+  const { id, secret, proof } = attempt;
+  window.sessionStorage.setItem(RECOVERY_STORAGE, JSON.stringify({ id, secret, proof, account }));
+  await client.requestOnce(url, "account.recovery.redeem", { id, secret, proof, password, account });
   window.sessionStorage.removeItem(RECOVERY_STORAGE);
+}
+
+export function isPersonalAccountUnavailable(error: Error): boolean {
+  return personalUnavailableSchema.safeParse(error).success;
+}
+
+/** Where this Ship's owner email recovery starts, if it has one. A failed read offers the alternatives instead. */
+export async function readRecoveryOptions(client: Pick<GSVClient, "requestOnce">, url: string): Promise<{ emailUrl?: string }> {
+  try {
+    const options = optionsSchema.safeParse(await client.requestOnce(url, "account.recovery.options", {}));
+    return options.success ? options.data : {};
+  } catch {
+    return {};
+  }
 }

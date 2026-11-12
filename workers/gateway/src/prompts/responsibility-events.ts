@@ -26,9 +26,10 @@ export function renderResponsibilityBaseline(
   }
   const encoder = new TextEncoder();
   let remainingBytes = MAX_BASELINE_DETAILS_BYTES;
-  lines.push("", RESPONSIBILITY_DATA_NOTICE, "");
+  lines.push("");
   for (const responsibility of ledger.responsibilities) {
     lines.push(formatResponsibilityLine(responsibility));
+    if (holdsOutsideText(responsibility)) lines.push(`  ${RESPONSIBILITY_DATA_NOTICE}`);
     if (responsibility.blocker) {
       lines.push(`  Blocker: ${JSON.stringify(responsibility.blocker)}.`);
     }
@@ -57,13 +58,7 @@ export function renderResponsibilityBaseline(
 }
 
 export function formatResponsibilityReadyEvent(event: ProcHistoryEventPayload<"responsibility.ready">): string {
-  return [
-    `Responsibility review requested at ${new Date(event.receivedAtMs).toISOString()}.`,
-    `Review these responsibilities using the snapshot, later updates, and recent conversation: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,
-    "If a due check is waiting for the human's answer, use Send to remind them of the specific question or decision. No reply is a reason to follow up, not by itself a reason to silently move the check forward again.",
-    "If they already answered, the item is obsolete, or they requested no reminders, update or close it accordingly. Defer only for a concrete reason recorded on the responsibility; choose a suitable next check, or clear it when no follow-up is wanted.",
-    "Resolve, cancel, delegate, or explicitly defer actionable work before yielding. Call Send with yield true when finished; omit text only when no user follow-up is needed.",
-  ].join("\n\n");
+  return `Responsibilities due: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`;
 }
 
 const FIELD_LABELS = {
@@ -86,7 +81,7 @@ export function formatResponsibilityTransitionEvent(
   return [
     header ?? `Responsibility \`${transition.responsibilityId}\` ${transition.kind}.`,
     ...(fields.length > 0 ? [fields.join("\n")] : []),
-    RESPONSIBILITY_DATA_NOTICE,
+    ...(holdsOutsideText(record) ? [RESPONSIBILITY_DATA_NOTICE] : []),
   ].join("\n\n");
 }
 
@@ -185,6 +180,11 @@ function federationResponsibilityKind(eventType: string): string {
   if (eventType === "federation.message.received") return "Contact message";
   if (eventType === "federation.request") return "Contact request";
   return "Contact event";
+}
+
+/** Records built from outside input carry `contentTrust: "untrusted"`; GSV's and the owner's own records do not. */
+function holdsOutsideText(responsibility: ResponsibilityRecord): boolean {
+  return responsibility.details?.contentTrust === "untrusted";
 }
 
 export function formatResponsibilityLine(responsibility: ResponsibilityRecord): string {

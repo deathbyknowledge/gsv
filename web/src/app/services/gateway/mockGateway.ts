@@ -5,11 +5,12 @@
  * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
- * `?fresh=1` is a brand-new space instead: no conversation, the welcome card up, and dismissing it
- * wakes Ship the way the Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
+ * Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=calibrate` is a fresh space whose welcome is the Calibration sketch (see /calibrate below).
  * `?fresh=0` returns to the seeded conversation.
- * Of the config, this browser keeps only the welcome card's dismissal and the Language preference, so
- * Settings can switch the interface language; other settings refuse to save.
+ * Of the config, this browser keeps only the Language preference, so Settings can switch the
+ * interface language; other settings refuse to save.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
  * are the ones the wire would carry, in the order the gateway emits them: stream events, run output,
  * typed history records, tool signals, ledger rows and the message stream. Fixtures are the plain
@@ -27,9 +28,13 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   /calibrate a sketch of a Calibration welcome: each Ship message offers replies to tap, and any
+ *              answer, tapped or typed, moves it to the next step
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
+import type { EventRecord, EventSource, EventSourceAddArgs } from "@humansandmachines/gsv/protocol";
+import type { NoticeRule, ResponsibilitySourcePolicy } from "@humansandmachines/gsv/protocol";
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
 import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
@@ -43,6 +48,7 @@ import {
   type ApproachSummary,
   type ContactSendResult,
   type ContactSummary,
+  type DevicePairing,
   type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
@@ -63,13 +69,16 @@ import {
   type SysLedgerLine,
   type SysTargetSummary,
   type AiTranscriptionCreateResult,
+  type FileResourceReference,
+  type FsReadResult,
+  type FsTransferSendResult,
   type SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
-const WELCOME_SEEN = "gsv.mock.welcome_seen";
+const FIRST_RUN_SEEN = "gsv.mock.first_run_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -89,18 +98,19 @@ export function mockGatewayRequested(): boolean {
   }
 }
 
-/** A fresh space sticks to the tab like the mock itself; asking for it again puts the welcome card back up. */
-function freshRequested(): boolean {
+/** A fresh space sticks to the tab like the mock itself, and so does the welcome it was asked for. */
+function freshRequested(): "welcome" | "calibrate" | null {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1") {
-      window.sessionStorage.setItem(FRESH_FLAG, "1");
-      window.localStorage.removeItem(WELCOME_SEEN);
+    if (asked === "1" || asked === "calibrate") {
+      window.sessionStorage.setItem(FRESH_FLAG, asked);
+      window.localStorage.removeItem(FIRST_RUN_SEEN);
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
-    return window.sessionStorage.getItem(FRESH_FLAG) === "1";
+    const kept = window.sessionStorage.getItem(FRESH_FLAG);
+    return kept === "calibrate" ? "calibrate" : kept === "1" ? "welcome" : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -132,11 +142,22 @@ let ownProfile: ProfileState = {
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
-/** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
+/** The config this browser keeps for the mock, with its storage key: the owner's language. */
 const STORED_CONFIG = new Map([
-  [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, FIRST_RUN_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
+const mockEventSources: EventSource[] = [
+  { sourceId: "src_backups", name: "backups", label: "Backups", notify: "messenger", ship: "none", shipChoices: ["none", "context", "wake"], webhook: "none", enabled: true, lastEventAtMs: Date.now() - 2 * 3_600_000, expectEveryMs: 86_400_000, createdBy: "ship", updatedAtMs: Date.now() },
+  { sourceId: "src_github", name: "github", label: "GitHub", notify: "none", ship: "wake", shipChoices: ["none", "context", "wake"], webhook: "hmac", hmac: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=", idHeader: "x-github-delivery", typeHeader: "x-github-event" }, enabled: true, lastEventAtMs: Date.now() - 40 * 60_000, createdBy: "person", updatedAtMs: Date.now() },
+];
+
+const MOCK_EVENTS: EventRecord[] = [
+  { sourceId: "src_backups", eventId: "2026-11-02", title: "Nightly backup failed", preview: "Disk full on nas-01, 3 of 12 folders copied", body: "rsync: write failed on /backup/photos: No space left on device (28)\nCopied 3 of 12 folders in 14 minutes.", emittedBy: "client", receivedAtMs: Date.now() - 2 * 3_600_000 },
+  { sourceId: "src_backups", eventId: "2026-11-01", title: "Nightly backup finished", preview: "12 folders, 41 GB", emittedBy: "schedule", receivedAtMs: Date.now() - 26 * 3_600_000 },
+  { sourceId: "src_github", eventId: "evt_8123", title: "gsv: pull request opened", preview: "Fix the first-run hint on small screens", emittedBy: "webhook", receivedAtMs: Date.now() - 40 * 60_000 },
+];
+
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
 
 /** A wall-clock instant some days back, so the conversation always spans yesterday and today. */
@@ -149,17 +170,84 @@ function at(daysAgo: number, hour: number, minute: number): number {
 
 const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
-  ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["ship", at(1, 9, 13), "Done. Three action items are in /home/esteve/notes/mara.md: the deck for Thursday, the intro to Lena, and the follow-up on pricing. The full call notes are in ~/notes/calls/. I set a reminder for the deck on Wednesday evening."],
+  ["you", at(1, 12, 2), "Paste the paragraph I need to send Lena so I can copy it as is."],
+  ["ship", at(1, 12, 2), "Here it is, exactly as you drafted it:\n\n```\nHi Lena, thanks again for Tuesday. As discussed, I'll send the revised deck by Thursday and loop Mara in on the pricing thread so we can close the quote before the end of the week.\nBest, Alex\n```"],
   ["you", at(1, 18, 40), "What's still open from this week?"],
   ["ship", at(1, 18, 40), "Two things. The pricing follow-up with Mara, and the studio backup, which has failed since Monday because the drive is nearly full."],
   ["you", at(0, 8, 5), "Morning. Anything I should know before the standup?"],
   ["ship", at(0, 8, 6), "Nothing urgent. The studio backup ran clean overnight after I cleared the old build caches, and Lena replied about the intro; she is in. Standup is at 9:30."],
+  ["ship", at(0, 8, 7), "If you want to look at the backup yourself: the script is ~/notes/backup.sh, last night's run is at the end of ~/notes/sync.log, and ~/notes/drive.png shows the drive after the cleanup. The quote for a bigger drive is in ~/notes/studio.pdf."],
 ];
 
 const WELCOME = "Hi, I'm Ship. I'm here to do the things you'd rather not deal with: booking restaurants, planning trips, sorting out emails, managing your calendar, even making purchases and tracking parcels for you. Tell me a little about yourself. What do you do, and is there anything I can help with?";
 const FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. I know nothing about them yet, so the brief says to introduce myself briefly, ask them to introduce themselves, then yield and wait for the reply.";
 const SHORT_REPLY = "Done. The action items are in your notes under Mara, and the reminder is set for Wednesday evening.";
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
+
+/*
+ * The Calibration sketch: every Ship message offers replies to tap, and each answer, tapped or typed,
+ * shapes the next question. Ship would write these lines itself; its brief would set only the shape.
+ */
+type CalibrationTurn = { text: string; choices?: string[] };
+/** The city the browser's clock is set to, the one thing Ship knows before the first answer. */
+const CALIBRATION_CITY = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replaceAll("_", " ") ?? "Lisbon";
+/** What an answer to "what eats your week" lets Ship guess and offer; only a named answer carries a trait. */
+type CalibrationWeek = { trait?: string; guess: [text: string, trait: string]; missions: string[] };
+const CALIBRATION_WEEK = new Map<string, CalibrationWeek>([
+  ["Email", { trait: "drowning in email", guess: ["you have more than a thousand unread emails", "a thousand unread"], missions: ["A 9 am digest of what matters", "Clear out the newsletters", "Drafts for the replies I owe"] }],
+  ["Work admin", { trait: "buried in admin", guess: ["there's a form you've been putting off for weeks", "one form behind"], missions: ["Chase my open follow-ups", "Friday: next week's deadlines", "Turn my notes into to-dos"] }],
+  ["Family logistics", { trait: "runs the family logistics", guess: ["you're the one who remembers everyone's birthdays", "remembers every birthday"], missions: ["Sunday 8 pm: the week in 3 lines", "School and activity reminders", "A weekend plan for the kids"] }],
+  ["Money", { trait: "keeps the money straight", guess: ["you pay for a subscription you forgot about", "one forgotten subscription"], missions: ["Bills due this month", "Subscriptions I forgot", "A Sunday spending check"] }],
+  ["Travel", { trait: "always planning a trip", guess: ["you already have the next trip in mind", "next trip in mind"], missions: ["Watch prices for my next trip", "Plan a long weekend", "Everything I need before I fly"] }],
+]);
+const CALIBRATION_ANY_WEEK: CalibrationWeek = { guess: ["there's something you've meant to sort out for weeks", "one thing put off for weeks"], missions: ["A 9 am brief of my day", "Sunday 8 pm: the week in 3 lines", "Remind me what I promise people"] };
+const CALIBRATION_REACTIONS = new Map<string, string>([
+  ["What can you do?", "Errands, plans, reminders, inbox, research. Easier to show than tell, so let's start."],
+  ["Morning person", "Early start. I'll have things ready before you are."],
+  ["Night owl", "Noted. Nothing from me before 9 unless it's urgent."],
+  ["Depends on coffee", "Fair. I'll read the room."],
+  ["Email", "I can get your inbox down to what matters."],
+  ["Work admin", "Forms and follow-ups. That's my kind of work."],
+  ["Family logistics", "The invisible job. I can carry a lot of that."],
+  ["Money", "Bills, renewals, small leaks. I'll keep an eye on them."],
+  ["Travel", "Trips and everything around them. Easy to hand over."],
+  ["Something else", "Tell me in a word or two whenever you like."],
+  ["Yes", `${CALIBRATION_CITY} it is.`],
+  ["Somewhere else", "Tell me the city when it matters."],
+  ["Guilty", "Knew it."],
+  ["Not even close", "Noted. I'll stop guessing."],
+  ["Spot on", "Good."],
+  ["Fix something", "Tell me what's off in your own words, any time."],
+]);
+/** What Ship asks after `answers`, the replies so far in order. */
+function calibrationTurn(answers: readonly string[]): CalibrationTurn {
+  const week = CALIBRATION_WEEK.get(answers[2] ?? "") ?? CALIBRATION_ANY_WEEK;
+  switch (answers.length) {
+    case 0: return { text: "Hi, I'm Ship. Before I start working for you, let me calibrate: five quick taps, about a minute.", choices: ["Let's go", "What can you do?"] };
+    case 1: return { text: "**1 / 5** · Mornings or nights?", choices: ["Morning person", "Night owl", "Depends on coffee"] };
+    case 2: return { text: "**2 / 5** · What eats most of your week?", choices: ["Email", "Work admin", "Family logistics", "Money", "Travel", "Something else"] };
+    case 3: return { text: `**3 / 5** · Your clock says ${CALIBRATION_CITY}. Is that home?`, choices: ["Yes", "Somewhere else"] };
+    case 4: return { text: `**4 / 5** · A guess: ${week.guess[0]}.`, choices: ["Guilty", "Not even close"] };
+    case 5: return { text: "**5 / 5** · Pick one for me to take off your plate this week.", choices: week.missions };
+    case 6: {
+      const traits = [
+        { "Morning person": "morning person", "Night owl": "night owl", "Depends on coffee": "runs on coffee" }[answers[1]],
+        week.trait,
+        answers[3] === "Yes" ? CALIBRATION_CITY : undefined,
+        answers[4] === "Guilty" ? week.guess[1] : undefined,
+      ].filter((trait) => trait !== undefined);
+      return { text: `Good pick. Here's what I've got so far:\n\n> ${traits.length ? traits.join(" · ") : "not much yet, which is fine"}\n\nDid I get you right?`, choices: ["Spot on", "Fix something"] };
+    }
+    case 7: return { text: "Last one. Where should I reach you?", choices: ["WhatsApp", "Telegram", "Right here"] };
+    default: {
+      const there = answers[7] === "WhatsApp" || answers[7] === "Telegram" ? `on ${answers[7]}` : "here";
+      return { text: `Calibrated. First up: **${answers[5]}**. I'll send it ${there}, and you can change anything just by telling me.` };
+    }
+  }
+}
+/** The replies to the mock Calibration so far, or null when none is running. */
+let calibration: string[] | null = null;
 const LONG_REPLY = [
   "Here is where things stand with the studio backup.",
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
@@ -172,7 +260,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -199,6 +287,15 @@ const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
 /* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
    in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
 const maraSends = new Map<string, Promise<ContactSendResult>>();
+
+/* Work › connect a place: invitations live for this tab and expire after ten minutes, as the Kernel's do; the
+   pairing code itself is built by the browser from the invitation and its own secret, so nothing here needs one */
+const PAIRING_TTL_MS = 10 * 60 * 1000;
+const pairings = new Map<string, DevicePairing>();
+const pairCreateArgs = z.object({ id: z.string(), secret: z.string(), targetId: z.string(), label: z.string(), replace: z.boolean().optional() });
+function pairingNow(pairing: DevicePairing): DevicePairing {
+  return pairing.state === "pending" && pairing.expiresAt <= Date.now() ? { ...pairing, state: "expired" } : pairing;
+}
 function maraConversation(): ConversationSummary {
   return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
 }
@@ -250,7 +347,128 @@ type Step = {
   failure?: string;
 };
 
+const MARA_NOTES = "# Mara\n\n- Deck for Thursday (reminder Wednesday evening)\n- Intro to Lena\n- Follow up on pricing\n";
 const NOTES = "# Backups\n\nStudio drive: /Volumes/Studio, 1.8 TB.\nNightly rsync to /Volumes/Backups at 02:00 (launchd).\nKeep 30 days; caches under Library/Caches/Builds are not backed up.\n\nFailing since Monday: drive at 95%, rsync exits before finishing.\n";
+
+const BACKUP_SCRIPT = `#!/bin/zsh
+# Nightly studio backup, run by launchd at 02:00 (com.esteve.studio-backup).
+set -euo pipefail
+
+SOURCE="/Volumes/Studio/"
+DEST="/Volumes/Backups/studio"
+LOG="$HOME/notes/sync.log"
+KEEP_DAYS=30
+
+log() { print -r -- "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> "$LOG"; }
+
+if [[ ! -d "$DEST" ]]; then
+  log "backup: $DEST is not mounted, skipping"
+  exit 1
+fi
+
+log "backup: starting"
+rsync -a --delete --stats \\
+  --exclude "Library/Caches/Builds" \\
+  --exclude "node_modules" \\
+  --exclude "*.tmp" \\
+  "$SOURCE" "$DEST/current/" 2>&1 | sed "s/^/rsync: /" >> "$LOG"
+
+find "$DEST/snapshots" -maxdepth 1 -mtime +"$KEEP_DAYS" -exec rm -rf {} +
+log "backup: finished"
+`;
+
+/** Thirty nights of the studio backup, twenty lines each: clean, then failing from the 27th, clean again on the 2nd. */
+function syncLog(): string {
+  let seed = 7;
+  const next = (span: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % span; };
+  const folders = ["Projects", "Clients", "Photos", "Audio", "Archive", "Fonts", "Renders", "Documents"];
+  const lines: string[] = [];
+  for (let night = 0; night < 30; night++) {
+    const date = new Date(Date.UTC(2026, 9, 4 + night, 2, 0, 0));
+    const failing = date.getUTCMonth() === 9 && date.getUTCDate() >= 27 || date.getUTCMonth() === 10 && date.getUTCDate() === 1;
+    let second = 0;
+    const line = (text: string) => {
+      second += 20 + next(90);
+      lines.push(`${new Date(date.getTime() + second * 1000).toISOString().replace(".000", "")} ${text}`);
+    };
+    line("backup: starting");
+    line("rsync: building file list");
+    for (let index = 0; index < 14; index++) {
+      const folder = folders[next(folders.length)];
+      const files = 40 + next(1600);
+      line(`rsync: sent ${files.toLocaleString("en-US")} files from ${folder} (${(files * (0.4 + next(30) / 10)).toFixed(1)} MB)`);
+    }
+    line("rsync: skipped Library/Caches/Builds (excluded)");
+    if (failing) {
+      line("rsync: write failed on /Volumes/Backups/studio/current/Renders: No space left on device (28)");
+      line("rsync error: error in file IO (code 11) at receiver.c(381) [receiver=3.2.7]");
+      line(`backup: stopped after ${Math.round(second / 60)} minutes, drive at ${94 + next(2)}%`);
+    } else {
+      line(`rsync: total transferred ${(1 + next(40) / 4).toFixed(1)} GB, speedup ${(20 + next(200) / 10).toFixed(1)}`);
+      const removed = 1 + next(2);
+      line(`find: removed ${removed} snapshot${removed === 1 ? "" : "s"} older than 30 days`);
+      line(`backup: finished in ${Math.round(second / 60)} minutes, drive at ${night < 23 ? 88 + next(5) : 81}%`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** A 96 by 24 picture of the studio drive's fill, 95% used. */
+const DRIVE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAGAAAAAYCAIAAACKi2/DAAAAWklEQVR42u3ZoRWAIABFUQYjGBnBCYyuwJYEkpEtsJo4oNF7zpvgxv9D3JIGBQRTQO3cVer1DNAKUM+HAAECBAgQIECAAAECBAgQIECAfgRkLbMofgOSV+NlN/UT9JvUe4xOAAAAAElFTkSuQmCC";
+/** 1.2 MB, the way the gateway rounds it when it refuses to read the PDF as text. */
+const STUDIO_PDF_SIZE = 1_258_291;
+
+/** A one-page PDF padded after its end marker to the size the listing reports. */
+function studioPdf(): Uint8Array {
+  const pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
+  const bytes = new Uint8Array(STUDIO_PDF_SIZE).fill(0x20);
+  bytes.set(new TextEncoder().encode(pdf));
+  return bytes;
+}
+
+/** A fixture file: its type and a way to its bytes. */
+type MockFile = { contentType: string; bytes: () => Uint8Array };
+
+/** What each fixture file holds; anything else under a path reads as the backup notes. */
+function mockFile(path: string): MockFile {
+  const text = (content: string, contentType = "text/markdown"): MockFile => ({ contentType, bytes: () => new TextEncoder().encode(content) });
+  switch (path) {
+    case "/home/esteve/notes/mara.md": return text(MARA_NOTES);
+    case "/home/esteve/notes/backup.sh": return text(BACKUP_SCRIPT, "text/x-shellscript");
+    case "/home/esteve/notes/sync.log": return text(syncLog(), "text/plain");
+    case "/home/esteve/notes/drive.png": return { contentType: "image/png", bytes: () => Uint8Array.from(atob(DRIVE_PNG), (char) => char.charCodeAt(0)) };
+    case "/home/esteve/notes/studio.pdf": return { contentType: "application/pdf", bytes: studioPdf };
+    default: return text(NOTES);
+  }
+}
+
+/** A text read the way the gateway answers one: lines from `offset`, at most `limit`, within `maxBytes`. */
+function readTextLines(content: string, offset = 0, limit?: number, maxBytes?: number) {
+  // a closing newline ends the last line rather than starting another, as the preview counts them
+  const all = (content.endsWith("\n") ? content.slice(0, -1) : content).split("\n");
+  const requested = all.slice(offset, limit === undefined ? undefined : offset + limit);
+  const encoder = new TextEncoder();
+  const selected: string[] = [];
+  let used = 0;
+  let partial = false;
+  for (const line of requested) {
+    const bytes = encoder.encode(line);
+    const separator = selected.length === 0 ? 0 : 1;
+    if (maxBytes === undefined || used + separator + bytes.byteLength <= maxBytes) {
+      selected.push(line);
+      used += separator + bytes.byteLength;
+      continue;
+    }
+    if (selected.length === 0) {
+      selected.push(new TextDecoder().decode(bytes.subarray(0, maxBytes)).replace(/�$/, ""));
+      partial = true;
+    }
+    break;
+  }
+  const truncated = partial || offset + selected.length < all.length;
+  const text = selected.join("\n") + (truncated || !content.endsWith("\n") ? "" : "\n");
+  return { text, lines: selected.length, truncated, nextOffset: truncated && !partial && selected.length > 0 ? offset + selected.length : undefined };
+}
 
 const DF = "Filesystem      Size   Used  Avail Capacity  Mounted on\n/dev/disk4s1   1.8Ti  1.7Ti   96Gi    95%    /Volumes/Studio";
 const RSYNC_STATS = "Number of files: 48,211 (reg: 44,930, dir: 3,281)\nNumber of created files: 2,140\nNumber of regular files transferred: 2,140\nTotal file size: 1,412,377,190,144 bytes\nTotal transferred file size: 38,116,482,048 bytes\n\nsent 2,893,114 bytes  received 12,406 bytes  1,163,808.00 bytes/sec\ntotal size is 1,412,377,190,144  speedup is 486,150.03 (DRY RUN)";
@@ -365,11 +583,32 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
+const responsibilitySources: ResponsibilitySourcePolicy[] = [
+  { id: "interaction.response", name: "Conversation replies", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "process.delegation", name: "Delegated work", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "schedule.due", name: "Scheduled responsibilities", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "memory.review", name: "Personal memory", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "mail.received", name: "Incoming mail", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "machine.added", name: "New machines", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.connected", name: "Connected adapters", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.auth_required", name: "Adapter authentication", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+];
+const mockRule = (kind: NoticeRule["kind"], contact: boolean): NoticeRule => contact
+  ? { kind, notify: "messenger", ship: "context", defaultNotify: "messenger", defaultShip: "context", shipChoices: ["none", "context"] }
+  : { kind, notify: "none", ship: "wake", defaultNotify: "none", defaultShip: "wake", shipChoices: ["none", "context", "wake"] };
+let noticeRules: NoticeRule[] = [
+  mockRule("contact.request", true), mockRule("contact.message", true), mockRule("contact.invite.accepted", true),
+  mockRule("mail.received", false), mockRule("machine.added", false), mockRule("adapter.connected", false), mockRule("adapter.auth_required", false),
+];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
+/* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
+let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
+  { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
+];
 let streamSeq = 0;
 
-function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
+function record(who: "you" | "ship", text: string, createdAt: number, runId: string, choices?: string[]): ConversationMessage {
   const sequence = ++world.sequence;
   const message: ConversationMessage = {
     id: `m-${sequence}`,
@@ -377,6 +616,7 @@ function record(who: "you" | "ship", text: string, createdAt: number, runId: str
     sequence,
     author: who === "you" ? { kind: "user", uid: OWNER.uid } : { kind: "process", pid: SHIP.pid, uid: SHIP.uid },
     text,
+    ...(choices?.length ? { choices } : undefined),
     origin: who === "you" ? { kind: "client", clientId: "gsv-ui", platform: "browser" } : { kind: "process", pid: SHIP.pid, runId },
     ...(who === "ship" ? { processId: SHIP.pid, runId } : undefined),
     createdAt,
@@ -664,7 +904,7 @@ function interrupt(run: OpenRun): void {
 }
 
 /** The reply is a Send: its text streams to the conversation while the tool call streams to observers; the commit records both. */
-async function send(run: OpenRun, text: string, streamed: boolean, finish = true): Promise<void> {
+async function send(run: OpenRun, text: string, streamed: boolean, finish = true, choices?: string[]): Promise<void> {
   const callId = `call-${run.runId}-send-${world.recordId + 1}`;
   const content: AssistantContent[] = [{ type: "toolCall", id: callId, name: "Send", arguments: {} }];
   stream(run, { type: "toolcall_start", contentIndex: 0, partial: partial(content) });
@@ -687,15 +927,15 @@ async function send(run: OpenRun, text: string, streamed: boolean, finish = true
     broadcast("message.delta", { ...started, delta: text });
   }
   if (!live(run)) return;
-  const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text } };
+  const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text, ...(choices ? { choices } : undefined) } };
   content[0] = call;
   stream(run, { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: partial(content) });
   stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
   appendGroup(run.runId, [
     { kind: "note", payload: { text: "", thinking: [{ type: "thinking", thinking: "I have what I need; tell them plainly." }] } },
-    { kind: "call", payload: { callId, tool: "Send", syscall: null, args: { text }, target: null, runId: run.runId } },
+    { kind: "call", payload: { callId, tool: "Send", syscall: null, args: { text, ...(choices ? { choices } : undefined) }, target: null, runId: run.runId } },
   ], { provider: MODEL });
-  const message = record("ship", text, Date.now(), run.runId);
+  const message = record("ship", text, Date.now(), run.runId, choices);
   broadcast("message.committed", { message, directed: true });
   appendGroup(run.runId, [
     { kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${callId}` } },
@@ -741,9 +981,25 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     if (live(run)) await send(run, long ? RUN_LONG_REPLY : RUN_REPLY, true);
     return;
   }
+  if (trigger === "/calibrate" || calibration !== null) {
+    const answer = question(run);
+    const answers = trigger === "/calibrate" || !calibration ? [] : [...calibration, answer];
+    const next = calibrationTurn(answers);
+    calibration = next.choices ? answers : null;
+    await wait(jitter(900));
+    if (!live(run)) return;
+    const reaction = answers.length > 0 && next.choices ? CALIBRATION_REACTIONS.get(answer) : undefined;
+    await send(run, reaction ? `${reaction}\n\n${next.text}` : next.text, true, true, next.choices);
+    return;
+  }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
   if (!live(run)) return;
   await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
+}
+
+/** What the person answered in the message that opened this run, as they wrote or tapped it. */
+function question(run: OpenRun): string {
+  return run.question?.text.trim() ?? "";
 }
 
 /**
@@ -774,10 +1030,12 @@ async function wake(): Promise<void> {
   await wait(jitter(800));
   if (!live(run)) return;
   // No routed client, so nothing streams: the welcome lands whole, a plain first message with no receipt under it.
-  const message = record("ship", WELCOME, Date.now(), run.runId);
+  const welcome: CalibrationTurn = fresh === "calibrate" ? calibrationTurn([]) : { text: WELCOME };
+  if (welcome.choices) calibration = [];
+  const message = record("ship", welcome.text, Date.now(), run.runId, welcome.choices);
   broadcast("message.committed", { message, directed: false });
-  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: WELCOME, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
-  finishRun(run, WELCOME);
+  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: welcome.text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
+  finishRun(run, welcome.text);
 }
 
 /** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */
@@ -826,6 +1084,13 @@ const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
 const abortArgs = z.object({ pid: z.string().optional() });
 const responsibilityListArgs = z.object({ states: z.array(z.enum(["open", "active", "waiting", "resolved", "cancelled"])).optional(), includeTerminal: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
+const fsReadArgs = z.object({
+  target: z.string().optional(), path: z.string(), offset: z.number().optional(), limit: z.number().optional(), maxBytes: z.number().optional(),
+  representation: z.enum(["content", "resource", "reference"]).optional(),
+});
+/** Fixture files never change, so one revision names every one of them. */
+const MOCK_REVISION = "mock-1";
+const homePath = (path: string) => path === "." ? OWNER.home : path.replace(/^~(?=\/|$)/, OWNER.home);
 const scheduleListArgs = z.object({ includeDisabled: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
 
 function respond<T>(id: string, data: T): string {
@@ -841,8 +1106,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
-      // Reconnecting after the card was dismissed resumes the welcome, as the Kernel does on sign-in.
-      if (fresh && window.localStorage.getItem(WELCOME_SEEN) === "1") void wake();
+      // Signing in wakes a fresh Ship for its welcome, as the Kernel does.
+      if (fresh) void wake();
       return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
     case "sys.token.create": {
       const token: SysTokenCreateResult = { token: { tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
@@ -862,10 +1127,62 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const storage = STORED_CONFIG.get(key);
       if (!storage) return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
       window.localStorage.setItem(storage, value);
-      if (fresh && storage === WELCOME_SEEN && value === "1") void wake();
       return respond(id, { ok: true });
     }
     case "account.list": return respond(id, { accounts });
+    case "event.source.list": return respond(id, { sources: mockEventSources });
+    case "event.source.update": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const change = args as { name: string; notify?: "none" | "messenger"; ship?: "none" | "context" | "wake"; enabled?: boolean };
+      const source = mockEventSources.find((entry) => entry.name === change.name);
+      if (source) Object.assign(source, change);
+      return respond(id, { source });
+    }
+    case "event.source.add": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const input = args as EventSourceAddArgs;
+      const webhook = input.webhook ?? "none";
+      const senderSecret = input.senderSecret === true || input.secret !== undefined;
+      const source: EventSource = {
+        sourceId: `src_${input.name}`, name: input.name, label: input.name, notify: "messenger", ship: "none",
+        shipChoices: webhook === "url" ? ["none", "context"] : ["none", "context", "wake"], webhook,
+        ...(input.hmac ? { hmac: input.hmac } : undefined),
+        ...(senderSecret ? { senderSecret: true } : undefined),
+        ...(senderSecret && !input.secret ? { awaitingSecret: true } : undefined),
+        enabled: true, createdBy: "person", updatedAtMs: Date.now(),
+      };
+      mockEventSources.push(source);
+      return respond(id, { source, ...(webhook === "none" ? undefined : { webhookUrl: `https://esteve.ship.space/hooks/src_${input.name}` }), ...(webhook === "none" || webhook === "url" || senderSecret ? undefined : { secret: "mock-secret" }) });
+    }
+    case "event.source.rotate": {
+      // SAFETY: the Work page in this tab sends these shapes.
+      const input = args as { name: string; secret?: string };
+      const source = mockEventSources.find((entry) => entry.name === input.name);
+      if (source && input.secret) delete source.awaitingSecret;
+      return respond(id, { source, ...(input.secret ? undefined : { secret: "mock-secret-2" }) });
+    }
+    case "event.list": {
+      // SAFETY: the Work page in this tab sends these shapes.
+      const name = (args as { source?: string }).source;
+      const source = mockEventSources.find((entry) => entry.name === name);
+      return respond(id, { events: source ? MOCK_EVENTS.filter((event) => event.sourceId === source.sourceId) : MOCK_EVENTS });
+    }
+    case "event.source.remove": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const name = (args as { name: string }).name;
+      const index = mockEventSources.findIndex((entry) => entry.name === name);
+      if (index >= 0) mockEventSources.splice(index, 1);
+      return respond(id, { removed: index >= 0 });
+    }
+    case "notify.rule.list": return respond(id, { rules: noticeRules });
+    case "notify.rule.set": {
+      const change = z.object({ kind: z.string(), notify: z.enum(["none", "messenger"]).optional(), ship: z.enum(["none", "context", "wake"]).optional() }).parse(args);
+      const current = noticeRules.find((entry) => entry.kind === change.kind);
+      if (!current) throw new Error(`Unknown kind: ${change.kind}`);
+      const rule: NoticeRule = { ...current, notify: change.notify ?? current.notify, ship: change.ship ?? current.ship, changedBy: "person", updatedAtMs: Date.now() };
+      noticeRules = noticeRules.map((entry) => entry === current ? rule : entry);
+      return respond(id, { rule });
+    }
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
     case "proc.list": return respond(id, { processes: processes() });
@@ -934,11 +1251,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
+      /* A linked messenger reports its account as connected; disconnecting drops both. */
+      accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
@@ -947,6 +1266,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
+      if (!messengerLinks.some((link) => link.adapter === adapter)) messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
@@ -1029,13 +1350,45 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: [] });
+    case "sys.pair.create": {
+      /* the same id answers with the invitation it already made, so the browser's retry and cancel reconcile */
+      const { id: pairingId, targetId, label } = pairCreateArgs.parse(args);
+      const existing = pairings.get(pairingId);
+      if (existing) return respond(id, { pairing: pairingNow(existing) });
+      const createdAt = Date.now();
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label: label.trim(), createdAt, expiresAt: createdAt + PAIRING_TTL_MS, state: "pending" };
+      pairings.set(pairingId, pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.pair.list": return respond(id, { pairings: [...pairings.values()].map(pairingNow).sort((a, b) => b.createdAt - a.createdAt) });
+    case "sys.pair.cancel": {
+      const { id: pairingId } = z.object({ id: z.string() }).parse(args);
+      const current = pairings.get(pairingId);
+      if (!current) return refuse(id, 404, "Pairing invitation not found");
+      const pairing: DevicePairing = pairingNow(current).state === "pending" ? { ...current, state: "cancelled" } : pairingNow(current);
+      pairings.set(pairingId, pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.link.list": return respond(id, { links: messengerLinks });
+    case "adapter.pair.disconnect": {
+      const { adapter, accountId, actorId } = z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string() }).parse(args);
+      const before = messengerLinks.length;
+      messengerLinks = messengerLinks.filter((link) => !(link.adapter === adapter && link.accountId === accountId && link.actorId === actorId));
+      return respond(id, { disconnected: messengerLinks.length < before, adapter, accountId, actorId });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
       return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
     }
-    case "r12y.source.list": return respond(id, { sources: [] });
+    case "r12y.source.list": return respond(id, { sources: responsibilitySources });
+    case "r12y.source.update": {
+      const update = z.object({ id: z.string(), enabled: z.boolean() }).parse(args);
+      const source = responsibilitySources.find((entry) => entry.id === update.id);
+      if (!source || source.control !== "configurable") return refuse(id, 403, "This responsibility is always on");
+      source.enabled = update.enabled;
+      return respond(id, { source });
+    }
     case "r12y.get": {
       const { id: recordId } = z.object({ id: z.string() }).parse(args);
       const responsibility = responsibilities.find((record) => record.id === recordId);
@@ -1063,13 +1416,39 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { schedule });
     }
     case "fs.read": {
-      const { path: requestedPath } = z.object({ path: z.string() }).parse(args);
-      const path = ["~", "."].includes(requestedPath) ? "/home/esteve" : requestedPath;
-      if (path === "/") return respond(id, { ok: true, path, files: [], directories: ["home"] });
-      if (path === "/home") return respond(id, { ok: true, path, files: [], directories: ["esteve"] });
-      if (path === "/home/esteve") return respond(id, { ok: true, path, files: ["notes.md"], directories: ["notes"] });
-      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md"], directories: [] });
-      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
+      const read = fsReadArgs.parse(args);
+      const path = homePath(read.path);
+      const listing = (files: string[], directories: string[]) => respond(id, { ok: true, path, files, directories } satisfies FsReadResult);
+      if (path === "/") return listing([], ["home"]);
+      if (path === "/home") return listing([], ["esteve"]);
+      if (path === "/home/esteve") return listing(["notes.md"], ["notes"]);
+      if (path === "/home/esteve/notes") return listing(["backup.sh", "backups.md", "drive.png", "mara.md", "studio.pdf", "sync.log"], ["calls"]);
+      if (path === "/home/esteve/notes/calls") return listing(["mara-pricing.md"], []);
+      const file = mockFile(path);
+      const bytes = file.bytes();
+      const kind: "text" | "image" | "file" = file.contentType.startsWith("text/") ? "text" : file.contentType.startsWith("image/") ? "image" : "file";
+      const meta = { ok: true as const, path, kind, contentType: file.contentType, size: bytes.byteLength };
+      // `reference` answers any file by reference alone; `resource` does so for images and reads text
+      if (read.representation === "reference" || (read.representation === "resource" && kind === "image")) {
+        const resource: FileResourceReference = { type: "file", target: read.target?.trim() || "gsv", path, revision: MOCK_REVISION, contentType: file.contentType, size: bytes.byteLength };
+        return respond(id, { ...meta, resource } satisfies FsReadResult);
+      }
+      if (kind === "image") return socket.bytesResponse(id, meta satisfies FsReadResult, bytes);
+      if (kind === "file") return respond(id, { ok: false, error: `Binary file (${file.contentType}, ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB) — not readable as text` } satisfies FsReadResult);
+      const { text, lines, truncated, nextOffset } = readTextLines(new TextDecoder().decode(bytes), read.offset, read.limit, read.maxBytes);
+      // a cut-off read says so, and where the next one starts when it knows
+      const page = !truncated ? { ...meta, lines }
+        : nextOffset === undefined ? { ...meta, lines, truncated }
+        : { ...meta, lines, truncated, nextOffset };
+      return socket.textResponse(id, page satisfies FsReadResult, text);
+    }
+    case "fs.transfer.send": {
+      const { path: requestedPath, revision } = z.object({ target: z.string().optional(), path: z.string(), revision: z.string().optional() }).parse(args);
+      const path = homePath(requestedPath);
+      if (revision !== undefined && revision !== MOCK_REVISION) return respond(id, { ok: false, error: `${path} has changed since that revision` } satisfies FsTransferSendResult);
+      const file = mockFile(path);
+      const bytes = file.bytes();
+      return socket.bytesResponse(id, { ok: true, path, size: bytes.byteLength, contentType: file.contentType, revision: MOCK_REVISION } satisfies FsTransferSendResult, bytes);
     }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });
@@ -1112,9 +1491,13 @@ class MockSocket extends EventTarget implements WebSocket {
 
   /** The small preview fixture fits in the protocol's initial receive window. */
   textResponse<T>(id: string, data: T, text: string): string {
+    return this.bytesResponse(id, data, new TextEncoder().encode(text));
+  }
+
+  /** Every fixture body, the 1.2 MB PDF included, fits in the protocol's initial 4 MB receive window, so it goes as one frame. */
+  bytesResponse<T>(id: string, data: T, bytes: Uint8Array): string {
     const streamId = this.nextStreamId;
     this.nextStreamId += 2;
-    const bytes = new TextEncoder().encode(text);
     window.setTimeout(() => {
       if (this.readyState === this.OPEN) this.dispatchEvent(new MessageEvent("message", {
         data: buildBinaryFrame(streamId, BINARY_FRAME_DATA | BINARY_FRAME_END, bytes),

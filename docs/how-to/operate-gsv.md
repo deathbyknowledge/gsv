@@ -53,7 +53,7 @@ configure:
 
 ```sh
 GSV_OWNER_EMAIL_FROM=login@ship.space
-GSV_OWNER_EMAIL_REPLY_TO=hello@humansandmachin.es
+GSV_OWNER_EMAIL_REPLY_TO=support@humansandmachin.es
 ```
 
 The sender domain must be enabled for Cloudflare Email Sending in the deployment
@@ -187,12 +187,13 @@ Registration needs no invite code. One verified email can create one
 Ship, and an interrupted activation resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
-person's email and opens **My Ships**. Signing in there does not create a
+person's email, then goes straight to their Ship if they have exactly one that is
+active, where its own sign-in appears, or opens **My Ships** otherwise. Signing in there does not create a
 Ship or grant operator administration. To add an operator-created Ship to that
 list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
 choose **set up recovery**. This binds current root authorization to the verified
-email. The owner can then see the Ship in **My Ships** and start administrator
-recovery there if needed.
+email. The owner can then see the Ship in **My Ships** and use **Forgot your
+password?** on the Ship or there to set a new personal or administrator password.
 
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
@@ -205,9 +206,9 @@ verification mail is independent of a Ship's messaging adapters.
 A reset gives the same person a fresh Ship under the same handle, and it can't
 be undone. If the person only lost access, don't reset: recovery keeps their
 Ship, contacts and DID. They sign in to **My Ships** at `<admin-origin>/owner/login`
-with the owner email that the Ship's page shows, and choose **Recover your
-Ship** to reset the administrator password. A Ship whose owner isn't linked
-can't be recovered this way.
+with the owner email that the Ship's page shows, and choose **Forgot your
+password?** to set a new password, or start from the same link on their Ship's
+sign-in page. A Ship whose owner isn't linked can't be recovered this way.
 
 The **Reset** panel on the Ship's administration page says this first, then
 what a reset does before you confirm:
@@ -407,3 +408,70 @@ another disposable directory. Model calls still require an available provider.
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
 fresh deployment end to end before giving anyone a Ship on it.
+
+## Optional signup emails
+
+During signup, people can optionally check **Email me occasionally with cool Ship updates**.
+The box starts unchecked and is separate from the required account agreement.
+For new signups, Accounts queues explicit choices made when creating a Ship with a verified
+email. Sign-in and email verification alone never subscribe anyone.
+
+To deliver these requests, apply migration 0034 and supply an
+optional `ProductEmailService` as `PRODUCT_EMAIL`. The Accounts scheduled handler
+calls `runProductEmailJobs`; operator compositions may pass a local implementation
+of the same contract. Requests wait durably while the service is absent or
+unavailable. Inspect `product_email_signups.due_at`, `attempts` and `last_error`
+for failures. Retries reuse one request ID; completed requests are not replayed.
+The temporary signup IP is cleared after delivery.
+
+The operator's implementation owns provider credentials, tags, subscription
+status and suppression. It should preserve existing tags and unsubscribe choices.
+The managed Buttondown implementation enables delivery separately and appends
+the `user` tag to existing subscribers. Pending, unsubscribed, blocked and other
+suppressed addresses remain untouched.
+
+### Import earlier marketing signups
+
+An operator may fulfil earlier opt-ins when the delivery backend did not exist.
+Use a fixed cutoff covering that cohort and confirm the prior opt-ins when
+applying. Approval is separate from deployment and never runs during a migration.
+The preview selects verified active owners and active Ships created by the
+cutoff, once per address. Apply rechecks that ownership, address, verification
+and Ship eligibility still hold, and imports only the reviewed recipients.
+Future signups continue to require the checkbox.
+
+From the runtime checkout, using the Accounts Wrangler configuration and exact
+database name for the intended environment:
+
+```bash
+node scripts/product-email-backfill.mjs preview \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --cutoff 2026-11-02T00:00:00Z --out /tmp/product-email-import.json --remote
+```
+
+Review the recipients in the private JSON manifest and its cutoff, database and
+remote mode. Then apply that same manifest:
+
+```bash
+node scripts/product-email-backfill.mjs apply \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --manifest /tmp/product-email-import.json --confirm-existing-opt-ins --remote
+```
+
+The example cutoff must be replaced with the cohort boundary the operator has
+confirmed. Omit `--remote` for a local database. Preview writes no database
+state. The manifest is created with private file permissions; do not commit it.
+A changed manifest requires a fresh preview. Imports can be retried after an
+interruption: stable request IDs and the address key prevent duplicate requests,
+and completed deliveries and existing checkbox evidence remain unchanged.
+
+Imported rows carry source `ship-existing-user-backfill`, the import ID and
+`consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
+wording and locale are unknown; `requested_at` records the queue insertion time,
+not the historical opt-in. New checkbox choices retain their actual recorded
+timestamp and wording. Migration 0034 creates an empty table: deploying never
+adds an existing owner, and only this import does.
+
+Keep delivery disabled while upgrading and importing. Then enable it,
+and verify one new opted-in signup and one imported owner with the provider before
+considering rollout complete.

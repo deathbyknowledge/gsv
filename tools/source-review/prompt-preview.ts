@@ -40,11 +40,12 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       contextWindowTokens: 128000, contextWindowSource: "model",
       maxContextBytes: Number(SYSTEM_CONFIG_DEFAULTS["config/ai/max_context_bytes"]),
       systemContextFiles,
-      skillIndex: [...BUILTIN_SKILL_NAMES].sort().map((id) => {
+    },
+    skills: {
+      mode: "summary",
+      entries: [...BUILTIN_SKILL_NAMES].sort().map((id) => {
         const file = readSystemSkillPath(`${SYSTEM_SKILLS_ROOT}/${id}/SKILL.md`);
-        const metadata = parseSkillMarkdown(file.kind === "file" ? file.content : "", id);
-        return { id, name: metadata.name, description: metadata.description,
-          source: { kind: "system", label: "system", writable: false } };
+        return { id, description: parseSkillMarkdown(file.kind === "file" ? file.content : "", id).description };
       }),
     },
     runtime: { date: "2026-01-01", timezone: "UTC" },

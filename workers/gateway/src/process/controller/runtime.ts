@@ -14,6 +14,7 @@ import {
   type PendingHilRecord, type QueuedRun, ProcessStore, type ToolCallRecord,
 } from "../store";
 import type { RunState, ResponsibilityBatchState } from "../run/state";
+import type { RunFinishReason } from "../run/finish";
 import {
   abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
   cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
@@ -27,7 +28,7 @@ import {
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
@@ -67,6 +68,7 @@ const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) }
 type SendAdmissionInput = {
   args: Omit<ProcSendArgs, "media"> & {
     media?: Array<ResourceBlock | ProcMediaInput>;
+    quote?: ProcHistoryMessageQuote;
   };
   admittedRunId?: string;
   identity: Process["identity"];
@@ -74,6 +76,8 @@ type SendAdmissionInput = {
   mediaKeys: string[];
   origin: string | null;
   runId: string;
+  /** When the send reached the Process, before media resolution. */
+  receivedAt: number;
 };
 
 type InstalledSend = { result: ProcSendResult; installed: boolean };
@@ -146,7 +150,7 @@ async function admitQueuedSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId } = input;
+  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   const releaseAdmission = await host.controller.acquireQueuedSendAdmission();
   try {
@@ -191,6 +195,7 @@ async function admitQueuedSend(
         if (args.interaction) {
           enqueueOptions.kind = "conversation.message";
           enqueueOptions.provenance = JSON.stringify(args.interaction);
+          enqueueOptions.createdAt = receivedAt;
         }
         host.store.queue.enqueue(runId, args.message, enqueueOptions);
         return {
@@ -210,6 +215,7 @@ async function admitQueuedSend(
         if (args.interaction) {
           nextRun.conversationId = args.interaction.conversationId;
           nextRun.inputMessageId = args.interaction.messageId;
+          nextRun.inputAt = receivedAt;
         }
         host.runs.active = nextRun;
         return { result: { ok: true, status: "started", runId }, installed: true };
@@ -236,7 +242,7 @@ async function admitInterruptingSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId } = input;
+  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   try {
     const missingMediaKey = await host.resources.firstMissingMediaKey(mediaKeys);
@@ -292,11 +298,13 @@ async function admitInterruptingSend(
         queueKind: args.interaction ? "conversation.message" : "message",
         provenance: args.interaction,
         selectedTarget: args.selectedTarget,
+        quote: args.quote,
       });
       const nextRun: RunState = { runId };
       if (args.interaction) {
         nextRun.conversationId = args.interaction.conversationId;
         nextRun.inputMessageId = args.interaction.messageId;
+        nextRun.inputAt = receivedAt;
       }
       if (hasMedia) nextRun.pendingMediaMessageId = messageId;
       host.runs.active = nextRun;
@@ -737,6 +745,7 @@ export class ProcessController {
         record: next.record,
       });
       Object.assign(run, conversationRunState(next.kind, next.provenance));
+      if (run.inputMessageId) run.inputAt = next.createdAt;
       if (next.kind === "ipc.call") run.returnToCaller = true;
     } else {
       run.continuation = true;
@@ -801,12 +810,14 @@ export class ProcessController {
   async handleProcSend(
     args: Omit<ProcSendArgs, "media"> & {
       media?: Array<ResourceBlock | ProcMediaInput>;
+      quote?: ProcHistoryMessageQuote;
     },
     admittedRunId?: string,
   ): Promise<ProcSendResult> {
     if (!this.host.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
     }
+    const receivedAt = Date.now();
     const identity = this.host.identity;
     const runId = admittedRunId ?? crypto.randomUUID();
     if (admittedRunId) {
@@ -835,6 +846,7 @@ export class ProcessController {
           mediaKeys,
           origin,
           runId,
+          receivedAt,
         })
       : admitQueuedSend(this.host, {
           args,
@@ -844,6 +856,7 @@ export class ProcessController {
           mediaKeys,
           origin,
           runId,
+          receivedAt,
         });
   }
 
@@ -1316,7 +1329,7 @@ export class ProcessController {
     this.host.deferredTickRunIds.clear();
   }
 
-  async resetExecutionState(reason: string): Promise<void> {
+  async resetExecutionState(reason: RunFinishReason): Promise<void> {
     const resetError = new Error(`Process execution was reset: ${reason}`);
     this.host.settings.abortTitleGeneration(resetError);
     this.host.resources.abortMediaUploads(resetError);
@@ -1989,7 +2002,7 @@ export class ProcessController {
     const codeModeWaiter = this.host.codeModeResponses.get(frame.id);
     if (codeModeWaiter) {
       this.host.codeModeResponses.delete(frame.id);
-      clearTimeout(codeModeWaiter.timeoutId);
+      codeModeWaiter.deadline.clear();
       if (frame.ok) {
         this.host.tools.rememberShellSessionTargetFromResult(
           codeModeWaiter.call,

@@ -33,6 +33,23 @@ async function fixture() {
 }
 
 describe("owner identity front door", () => {
+  it("shares the Ship page shell, with its one inline script behind a nonce", async () => {
+    const f = await fixture();
+    for (const path of ["/owner/link", "/owner/recover?handle=my-ship", "/owner/nope"]) {
+      const response = (await f.http.handle(new Request(`${ORIGIN}${path}`)))!;
+      const policy = response.headers.get("content-security-policy") ?? "";
+      const nonce = policy.match(/script-src 'nonce-([a-f0-9]{64})'/)?.[1];
+      expect(nonce, path).toBeDefined();
+      expect(response.headers.get("cache-control"), path).toBe("no-store");
+      const body = await response.text();
+      expect(body, path).toContain(`<style nonce="${nonce}">`);
+      expect(body, path).not.toMatch(/<script>/);
+      expect(body, path).not.toMatch(/operator|principal|installation/i);
+      if (path === "/owner/link") expect(body).toContain(`<script nonce="${nonce}">`);
+      if (path.startsWith("/owner/recover")) expect(body).toContain('value="my-ship"');
+    }
+  });
+
   it("binds both proofs, links only the attested space, then authorizes owner recovery without choosing a local uid", async () => {
     const f = await fixture();
     for (const path of ["/owner/link", "/owner/recover"]) {

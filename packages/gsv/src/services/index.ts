@@ -13,3 +13,4 @@ export * from "./reports";
 export * from "./instances";
 export * from "./deployment";
 export * from "./operator";
+export type * from "./product-email";

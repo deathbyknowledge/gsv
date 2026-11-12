@@ -18,8 +18,11 @@ export async function assembleSystemPromptSnapshot(
   const regularParts: string[] = [];
   const sources: PromptSourceRecord[] = [];
 
-  for (const provider of providers) {
-    const sections = await provider.collect(input);
+  // Providers read separate sources, so they load together; their order still sets the prompt's.
+  const collected = await Promise.all(
+    providers.map(async (provider) => ({ provider, sections: await provider.collect(input) })),
+  );
+  for (const { provider, sections } of collected) {
     for (const section of sections) {
       const text = section.text.trim();
       if (!text) {

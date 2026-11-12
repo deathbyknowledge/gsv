@@ -11,9 +11,14 @@ export const discordMessagePayloadSchema = z.object({
   id: z.string(), author: discordAuthorSchema.optional(), content: z.string().optional(),
   guild_id: z.string().optional(), channel_id: z.string(), timestamp: z.string().optional(),
   attachments: z.array(discordAttachmentPayloadSchema).optional(), mentions: z.array(z.object({ id: z.string().optional() })).optional(),
-  message_reference: z.object({ message_id: z.string().optional() }).optional(),
+  message_reference: z.object({ type: z.number().optional(), message_id: z.string().optional() }).optional(),
   referenced_message: z.object({ author: z.object({ id: z.string().optional() }).optional() }).nullable().optional(),
 }).passthrough();
+/** Forwards also carry a message reference (type 1), but they copy a message rather than quote one. */
+export function discordReplyToId(message: z.infer<typeof discordMessagePayloadSchema>): string | undefined {
+  const reference = message.message_reference;
+  return reference && (reference.type ?? 0) === 0 ? reference.message_id : undefined;
+}
 export const discordGatewayFrameSchema = z.object({
   op: z.number().int(), t: z.string().nullish(), d: z.json().optional(), s: z.number().int().nullish(),
 });

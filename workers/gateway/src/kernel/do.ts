@@ -3,6 +3,7 @@ import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -61,6 +62,7 @@ import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
+import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -151,7 +153,7 @@ import {
 } from "./outbound-mail";
 import { approvalTargetIdentity, getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerArgsOf, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
@@ -201,6 +203,8 @@ import type {
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OwnerNoticeStore } from "./owner-notice-store";
+import { NoticeRuleStore } from "./notice-rules";
+import { EventSourceStore, noteSilentSources, receiveWebhook } from "./event-sources";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -268,6 +272,7 @@ type KernelTask =
     }
   | { callback: "onShipEvents"; payload: number }
   | { callback: "onOwnerNotices"; payload: number }
+  | { callback: "onEventUpkeep"; payload: null }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -346,6 +351,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onEventUpkeep"), payload: z.null() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -463,6 +469,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
   readonly ownerNotices: OwnerNoticeStore;
+  readonly noticeRules: NoticeRuleStore;
+  readonly eventSources: EventSourceStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -569,8 +577,16 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
-    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
+    // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
+    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId, component: "gateway",
+        event: { stream: "product", name: "onboarding.welcome.activated", properties: {} },
+      });
+    });
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
+    this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "notify.rule.changed"));
+    this.eventSources = new EventSourceStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "event.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
@@ -752,6 +768,46 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return this.installationIdentity ?? null;
   }
 
+  /** A delivery to a source's public address. A restricted Ship asks the sender to come back later. */
+  async receiveEventWebhook(
+    sourceId: string,
+    token: string | null,
+    headers: [string, string][],
+    body: Uint8Array,
+  ): Promise<{ status: number; retryAfter?: number }> {
+    this.retirement.assertActive();
+    const row = this.eventSources.byId(sourceId);
+    if (!row || this.auth.isAccountDisabled(row.owner_uid)) return { status: 404 };
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return { status: 503, retryAfter: 60 };
+    return receiveWebhook(sourceId, token, new Headers(headers), body, this.buildKernelContext({ callerOwnerUid: row.owner_uid }));
+  }
+
+  /** One pending task, moved earlier when a source would go quiet or a body expire sooner. */
+  private async queueEventUpkeep(excludeTaskId?: string): Promise<void> {
+    const next = this.eventSources.nextUpkeepAt();
+    if (next === null) return;
+    const due = Math.max(Date.now(), next);
+    const options: DurableTaskOptions = { idempotent: true };
+    if (excludeTaskId) options.excludeTaskId = excludeTaskId;
+    const existing = await this.schedule(new Date(due), "onEventUpkeep", null, options);
+    if (existing.time * 1_000 <= due + 1_000) return;
+    await this.cancelSchedule(existing.id);
+    await this.schedule(new Date(due), "onEventUpkeep", null, options);
+  }
+
+  private async onEventUpkeep(taskId: string): Promise<void> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) {
+      await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventUpkeep", null, { idempotent: true, excludeTaskId: taskId });
+      return;
+    }
+    this.eventSources.prune(Date.now());
+    const owners = noteSilentSources(this.eventSources, this.ownerNotices, this.auth, Date.now());
+    for (const ownerUid of owners) await this.ownerNoticeRuntime.queue(ownerUid);
+    await this.queueEventUpkeep(taskId);
+  }
+
   async instancesChanged(ownerUid: number): Promise<void> {
     this.retirement.assertActive();
     const gate = await this.onboarding.managedWorkGate();
@@ -846,11 +902,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return { authorized: true };
   }
 
-  async redeemAccountRecovery(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
+  async redeemAccountRecovery(input: ArgsOf<"account.recovery.redeem">): Promise<ResultOf<"account.recovery.redeem">> {
     this.retirement.assertActive();
-    const result = await this.accountRecovery.redeem(input);
-    this.connectionRuntime.invalidateAccountConnections(0);
-    return result;
+    const { username, uid, administratorChanged } = await this.accountRecovery.redeem(input);
+    this.connectionRuntime.invalidateAccountConnections(uid);
+    if (administratorChanged) this.connectionRuntime.invalidateAccountConnections(0);
+    return { username };
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -1018,6 +1075,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onOwnerNotices":
         await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
+        return;
+      case "onEventUpkeep":
+        await this.onEventUpkeep(task.id);
         return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
@@ -1669,6 +1729,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
       ownerNotices: this.ownerNotices,
+      noticeRules: this.noticeRules,
+      eventSources: this.eventSources,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
@@ -1697,6 +1759,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
       queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
+      queueEventUpkeep: () => this.queueEventUpkeep(),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
@@ -1889,16 +1952,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const principal = principalOf(ctx);
       if (!principal) return;
       const ownerUid = resolveCallerOwnerUid(ctx);
-      // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
-      // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
-        || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
-        ? { id: frame.args.id }
-        : frame.call === "account.password.set" ? { uid: frame.args.uid }
-        : frame.call === "sys.pair.create"
-        ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
-        : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
-        : frame.args) as JsonLike;
+      const args = ledgerArgsOf(frame);
       const seq = this.ledger.append({
         requestId: frame.id,
         timestamp: Date.now(),

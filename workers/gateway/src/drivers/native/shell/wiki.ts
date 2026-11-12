@@ -169,23 +169,21 @@ async function listWikiCollections(ctx: KernelContext): Promise<WikiCollection[]
   requireCommandCapability(ctx, "repo.list");
   requireCommandCapability(ctx, "repo.read");
   const repos = handleRepoList({}, ctx).repos;
-  const collections: WikiCollection[] = [];
-
-  for (const repo of repos) {
+  const collections = await Promise.all(repos.map(async (repo): Promise<WikiCollection[]> => {
     const manifest = await readWikiManifest(ctx, repo.repo);
     if (!manifest) {
-      continue;
+      return [];
     }
-    collections.push({
+    return [{
       id: normalizeWikiId(manifest.id || repo.name),
       title: manifest.title || titleFromPath(manifest.id || repo.name),
       repo: repo.repo,
       writable: repo.writable,
       updatedAt: repo.updatedAt ?? null,
-    });
-  }
+    }];
+  }));
 
-  return collections.sort((left, right) =>
+  return collections.flat().sort((left, right) =>
     left.title.localeCompare(right.title) || left.id.localeCompare(right.id)
   );
 }
@@ -355,27 +353,41 @@ async function searchWikis(
 ): Promise<WikiSearchMatch[]> {
   requireCommandCapability(ctx, "repo.search");
   const collections = await listWikiCollections(ctx);
-  const targets = searchTargets(collections, prefix);
-  const matches: WikiSearchMatch[] = [];
-
-  for (const target of targets) {
+  const results = await Promise.all(searchTargets(collections, prefix).map(async (target) => {
     const searchArgs: WikiSearchRequest = {
       repo: target.collection.repo,
       query,
     };
     if (target.localPath) searchArgs.prefix = target.localPath;
     const result = await handleRepoSearch(searchArgs, ctx);
-    for (const match of result.matches) {
-      matches.push({
-        collection: target.collection,
-        path: match.path,
-        line: match.line,
-        content: match.content,
-      });
-    }
-  }
+    return result.matches.map((match): WikiSearchMatch => ({
+      collection: target.collection,
+      path: match.path,
+      line: match.line,
+      content: match.content,
+    }));
+  }));
 
-  return matches.slice(0, limit);
+  return takeInTurns(results, limit);
+}
+
+/**
+ * Wikis take turns filling the limit, keeping each wiki's own order (best
+ * page first for word queries), so the wiki that sorts first can't crowd out
+ * the others.
+ */
+function takeInTurns<T>(lists: readonly (readonly T[])[], limit: number): T[] {
+  const taken = lists.map(() => 0);
+  let total = 0;
+  for (let round = 0; total < limit && lists.some((list) => list.length > round); round += 1) {
+    lists.forEach((list, index) => {
+      if (total < limit && list.length > round) {
+        taken[index] = round + 1;
+        total += 1;
+      }
+    });
+  }
+  return lists.flatMap((list, index) => list.slice(0, taken[index]));
 }
 
 function searchTargets(

@@ -6,8 +6,8 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PolicyConsentLabel } from "./PolicyLinks";
-import { OwnerWelcome, OwnerApiError, type OwnerSession, type PendingSetup, type WelcomeState } from "../../services/session/ownerWelcome";
-import { rich, useT } from "../../i18n/locale";
+import { OwnerWelcome, OwnerApiError, type OwnerSession, type PendingSetup, type WelcomeState, type ProductEmailChoice } from "../../services/session/ownerWelcome";
+import { currentLocale, rich, useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
@@ -39,6 +39,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [consent, setConsent] = useState(false);
   const [consentTouched, setConsentTouched] = useState(false);
   const consentId = useId();
+  const marketingId = useId();
+  const [productEmails, setProductEmails] = useState(false);
   const [code, setCode] = useState("");
   const codeInput = useRef<HTMLInputElement>(null);
   const [handle, setHandle] = useState("");
@@ -68,7 +70,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!chosen || !operationId) { setStep("claim"); return; }
     setCreationAttempt({ operationId, handle: chosen });
     try {
-      const prepared = await client.prepare(chosen, operationId);
+      const locale = currentLocale();
+      const choice: ProductEmailChoice | undefined = productEmails && !invitation
+        ? { wordingVersion: "ship-product-updates-2026-10-26", locale: locale === "es" || locale === "pt-BR" ? locale : "en" } : undefined;
+      const prepared = await client.prepare(chosen, operationId, choice);
       await onConnect(prepared.origin, prepared.onboardingToken);
     } catch (failure) {
       if (client.state.flow === "open") {
@@ -169,7 +174,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const loadError = loadFailed ? t("session.welcome.loadFailed") : "";
   const formError = error === handleError ? loadError : error || loadError;
   const start = (intent: "open" | "create") => void run(async () => {
-    setConsent(false); setConsentTouched(false);
+    setConsent(false); setConsentTouched(false); setProductEmails(false);
     if (intent === "open") setStep("email");
     if (!flow) return;
     const change: Partial<WelcomeState> = { flow: intent, operationId: null, handle: null };
@@ -245,7 +250,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
             inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />
           {spaceDomain && availability !== "available" && availability !== "unavailable" && <p class="desktop-welcome-detail desktop-welcome-address-preview">{t("session.welcome.addressPreview")} <span>{handle.trim() || t("session.welcome.handlePlaceholder")}.{spaceDomain}</span></p>}
         </div>}
-        {(step === "email" || (step === "claim" && !owner)) && <TextInput label={t("session.welcome.email")} value={email} onChange={setEmail} disabled={busy} placeholder={t("session.welcome.emailPlaceholder")}
+        {(step === "email" || (step === "claim" && !owner)) && <TextInput label={t("session.welcome.email")} value={email} onChange={(value) => { setEmail(value); setProductEmails(false); }} disabled={busy} placeholder={t("session.welcome.emailPlaceholder")}
           inputProps={{ autoFocus: step === "email", type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
         {requiresConsent && <div class={`gsv-owner-consent${consentError ? " is-error" : ""}`}>
           <div class="gsv-owner-consent-row">
@@ -257,6 +262,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
             <PolicyConsentLabel id={consentId} />
           </div>
           {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">{t("session.consent.required")}</p>}
+        </div>}
+        {step === "claim" && !invitation && <div class="gsv-owner-consent gsv-owner-consent-row">
+          <input id={marketingId} type="checkbox" checked={productEmails} disabled={busy} onChange={(event) => setProductEmails(event.currentTarget.checked)} />
+          <label for={marketingId}>{t("session.productEmails.choice")}</label>
         </div>}
         {step === "code" && <TextInput label={t("session.welcome.code")} value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
           placeholder="000000" inputProps={{ ref: codeInput, autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />}

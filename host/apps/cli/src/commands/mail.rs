@@ -11,8 +11,8 @@ use crate::render::{self, Cell, Style, Table, Tone};
 /// Messages fetched per call while skipping to a later page.
 const SKIP_BATCH: u64 = 100;
 
-/// Arguments for one page. `mail.list` and `mail.search` page with an opaque
-/// cursor, so `--page N` stays stateless by walking past the newer messages
+/// Arguments for one page. `mail.list`, `mail.search` and `mail.sent` page
+/// with an opaque cursor, so `--page N` stays stateless by walking past the newer messages
 /// first; `before` is `None` when there are no messages that old.
 async fn page_args(
     client: &KernelClient,
@@ -115,6 +115,40 @@ fn page_table(style: &Style, messages: &[Value], now: i64) -> String {
     table.render(style)
 }
 
+fn sent_table(style: &Style, sent: &[Value], now: i64) -> String {
+    let mut table = Table::new(&["To", "Subject", "State", "When"])
+        .flex(1)
+        .limit(0, 40);
+    for outbound in sent {
+        let (state, tone) = match text(outbound, "state") {
+            "accepted" => ("sent".to_string(), Tone::Good),
+            "failed" => (
+                opt_text(outbound, "errorCode")
+                    .map_or_else(|| "failed".to_string(), |code| format!("failed: {code}")),
+                Tone::Bad,
+            ),
+            "unknown" => ("unconfirmed".to_string(), Tone::Warn),
+            _ => ("sending".to_string(), Tone::Normal),
+        };
+        let mut to = text(outbound, "to").to_string();
+        if let Some(cc) = opt_text(outbound, "cc") {
+            to.push_str(&format!(", cc {cc}"));
+        }
+        table.row(vec![
+            to.into(),
+            render::one_line(text(outbound, "subject")).into(),
+            Cell::new(state, tone),
+            Cell::new(
+                number(outbound, "createdAt")
+                    .map(|at| render::relative_time(at, now))
+                    .unwrap_or_default(),
+                Tone::Dim,
+            ),
+        ]);
+    }
+    table.render(style)
+}
+
 fn print_page(
     out: Output,
     result: &Value,
@@ -203,6 +237,39 @@ pub(crate) async fn run(
                 || format!("Older matches: {}", next_page(&command, &page)),
             )
         }
+        Some(MailAction::Sent { page }) => {
+            let result = match page_args(&client, "mail.sent", json!({}), &page).await? {
+                Some(args) => call(&client, "mail.sent", args).await?,
+                None => json!({ "outbound": [] }),
+            };
+            if out.json {
+                return render::print_json(&result);
+            }
+            let sent = items(&result, "outbound");
+            if sent.is_empty() {
+                let empty = if page.page > 1 {
+                    "No sent mail that old."
+                } else {
+                    "Nothing sent yet."
+                };
+                print!("{}", render::empty(&style, empty, None));
+                return Ok(());
+            }
+            print!(
+                "{}",
+                render::heading(
+                    &style,
+                    "Sent",
+                    Some(&render::count(sent.len(), "message", "messages"))
+                )
+            );
+            print!("{}", sent_table(&style, sent, render::now_ms()));
+            if opt_text(&result, "next").is_some() {
+                let older = format!("Older: {}", next_page("gsv mail sent", &page));
+                print!("{}", render::hint(&style, &older));
+            }
+            Ok(())
+        }
         Some(MailAction::Read { id }) => {
             let message_id = message_id(&id);
             let result = call(&client, "mail.read", json!({ "messageId": message_id })).await?;
@@ -276,6 +343,7 @@ pub(crate) async fn run(
         }
         Some(MailAction::Send {
             to,
+            cc,
             subject,
             message,
         }) => {
@@ -285,11 +353,22 @@ pub(crate) async fn run(
                     "Write the message after the address, or pipe it in: gsv mail send ana@example.com < note.txt",
                 )?,
             };
+            let recipients = |list: &str| -> Vec<String> {
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|address| !address.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            };
             let mut args = json!({
-                "to": to,
+                "to": recipients(&to),
                 "text": body,
                 "deliveryId": uuid::Uuid::new_v4().to_string(),
             });
+            let copies: Vec<String> = cc.iter().flat_map(|entry| recipients(entry)).collect();
+            if !copies.is_empty() {
+                args["cc"] = json!(copies);
+            }
             if let Some(subject) = subject {
                 args["subject"] = json!(subject);
             }
@@ -305,7 +384,11 @@ pub(crate) async fn run(
                 };
                 return Err(format!("{}{retry}", text(&result, "error")).into());
             }
-            let (from, to) = (text(&result, "from"), text(&result, "to"));
+            let from = text(&result, "from");
+            let to = match opt_text(&result, "cc") {
+                Some(cc) => format!("{}, copying {cc}", text(&result, "to")),
+                None => text(&result, "to").to_owned(),
+            };
             if out.json {
                 if text(&result, "state") == "failed" {
                     return Err(format!("The mail to {to} could not be sent.").into());
@@ -347,11 +430,12 @@ pub(crate) async fn run(
                 "unknown" => ("unknown; the mail service didn't confirm", Tone::Warn),
                 _ => ("on its way", Tone::Normal),
             };
-            let mut rows: Vec<(&str, Cell)> = vec![
-                ("To", text(outbound, "to").into()),
-                ("Subject", text(outbound, "subject").into()),
-                ("State", Cell::new(state, tone)),
-            ];
+            let mut rows: Vec<(&str, Cell)> = vec![("To", text(outbound, "to").into())];
+            if let Some(cc) = opt_text(outbound, "cc") {
+                rows.push(("Cc", cc.into()));
+            }
+            rows.push(("Subject", text(outbound, "subject").into()));
+            rows.push(("State", Cell::new(state, tone)));
             if let Some(code) = opt_text(outbound, "errorCode") {
                 rows.push(("Reason", Cell::new(code, Tone::Bad)));
             }
@@ -390,6 +474,21 @@ mod tests {
             sender(&json!({ "from": "noreply@example.com" })),
             "noreply@example.com"
         );
+    }
+
+    #[test]
+    fn sent_pages_show_who_got_it_and_why_it_failed() {
+        let sent = vec![
+            json!({ "to": "mike@example.com", "cc": "bob@example.com", "subject": "Friday",
+                    "state": "failed", "errorCode": "recipient_suppressed", "createdAt": 0 }),
+            json!({ "to": "mike@example.com", "subject": "Contract", "state": "accepted", "createdAt": 0 }),
+        ];
+        let rendered = sent_table(&Style::plain(120), &sent, 0);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert!(lines[1].contains("cc bob@example.com"));
+        assert!(lines[1].contains("failed: recipient_suppressed"));
+        assert!(lines[2].contains("Contract"));
+        assert!(lines[2].contains("sent"));
     }
 
     #[test]

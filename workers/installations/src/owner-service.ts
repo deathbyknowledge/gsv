@@ -1,9 +1,10 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { BeginInstallationOwnerLinkInput, InstallationOwnershipService, InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
 import { InstallationOwnerStore } from "./owner-store";
+import type { ProductEmailEnvironment } from "./product-email";
 
 export const OPERATOR_REGISTRY_PRINCIPAL_ID = "principal_operator_registry";
-export type InstallationOwnerEnvironment = {
+export type InstallationOwnerEnvironment = ProductEmailEnvironment & {
   GSV_SIGNUP_ENABLED?: string;
   INSTALLATIONS_DB: D1Database;
   GSV_ADMIN_ORIGIN: string;

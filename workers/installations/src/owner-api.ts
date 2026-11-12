@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { productEmailChoice } from "./product-email";
 import { readJsonObject } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
@@ -62,8 +63,9 @@ export class InstallationOwnerApi {
       // Older Desktop releases can still sign in; signup requires the new code-free client.
       if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Ship." }, 410);
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
-        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
-        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
+        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle, productEmails: productEmailChoice.optional() }).parse(await readJsonObject(request));
+        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, input.productEmails,
+          request.headers.get("cf-connecting-ip") ?? undefined));
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {

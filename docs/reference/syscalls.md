@@ -370,7 +370,9 @@ message and `mail reply` replies to a stored inbound message:
 
 ```bash
 mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
+mail send --to anna@example.com,mike@example.com --cc bob@example.com --subject "Friday" --body ./plan.md
 mail reply MESSAGE_ID --body ./reply.txt
+mail reply MESSAGE_ID --all --message "Count me in."
 mail status DELIVERY_ID
 ```
 
@@ -383,12 +385,22 @@ ordinal.
 
 ## Mail: `mail.send`
 
-`mail.send` is the explicit managed-email send primitive. Version one accepts a
-non-empty plain-text body of at most 1 MiB and exactly one recipient. It does
-not accept HTML, CC, BCC, or attachments. New messages require `to` and `subject`. A reply
+`mail.send` is the explicit managed-email send primitive. It accepts a
+non-empty text body of at most 1 MiB. `to` and `cc` each take one address or a
+list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments. Write the body as in chat:
+recipients get an HTML part rendered from its Markdown and a plain-text part
+without the marks. Raw HTML stays visible text, only web and mail links
+survive, and images become links. The From line carries the owner's display
+name, and a reply quotes the original's plain text below it while the owner
+keeps that message.
+New messages require `to` and `subject`. A reply
 instead supplies `replyToMessageId`; the Kernel looks up that message in the
 caller's mailbox, derives its recipient and threading headers, and derives a
-`Re:` subject unless the caller supplies one. A reply cannot override `to`.
+`Re:` subject unless the caller supplies one. A reply cannot override `to`, but
+may add `cc`. `replyAll: true` also copies everyone else the original was sent
+to or copied, except this Ship under any of its addresses. The approval request
+names the resolved recipients and subject, so a reply's approval shows who
+gets it.
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
@@ -407,9 +419,13 @@ canonical intent and body are durable and Queue publication is durably owned by
 the Kernel. The Kernel retries publication until the Queue accepts the command.
 Replaying the same call returns its current state. `accepted` means Cloudflare
 Email Sending accepted the message and returned a provider id, not that the
-recipient's mailbox has delivered it. `failed` is a known terminal failure.
+recipient's mailbox has delivered it. `failed` is a known terminal failure:
+nothing was sent, and `errorCode` names why, for example `recipient_suppressed`
+(an address bounced or complained before), `recipient_not_allowed`,
+`outbound_quota` (the owner's daily allowance), `provider_quota`,
+`sender_unavailable`, `provider_rejected` or `invalid_draft`.
 `unknown` means the provider call may have succeeded, so GSV will not replay it
-and risk sending a duplicate.
+and risk sending a duplicate. A rate-limited send stays `queued` and is retried.
 
 Cancellation is effective until the Kernel durably admits the outbox wake. Once
 that admission exists, delivery recovery continues even if the original request
@@ -421,9 +437,11 @@ type MailSyscalls = {
   "mail.send": {
     args: {
       text: string;
-      to?: string;
+      to?: string | string[];
+      cc?: string | string[];
       subject?: string;
       replyToMessageId?: string;
+      replyAll?: boolean;
       deliveryId: string;
     };
     result:
@@ -433,7 +451,8 @@ type MailSyscalls = {
           outboundId: string;
           state: "queued" | "accepted" | "failed" | "unknown";
           from: string;
-          to: string;
+          to: string; // addresses separated by ", "
+          cc?: string; // the same form, absent without copies
           subject: string;
           errorCode?: string;
           replayed: boolean;
@@ -448,22 +467,29 @@ type MailSyscalls = {
   };
   "mail.status": {
     args: { deliveryId: string };
-    result: {
-      outbound: null | {
-        deliveryId: string;
-        outboundId: string;
-        state: "staging" | "queued" | "accepted" | "failed" | "unknown";
-        from: string;
-        to: string;
-        subject: string;
-        createdAt: number;
-        queuedAt: number | null;
-        completedAt: number | null;
-        providerMessageId?: string;
-        errorCode?: string;
-      };
-    };
+    result: { outbound: MailOutboundStatus | null };
   };
+  "mail.sent": {
+    args: { limit?: number; before?: string };
+    result: { outbound: MailOutboundStatus[]; next?: string };
+  };
+};
+
+type MailOutboundStatus = {
+  deliveryId: string;
+  outboundId: string;
+  state: "staging" | "queued" | "accepted" | "failed" | "unknown";
+  from: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  /** The message as written, in Markdown. */
+  textPath: string;
+  createdAt: number;
+  queuedAt: number | null;
+  completedAt: number | null;
+  providerMessageId?: string;
+  errorCode?: string;
 };
 ```
 
@@ -473,6 +499,12 @@ managed Queue is unavailable, and returns the same `null` result for missing
 and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
+
+`mail.sent` pages the caller's own sent mail, newest first, under its own
+`mail.sent` capability; the native `mail sent` command uses it. It takes the
+same `limit` (1 to 200, 50 by default) and `before` cursor as `mail.list`, and
+returns `next` while older mail remains. Each entry is the status `mail.status`
+returns, so a failed send keeps its `errorCode`.
 
 ## Received mail: `mail.list`, `mail.search`, `mail.read`
 
@@ -527,6 +559,124 @@ only.
 `mail.read` returns the plain-text rendering with its headers. A message longer
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
+
+## Custom events: `event.source.*`, `event.emit`, `event.list`
+
+A source is somewhere an owner's events come from. Each event takes one path, whichever
+way it arrived: the shell's `event emit`, `gsv event`, a routine, or a delivery to the
+source's public address. The Kernel records who sent it from the caller, never from
+the event.
+
+```ts
+type EventInput = { id?: string; title: string; preview?: string; body?: string };
+type EventSourceWebhook = "none" | "url" | "standard" | "hmac";
+type WebhookHmac = {
+  header: string; encoding: "hex" | "base64"; prefix?: string;
+  pairs?: { timestamp: string; signature: string };
+  idHeader?: string; typeHeader?: string;
+};
+
+interface EventSyscalls {
+  "event.source.list": { args: {}; result: { sources: EventSource[] } };
+  "event.source.add": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      webhook?: EventSourceWebhook; hmac?: WebhookHmac; senderSecret?: boolean; secret?: string;
+      expectEveryMs?: number };
+    result: { source: EventSource; secret?: string; webhookUrl?: string };
+  };
+  "event.source.update": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      enabled?: boolean; expectEveryMs?: number | null };
+    result: { source: EventSource };
+  };
+  "event.source.rotate": { args: { name: string; secret?: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
+  "event.source.remove": { args: { name: string }; result: { removed: boolean } };
+  "event.emit": { args: { source: string; events: EventInput[] }; result: { accepted: number; duplicates: number } };
+  "event.list": { args: { source?: string; limit?: number }; result: { events: EventRecord[] } };
+}
+```
+
+Only a signed-in person or their Ship manages sources, under the `event.*` capability;
+any of the owner's processes and routines may emit. A new source tells its owner and leaves
+Ship out, and it has no public address unless `webhook` asks for one. Ship setting a source to
+`wake` needs approval (`event.source.update`), and Ship turning off telling or starting
+to act tells its owner.
+
+While the owner is active in a client, or has no messenger, an event appears as a card in their
+conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
+
+An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
+kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
+owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
+without an event.
+
+An event's words are untrusted wherever they end up. An event from a running process
+never wakes Ship.
+
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
+the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
+HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
+optional `hmac.prefix`. It covers the body, or, with `hmac.pairs`, the header holds
+comma-separated `KEY=VALUE` pairs with a Unix timestamp under `pairs.timestamp`, within five
+minutes, and signatures under `pairs.signature`, each covering `TIMESTAMP.BODY`. One scheme
+covers many senders: GitHub, Shopify and Linear sign the body; Stripe uses the pairs. Clients
+offer such senders as presets that fill in `hmac`.
+
+An event's id comes from `hmac.idHeader`, Standard Webhooks' `webhook-id`, or the body's `id`.
+Its title is `hmac.typeHeader` with the body's `action`, or else the body's `title`, `subject`,
+`type` or `event`.
+
+A rotated secret keeps working for 24 hours. With `senderSecret`, the sender issues the secret:
+`secret` gives it when adding, or `event.source.rotate`'s `secret` gives it later, and until
+then the source shows `awaitingSecret` and refuses every delivery. A sender-issued secret is
+never returned. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+is the only proof, only its hash is stored, and such a source can't be set to `wake`.
+Request logs on the way may record that address, so treat it as a low-trust channel. A secret
+or secret address is returned once.
+
+## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
+
+Each person decides, for each kind of thing that happens, whether their messenger
+hears about it and what their Ship does. The signed-in person or their Ship may
+call these, under the `notify.rule.*` capability; any other process is refused.
+
+```ts
+type NoticeKind =
+  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
+type NoticeDelivery = "none" | "messenger";
+type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
+type NoticeRule = {
+  kind: NoticeKind;
+  notify: NoticeDelivery;
+  ship: ShipOutcome;
+  defaultNotify: NoticeDelivery;
+  defaultShip: ShipOutcome;
+  shipChoices: ShipOutcome[]; // contact kinds never allow wake
+  changedBy?: "person" | "ship"; // absent while the kind is at its default
+  updatedAtMs?: number;
+};
+
+type NotifySyscalls = {
+  "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify?: NoticeDelivery; ship?: ShipOutcome }; result: { rule: NoticeRule } };
+  "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
+};
+```
+
+`notify.rule.list` returns every kind, including those still at their default.
+Contact kinds default to `messenger` and `context`; the others default to `none`
+and `wake`. `notify.rule.set` changes only what it names and refuses an outcome the
+kind's `shipChoices` doesn't include. A notice change applies when a notice is about
+to be sent, so turning a kind off also holds back notices already waiting.
+`notify.rule.reset` returns a kind to its default.
+
+`wake` for the four non-contact kinds is the same setting as their configurable
+responsibility source, so `r12y source enable|disable` and these rules can't disagree.
+When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
 
 ## Web search: `web.search`
 
@@ -714,6 +864,8 @@ type ConversationMessage = {
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
+  /** Replies a Process message offers; tapping one sends its text as the person's next message. */
+  choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
@@ -1958,12 +2110,12 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. A human owner's sign-in starts their pending welcome in the background; later sign-ins recover its wake without reopening handled work. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner first signs in or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual` and registers it as a public system repository. The gateway's bundled skills are served read-only at `/sys/skills.d`, not copied into homes. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
-| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Instrument stores `"1"` at `users/<uid>/ui/welcome_card_seen` when the person dismisses the welcome card, so the dismissal follows the account across web and Desktop. A direct human write of this flag for their own account activates pending onboarding as an open responsibility and reconciles its wake before acknowledgment; retries do not reopen handled work. Reconnecting recovers a saved dismissal in the background without delaying sign-in. Values are coerced with `String(value)`. |
+| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Values are coerced with `String(value)`. |
 | `sys.feedback` | `handleSysFeedback` | Sends an explicit report to the optional operator `FEEDBACK` service. Requires authentication and `sys.feedback`. Arguments contain an optional UUID `id` for retry correlation and optional `context` with `view`, `platform`, and app `version`. A required UTF-8 JSON body carries `message` (1–8,000 characters) and optional `activity` (at most 20 message groups and 64,000 characters); the body is limited to 512 KiB. Report content stays out of syscall ledger arguments, and service exceptions become a generic delivery error. Kernel attaches the trusted installation, space origin, caller's human owner and server version. Returns `{ id }` after the service accepts it. Delivery has a ten-second deadline; timeout or caller cancellation disposes the remote call. Reuse the report ID when retrying an uncertain delivery. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
@@ -2191,9 +2343,10 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
   "account.recovery.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { username: "root" };
+    args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
+    result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
@@ -2216,12 +2369,20 @@ Existing account UIDs, homes and credentials are preserved.
 immutable installation identity to Accounts. The browser then verifies the
 external owner through the configured identity provider. `account.recovery.redeem`
 is available before connection authentication, behind the ordinary installation
-work gate. Accounts authorizes only a short-lived root-reset claim through its
-deployment-granted recovery binding; redemption atomically consumes the claim,
-updates root's password, and revokes earlier root credentials and sessions.
-The receiving browser persists its random proof before redemption. Identical
-retries recover the receipt without rewriting the password; another proof or
-password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+work gate. Accounts authorizes only a short-lived claim for the verified owner
+through its deployment-granted recovery binding; redemption atomically consumes
+the claim, updates the password of the chosen `account`, and revokes that account's
+earlier credentials and sessions. `account` is `personal` or `administrator`;
+omitting it means `administrator`. A personal account that is locked, disabled or
+absent answers with `details.recovery: "personal-unavailable"` and leaves the claim
+usable. The receiving browser persists its random proof before redemption.
+Identical retries recover the receipt without rewriting the password; another
+proof, password or account cannot reuse a consumed claim. Secrets are excluded from
+the ledger.
+
+`account.recovery.options` is available before connection authentication and
+returns the operator's owner recovery page for this Ship, when one is configured.
+The link is navigation only and says nothing about who owns the Ship.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
@@ -2277,7 +2438,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string };
-    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "system" | "home"; label: string; writable: boolean } }>; maxContextBytes: number };
+    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; maxContextBytes: number };
   };
 
   "ai.transcription.create": {
@@ -2406,7 +2567,7 @@ Runtime behavior:
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), optional `choices` (up to ten distinct one-line replies of at most 80 characters, shown as buttons where the adapter declares them and as a numbered list otherwise; an answer arrives as an ordinary inbound message), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 For explicit sends, the Kernel resolves the authorized linked actor for the
@@ -2463,7 +2624,7 @@ type AdapterSyscalls = {
   };
 
   "adapter.inbound": {
-    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
+    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; timestamp?: number; wasMentioned?: boolean } };
     result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { deliveryId: string; text: string; replyToId?: string }; challenge?: { deliveryId: string; code: string; prompt: string; expiresAt: number }; replayed?: "in_progress" | "completed"; droppedReason?: string; error?: string };
   };
 
@@ -2475,7 +2636,7 @@ type AdapterSyscalls = {
   "adapter.send": {
     args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; action?: { kind: "open"; label: string; url: string }; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
-      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
+      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; messageIds?: string[]; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
       | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
   };
 
@@ -2509,8 +2670,12 @@ action and direct the user to Chat. Opaque request identities are never rendered
 or parsed from free-form adapter messages. A native callback invokes ordinary
 `proc.hil` with the exact `requestId` through a Kernel-derived linked-human peer;
 actor, surface, route generation, provider-message correlation, human capability,
-and pending state are all rechecked. `replyToId` remains provider threading
-metadata and is not authorization.
+and pending state are all rechecked. `replyToId` is the provider id of a message
+the person quoted. It is not authorization: the Kernel resolves it only within the
+same owner, adapter account and surface, as described in
+[quoted replies](/architecture/adapter-model#quoted-replies). An adapter sets it only
+for a real quote. `messageId` is the first provider message of a delivery; a delivery
+split into several provider messages also reports all of them in `messageIds`.
 
 Routed adapter notifications and final replies are retained as Kernel-scheduled
 work under the stable delivery id. The exact adapter receives one correlated
@@ -2632,6 +2797,12 @@ shell commands. Cron files
 are desired state: installing or rewriting a crontab removes and recreates the
 linked `sched.*` records, so crontab-backed schedule ids are operational ids,
 not stable cron identifiers.
+Installing one takes `sched.add`, `sched.remove` and, when it has jobs,
+`shell.exec`, whichever way the file arrives; removing one takes `sched.remove`.
+An agent's install goes through the `sched.add` approval rule as one request for
+the whole file, and a refusal leaves the previous crontab in place. A shell `>`
+empties the file when it opens it, before the new contents arrive; `crontab FILE`
+replaces the file in one step.
 Cron commands have no process-backed caller, so `proc delegate` is not valid in
 a crontab. Use `sched.list` for status, last result, source, and control.
 

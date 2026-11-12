@@ -69,7 +69,26 @@ describe("HIL request wording", () => {
     expect(describeCall({ ...shell, syscall: "fs.write", args: { path: "/tmp/a" } }, "my mac")).toBe("write a file on my mac");
     expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", subject: "Contract follow-up" } }, "gsv"))
       .toBe("send an email to mike@example.com about Contract follow-up");
+    expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", cc: ["anna@example.com"], subject: "Friday" } }, "gsv"))
+      .toBe("send an email to mike@example.com (copying anna@example.com) about Friday");
     expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
+  });
+
+  it("shows a crontab's file and jobs, and a plain sentence when the model wrote none", () => {
+    const crontab = {
+      ...BASE_REQUEST,
+      toolName: "sched.add",
+      syscall: "sched.add",
+      target: "gsv",
+      args: { path: "/var/spool/cron/sam", jobs: "0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt" },
+    };
+    expect(hilRequestLine(crontab)).toEqual({
+      lead: "none",
+      text: "/var/spool/cron/sam\n0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt",
+    });
+    expect(hilRequestSentence(crontab, "Home")).toBe("Schedule work to run later");
+    expect(hilRequestLine({ ...crontab, args: { name: "digest", target: { kind: "command.exec" } } }))
+      .toEqual({ lead: "place", text: "add" });
   });
 
   it("folds the request as a terminal line, a plain verb, or the tool's name, never the syscall id", () => {
@@ -84,6 +103,12 @@ describe("HIL request wording", () => {
     expect(hilRequestLine({ ...shell, syscall: "mail.send", toolName: "mail.send", args: { to: "mike@example.com", subject: "Hi", text: "body" } }))
       .toEqual({ lead: "none", text: "to mike@example.com · Hi" });
     expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {} })).toBeNull();
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
+      to: ["mike@example.com", "anna@example.com"], cc: ["bob@example.com"], subject: "Friday",
+    } })?.text).toBe("to mike@example.com, anna@example.com · cc bob@example.com · Friday");
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
+      replyToMessageId: "mail:abc", to: "mike@example.com", subject: "Re: Contract",
+    } })?.text).toBe("to mike@example.com · Re: Contract");
     expect(hilRequestLine({ ...shell, syscall: "net.fetch", toolName: "net.fetch", args: { url: "https://example.com" } }))
       .toEqual({ lead: "place", text: "fetch https://example.com" });
     expect(hilRequestLine({ ...shell, syscall: "sys.mcp.call", toolName: "sys.mcp.call", args: { serverId: "s1", name: "search_docs", arguments: { q: "granola" } } })?.text)

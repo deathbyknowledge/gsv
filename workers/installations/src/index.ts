@@ -10,6 +10,7 @@ import type {
   InstallationOnboardingService,
 } from "@humansandmachines/gsv/services/onboarding";
 import { InstallationSignup } from "./signup";
+import { runProductEmailJobs } from "./product-email";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
@@ -33,6 +34,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
     await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
+    await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
   }
 
   async fetch(request: Request): Promise<Response> {

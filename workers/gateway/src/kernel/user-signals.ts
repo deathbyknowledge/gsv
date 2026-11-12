@@ -32,6 +32,8 @@ export const USER_CONNECTION_SIGNALS = [
   "r12y.changed",
   "r12y.source.changed",
   "sched.changed",
+  "notify.rule.changed",
+  "event.source.changed",
 ] as const;
 
 const USER_PROCESS_SIGNAL_SET = new Set<string>(USER_PROCESS_SIGNALS);

@@ -910,7 +910,7 @@ describe("process history", () => {
       }, async (request: any) => {
         summaryCalls += 1;
         expect(request.options).toMatchObject({
-          maxTokens: 187,
+          maxTokens: 374,
           reasoning: "off",
           timeoutMs: 180000,
         });

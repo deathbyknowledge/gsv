@@ -106,7 +106,14 @@ bounded summary, category, attention flag, and optional confidence. It omits
 separate mailbox identifiers, address fields, display names, subjects, raw headers,
 and message bodies. Its title contains only the opaque id, so sender-controlled
 summary text enters model context only after Ship explicitly inspects the record.
-The summary remains untrusted external context. Upgrades preserve historical Inbox
+The summary remains untrusted external context. The adapter marks automatic mail:
+an automatic reply (`Auto-Submitted: auto-replied`, such as an out-of-office) or a
+delivery report (an RFC 3464 report, or mail from the mail daemon). The Kernel
+stores and summarizes it like any message, and the owner's notice rule still
+applies, but it creates no responsibility and never wakes Ship. Generated mail,
+such as a verification code marked `auto-generated`, stays ordinary. A Gateway
+that predates the mark rejects it, and the adapter retries that message until the
+Gateway is upgraded. Upgrades preserve historical Inbox
 accounts, processes, and mailbox notification fields, but new mail neither consults
 nor updates them.
 
@@ -200,6 +207,8 @@ The canonical outbound path is:
 2. The Kernel commits the Message to the canonical conversation and selects its
    directed endpoint. Explicit Work, group and contact routes remain fixed.
 3. Personal Ship replies follow the owner's latest human message origin across runs.
+   Completing a messenger pairing counts as a message from that DM, since the person
+   wrote there for the code, so the `adapter.connected` hello lands on it.
    Client activity only refreshes the selected client's idle timer; it never selects
    another destination or revives an expired selection. If that client disconnects or is inactive for five minutes,
    the Kernel uses the owner's last-active linked private messenger destination.
@@ -252,6 +261,24 @@ a line of text under the message, and adapters without native actions always
 receive it that way from the shared frame handler. The action is part of the
 delivery's content, so a replay with a different action is a different delivery.
 
+An `adapter.send` may also carry `choices`, the replies its message offers: up
+to ten short lines. Adapters that declare native choices receive them as such;
+every other adapter receives them from the shared frame handler as a numbered
+list under the text. Like an action, the choices are part of the delivery's
+content. Whatever the person answers, a tap or a typed reply such as "2",
+arrives as an ordinary inbound message; choices never carry identity, authority
+or a callback.
+
+WhatsApp and Telegram declare native choices. Inside the 24-hour window,
+WhatsApp offers up to three choices of at most 20 characters as reply buttons
+and up to ten of at most 24 as a list, on an interactive message carrying the
+last paragraph; the webhook relays a tap as an inbound message with the reply's
+title. Telegram offers them as a one-time reply keyboard, whose tap Telegram
+itself sends as the person's message, and the next text message without
+controls removes that keyboard, so only the latest message offers replies, as
+in Chat. Choices WhatsApp's limits don't fit, choices beside media or an
+action, and WhatsApp's out-of-window template list them in the text instead.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures
@@ -278,10 +305,11 @@ Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.
 
 Managed outbound email has a separate explicit path because email is a mailbox,
-not an observed chat surface. `mail.send` accepts one recipient and a plain-text
-body capped at 1 MiB in version one, or `replyToMessageId` to derive the
+not an observed chat surface. `mail.send` accepts To and Cc recipients, at most
+10 in all, and a text body capped at 1 MiB, or `replyToMessageId` to derive the
 recipient and threading headers from a message in the caller's canonical
-mailbox. The Kernel derives the sender from the active human owner's mailbox.
+mailbox; `replyAll` also copies the original's other recipients except the Ship
+itself. The Kernel derives the sender from the active human owner's mailbox.
 `mail send` and `mail reply` expose the same operation through the native
 shell; CodeMode exposes it as `mail.send`.
 
@@ -300,6 +328,10 @@ do not own delivery durability.
 
 An installation-scoped email Durable Object owns the delivery ledger, daily
 message and byte reservations, claim retries, and completion callback retries.
+Each recipient counts as one message against the daily allowance. A draft with
+one recipient carries `to` as a string; with several recipients or copies the
+Kernel sends `to` as a list with `cc`, which an email Worker that predates
+copies rejects as an invalid draft rather than dropping recipients.
 It independently derives and persists the expected sender on the first
 successful active Accounts resolution. Later handle drift fails closed, and a
 mismatched draft is rejected rather than trusting the claimed `from` field.
@@ -309,13 +341,35 @@ Operators must enable Email Sending for each allowed domain. Receiving aliases
 alone grant no sending authority. Existing mailbox addresses and immutable
 drafts keep their original sender; a domain promotion can retain that domain
 without invalidating pending claims. Handle changes still fail closed.
-Cloudflare Email Sending is called at most once after the DO durably records an
-attempt. Provider acceptance records `accepted`.
-Terminal lifecycle, quota, and draft validation failures before that attempt
+Each attempt calls Cloudflare Email Sending at most once, after the DO durably
+records it. Provider acceptance records `accepted`.
+Terminal lifecycle, quota, and draft validation failures before an attempt
 record `failed`; recoverable nonactive installation states pause delivery.
-A crash, binding throw, or malformed provider result after the attempt records
-`unknown` and is never replayed, because the message may already have
-left the provider boundary.
+A provider error code that refuses the send before handing it on, such as a
+suppressed or disallowed recipient, an unverified sender, a suspended account,
+the provider's daily limit, or an invalid request, also records `failed` with
+the owner-facing code (`recipient_suppressed`, `recipient_not_allowed`,
+`sender_unavailable`, `provider_quota`, `provider_rejected`) and returns the
+attempt's share of the daily allowance. A rate limit instead returns the
+delivery to claiming for a later attempt with the claim backoff.
+A crash, a delivery or service error, any other binding throw, or a malformed
+provider result after the attempt records `unknown` and is never replayed,
+because the message may already have left the provider boundary. The provider's
+code and redacted message reach the operator's logs and diagnostic telemetry;
+recipients' addresses do not.
+
+The email Worker owns presentation. A body is Markdown as written in chat; the
+Worker sends it as an HTML part and a plain-text part without the marks. Raw
+HTML stays visible text, only web and mail links survive, and images become
+links, so a message carries no markup or remote content of its own. When the
+Worker claims a draft, the Kernel adds the owner's current display name for the
+From line and, for a reply, the original's plain text from the owner's stored
+copy with its sender, its date and the owner's timezone. Both are presentation
+rather than part of the fingerprinted intent: a reply whose original was
+deleted is sent without a quote. An operator may set `MAIL_FOOTER_TEXT`, and
+optionally an HTTPS `MAIL_FOOTER_URL`, to add one line under every message,
+above any quote. An invalid footer configuration pauses claims instead of
+sending without it.
 
 Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, provider binding, and `mail.send` transport;
@@ -397,6 +451,48 @@ delivery begins only after the inbound Gateway RPC returns, so it does not make
 a re-entrant call into the peer Durable Object that is still reporting the
 event. A repeated provider event therefore reaches the account-local ledger
 instead of calling a raw platform reply helper.
+
+## Quoted replies
+
+When someone quotes a message on a messenger, the provider usually sends only the quoted
+message's id. The Kernel resolves that id so the model can see what was quoted.
+
+```text
+adapter.send result   messageIds ──┐
+adapter.inbound       messageId  ──┴─▶ adapter_message_refs (Kernel SQLite)
+                                       owner, adapter, account, surface, provider id
+                                       → conversation, message, sequence, part
+
+adapter.inbound       replyToId  ────▶ lookup ─▶ Conversation.readMessage ─▶ excerpt
+                                                                               │
+Process history       message.quote ◀─────────────────────────────────────────┘
+Model context         [Replying to Ship's earlier message:]
+                      > the excerpt
+
+                      the person's reply
+```
+
+The map holds references, never text. A row is written for each canonical inbound Message and
+for each provider message of a delivered canonical Message. A delivery that split into several
+provider messages records every id with its part number, so a person can quote any of them. Only
+canonical Messages are mapped: quoting an approval request, a command reply or a notice resolves
+to nothing.
+
+An ordinary inbound Message does no read and writes one row. Only a Message with `replyToId`
+performs a lookup, which reads one indexed row and then the Conversation, and gives up after two
+seconds. Any failure leaves the quote `unavailable`; it never delays admission past that limit or
+loses the Message. A lookup matches only the same owner, adapter, account and surface, and rechecks
+that the Conversation belongs to that owner. A provider id that is unknown here therefore looks the
+same as one recorded for someone else.
+
+Rows are kept for 90 days, and a Kernel keeps its newest 20,000 within that window. The Kernel
+prunes them while recording, at most hourly and in bounded batches. Quoted text older than that,
+or from before the map existed, is reported as unavailable.
+
+Process history stores the resolved `quote` on the incoming Message, capped at 1,000 characters.
+When the person quotes one part of a split Message, the excerpt comes from the matching proportional
+position in the text, which is approximate. Media is described by its type, filename and any
+transcription, never its bytes or path. The canonical Message keeps exactly what the person wrote.
 
 ## Identity linking
 
@@ -553,6 +649,12 @@ Examples:
 Those quirks belong inside the adapter worker, not in the Kernel or process
 runtime.
 
+Kernel migration v086 adds `adapter_message_refs`. It is additive, and earlier Messages
+simply have no references. Because `adapter.send` results are strictly validated, a Gateway
+must accept `messageIds` before an adapter can report one. A deployment composition updates
+adapters before the Gateway, so a multi-part delivery in that window is reported as failed even
+though it was delivered. Release the Gateway change first when that window matters.
+
 ## Adding an adapter
 
 1. Implement `AdapterService` in a separate Worker and return a truthful,
@@ -563,7 +665,9 @@ runtime.
    ingress delivery id from the provider's complete event identity.
 4. Persist reconstructable ingress before the first Gateway call and retry it
    with the account's existing wake-up mechanism until a terminal disposition.
-5. Implement mention/reply activation for every supported non-DM surface.
+5. Implement mention/reply activation for every supported non-DM surface. Set
+   `replyToId` only when the person quoted a specific message, not for threading
+   or forwards, and return every provider message id from a split delivery.
 6. Implement `adapterFrame` by handling targeted `adapter.send` requests and
    returning their correlated responses.
 7. Render structured HIL from the request context. Native callbacks, when the

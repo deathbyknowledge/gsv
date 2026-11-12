@@ -12,14 +12,19 @@ canonical message records the relevant PID and run ID, but killing that Process 
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
-Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
-adding the renderer's final newline to the clipboard.
+Blocks without a language tag, and `text` blocks, wrap at every width; tagged code wraps when the Instrument column is narrow and scrolls inside the block on wide ones. Copy preserves
+indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
+A path in Ship's text, such as `~/notes/plan.md` or `/tmp/exports/`, opens over the chat
+when you have file access: a file opens in its preview, rendered like Ship's own replies
+(Markdown as a document, other text as a code block), and a path ending in `/` opens that
+folder's file list. Paths inside code spans and code blocks stay plain text.
 Human messages align right, with the timestamp before the sender's name, and balance line
 lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
-reading column; wide tables and code blocks scroll horizontally within their own bounds.
+reading column; wide tables scroll horizontally within their own bounds, as do code blocks on
+wide viewports.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
 
@@ -55,6 +60,8 @@ On phones, both the prompt and its attachment, connection and recording controls
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
 Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
 is padding inside each surface; it does not shorten the page or its star field.
+In the composer, Enter sends; Shift+Enter or Alt+Enter inserts a new line, and Ctrl+Enter or Cmd+Enter
+still sends. Contact replies and contact requests use the same keys, and Help lists them.
 The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
@@ -76,7 +83,7 @@ lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
-After the first welcome card is dismissed, the empty Ship chat shows centered,
+On a new owner's first visit, after the surface choice, the empty Ship chat shows centered,
 muted privacy copy behind the transcript. It clears when the owner writes or
 Ship starts replying. The notice is not a conversation message and is not sent
 to the model. It does not appear in helpers, over existing messages, or while
@@ -88,15 +95,15 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. Dismissing
-  the welcome card creates an open onboarding responsibility through the ordinary wake
-  path. Ship sends a welcome in the owner's preferred language, initially detected from
-  the browser. The welcome is a canonical Message shared across clients. A user can
-  write first, including on surfaces without the card: onboarding becomes visible
-  before that message reaches Ship. Until either action, onboarding stays internal
-  to the Kernel rather than appearing as a blocked responsibility.
-  After greeting, Ship waits for a reply. Repeated dismissal
-  and reconnects recover pending work without reopening a handled welcome.
+  The current personal Process is replaceable; the Ship conversation is not. The owner's
+  first sign-in, from any client, creates an open onboarding responsibility through the
+  ordinary wake path. Ship sends a welcome in the owner's preferred language, initially
+  detected from the browser at setup. The welcome is a canonical Message shared across
+  clients. A first message that reaches the Kernel before that also activates onboarding,
+  before the message reaches Ship. Until either, onboarding stays internal to the Kernel
+  rather than appearing as a blocked responsibility.
+  After greeting, Ship waits for a reply. Later sign-ins recover pending work without
+  reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
@@ -129,6 +136,15 @@ event, which Process records for the next generation without starting a run, so 
 answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields
 (who wrote, which messenger, the start of the message) with a link to the contact or request in People.
 
+Rules (`notify.rule.*`) choose, per kind, whether the messenger is told and what Ship does. Received
+mail, new computers and messenger changes use the same notices when a rule asks. Mail notices carry a
+count only, and a messenger that needs signing in can't carry the notice about itself. With `context`,
+an event the person turned off or wasn't sent still reaches Ship as a model-only `owner.notified`, without a
+card or a run; a contact's event instead stays out of Ship while its owner simply wasn't reachable or was already
+active, as their words should reach Ship unsent only by choice. `wake` stays with each kind's responsibility source, and contact kinds never allow it.
+
+An owner's custom event sources (`event.source.*`) take a row in the same list and enter through one path, `event.emit`, however an event arrives: a script, a routine, `gsv event` or a webhook. Each source holds its own choices instead of a rule. A source's words are always untrusted. Its events follow the same rule as other notices, except that one left to an active client, or with no messenger to carry it, appears as a person-only card in the conversation, because nothing else in a client shows it. A source going quiet still goes to the messenger while a client is active. An event from a running process never wakes Ship, which keeps a source from looping on itself.
+
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.
@@ -146,6 +162,11 @@ delivery and run completion are separate operations:
   lives through `fs.read` in its `reference` representation, retained into the process archive, and sent with the message, or the send is
   refused naming the file that could not be read. Those reads obey the person's tool approval rules the
   way a Read does: a file that would need approval is refused until it has been read once.
+- `choices` offers up to ten replies with a message that asks something, each one line of at most 80
+  characters. They are stored with the canonical Message, so every client and messenger sees the
+  same ones. Instrument shows them as buttons under Ship's latest message only; once anything follows,
+  they are gone. Tapping one sends its text as an ordinary message from the person, exactly as if they
+  had typed it. Only a Process message with text can offer choices.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:
@@ -199,7 +220,8 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  messenger, and so does pairing one: the person has just written from that chat for the code.
+  Sending a new message in the app selects that client again. Activity cannot revive an
   expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
@@ -240,6 +262,8 @@ changing its draft. Use **Allow once**, **Always allow** or **Block** to decide,
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
 above the composer. Ship, delegated work and Work share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
+A mail request lists everyone who gets the message, including copies and the
+recipients a reply derives.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
@@ -380,6 +404,10 @@ read the user's conversations. Processes cannot append user messages or recursiv
 Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 
+A quoted reply on a messenger does not change the canonical Message. The Kernel reads the quoted
+Message for Process context under the [quoted reply](/architecture/adapter-model#quoted-replies)
+scope, and the conversation stores only the text the person wrote.
+
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
 
@@ -387,6 +415,26 @@ Internal compaction handovers remain in Process history and its archives. Chat
 does not present them as “Memory” messages or interrupt the composer when the
 working context changes.
 
+
+## Link previews in the web app
+
+Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
+once per URL and at most ten per message, with the page's image, site name, title and description;
+the card opens the link in a new tab. Links inside code, images and the person's own messages get no
+card, and neither do links to a Ship on the deployment's domains, which need a session the preview
+does not carry. Previews resolve lazily, and only for messages near the viewport, so opening a long
+history fetches nothing for what it scrolled past.
+
+The browser reads the page with an ordinary `net.fetch` on `gsv`, which relays the response as it
+arrives, and parses the preview tags itself: it reads only up to the end of the page's head and then
+cancels the body, which also stops the Kernel's request. The image comes through `net.fetch` too, so
+the browser never contacts the linked site or its image host. A few previews are read at a time.
+The device keeps what it read in IndexedDB for a week, at most 500 entries, so reopening a
+conversation does not read its pages again. A page or image that answered with nothing to show, such as a page with neither a title nor an image, is
+asked again after an hour, and a lost connection is not kept at all. Signing out deletes the store.
+Until a preview resolves, or when it fails or offers neither a title nor an image, the message shows
+no card and takes no extra room. A preview is presentation only: it is never part of the canonical
+message, its history or its search index, and messengers present links in their own way.
 
 ## Contextual requests in the web app
 
@@ -408,7 +456,7 @@ the contextual panel, with one level of tabs: **ongoing**, **routines** and **hi
 The `+` menu contains attachments and requests, without a second plans entry.
 Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
 Rows use a short state label; the full blocker is readable prose in the inspector.
-Standing policies are configured in **Settings → Standing responsibilities**. Details allow inspection, cancellation and asking Ship about the exact
+Standing policies are configured in **Settings → When things happen**. Details allow inspection, cancellation and asking Ship about the exact
 record. Routines show their cadence and state, with pause/enable and edit controls;
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden

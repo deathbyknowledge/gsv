@@ -40,6 +40,7 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/src/repos/{owner}/{repo}` | ripgit repo | Visible source repositories. Each writable filesystem mutation creates an immediate ripgit commit. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
 | `/var/media/{uid}/{pid}/{id}` | Process media mount over R2 | Read-only attachment bytes. Visibility follows process ownership (root, self, or another process owned by the same user). |
+| `/bin`, `/usr/bin` | None | Reserved for the shell's built-in commands. Always absent and read-only, so looking up a command never reaches storage and no stored file can hide one. Commands installed by an account belong in `/usr/local/bin`. |
 | Everything else | R2 | Default object-backed filesystem. |
 
 Directory entries in R2 use `.dir` marker objects. File objects store POSIX-like metadata in custom metadata: `uid`, `gid`, `mode`, and optional `dirmarker`.

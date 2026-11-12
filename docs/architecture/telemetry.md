@@ -78,7 +78,10 @@ consumer derives unrelated pseudonyms for the two streams with different HMAC
 keys. This makes an operational installation series useful for reliability
 without giving the backend a shared installation join key for the product-usage
 series. Product events are personless: they do not create or update user
-profiles.
+profiles. Product funnel measurements are taken inside the Gateway and exported
+only as durations, booleans and closed categories; they carry no Process, run,
+message or conversation identifier, so a backend can relate them to each other
+only through the product pseudonym and time, never to an operational record.
 
 ## Deployment boundary
 
@@ -157,12 +160,36 @@ without granting those adapters ownership of another component's application eve
   redacted error detail and available provider codes/status/request ID. The
   adapter owns provider interpretation; diagnostics survive its durable delivery
   receipt and the canonical `adapter.send` result, including ambiguous outcomes.
+  `adapter.quote.resolved` reports whether a quoted reply's lookup resolved, was
+  unmapped, was unavailable, failed or timed out, with its duration and never its text.
   A committed Ship reply also carries a closed `platform` class for the surface
   that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
   `discord`, `slack`, `background`, or `other`. The Kernel derives it from the
   reply route pinned for that message, so it names the client or messenger the
   reply was delivered to; the reported peer platform string and adapter name
   never leave the Gateway.
+  The onboarding funnel adds the person's side of the conversation.
+  `ship.message.received` reports an owner's own message to Ship when the
+  Conversation accepts it, with its source (`client` or `adapter`), the same
+  closed platform class, and whether it carried text or media; a direct
+  `proc.send` and replayed adapter receipts are not reported. The first message
+  a run commits after such a message carries `replyMs`, measured from the moment
+  the Process received the message to that commit, so it includes queueing,
+  media handling and retries but not the messenger's own delivery to the
+  Gateway. `conversation.reply.failed` reports a run a person's message started
+  that ended in `error` or `aborted`, in any Ship or Work conversation, with a
+  closed failure category (`generation`, `context`, `media`, `no_send`,
+  `command`, `delivery`, `runtime`, `superseded`, `cancelled`, `killed` or
+  `other`), whether it had already replied, and its duration; the reason and
+  cause stay in Process history. `onboarding.welcome.activated` reports the
+  welcome responsibility opening for an owner, which happens at their first
+  sign-in from any client, or at their first message if that reaches the Kernel
+  before a sign-in does; later sign-ins do not report it again.
+  `onboarding.welcome.delivered` reports the first Ship message accepted after
+  it, once per owner, with the time between them, so it measures first sign-in
+  to Ship's first message. The Kernel keeps both marks in its private
+  `initial-onboarding` record, so an owner whose welcome predates the record is
+  never reported.
 - Accounts: activation. This is not a full signup funnel; anonymous invite/email
   steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,

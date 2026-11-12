@@ -14,7 +14,7 @@ const initial: ResponsibilityRecord = {
 function runFixture(pid: string, runId: string, template = "{{r12y}}"): RunState {
   return {
     runId, tools: [], targets: [], mcpServers: [],
-    config: { ...terminalTestConfig(pid), skillIndexMode: "off", systemContextFiles: [{ name: "responsibilities.md", text: template }] },
+    config: { ...terminalTestConfig(pid), systemContextFiles: [{ name: "responsibilities.md", text: template }] },
   };
 }
 

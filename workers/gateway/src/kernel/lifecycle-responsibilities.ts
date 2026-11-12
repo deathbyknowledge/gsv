@@ -14,20 +14,22 @@ export async function recordMachineAddedResponsibility(
   ctx: KernelContext,
 ): Promise<void> {
   const ownerUid = humanOwnerUid(machine.owner_uid, ctx);
-  if (
-    ownerUid === null
-    || !ctx.responsibilitySources.isEnabled(ownerUid, "machine.added")
-  ) {
-    return;
-  }
+  if (ownerUid === null) return;
 
   const eventId = await stableOpaqueId("machine-added", [
     machine.target_id,
     machine.first_seen_at,
   ]);
+  if (ctx.noticeRules.wantsNotice(ownerUid, "machine.added")) {
+    ctx.ownerNotices.noteOnce(ownerUid, `machine.added:${eventId}`, "machine.added",
+      { from: boundedUntrustedText(machine.label || machine.target_id, 64) }, machine.first_seen_at);
+    ctx.defer(ctx.queueOwnerNotices(ownerUid));
+  }
+  if (!ctx.responsibilitySources.isEnabled(ownerUid, "machine.added")) return;
+
   const outcome = ctx.responsibilities.create({
     ownerUid,
-    title: "Confirm that a new machine is connected",
+    title: "Tell the owner their new machine is connected",
     details: {
       eventType: "machine.added",
       deviceId: boundedUntrustedText(machine.target_id, 512),
@@ -107,11 +109,16 @@ export function recordAdapterStatusTransition(
     && !options.intentionalDisconnect
     && current.readyOwnerUid !== ownerUid
   ) {
+    if (ctx.noticeRules.wantsNotice(ownerUid, "adapter.connected")) {
+      ctx.ownerNotices.noteOnce(ownerUid, `adapter.connected:${identity}:${current.updatedAt}`, "adapter.connected",
+        { from: boundedUntrustedText(current.adapter, 64), adapter: current.adapter, accountId: current.accountId }, current.updatedAt);
+      ctx.defer(ctx.queueOwnerNotices(ownerUid));
+    }
     if (ctx.responsibilitySources.isEnabled(ownerUid, "adapter.connected")) {
       const dedupeKey = `adapter.connected:${identity}`;
       const outcome = ctx.responsibilities.create({
         ownerUid,
-        title: "Confirm that a messaging adapter is connected",
+        title: "Tell the owner their messenger is connected",
         details: {
           eventType: "adapter.connected",
           adapter: boundedUntrustedText(current.adapter, 128),
@@ -149,6 +156,16 @@ export function recordAdapterStatusTransition(
   const authenticationLost = previous?.ownerUid === ownerUid
     && previous.authenticated
     && !current.authenticated;
+  if (
+    authenticationLost
+    && !options.suppressAuthenticationRequired
+    && !options.intentionalDisconnect
+    && ctx.noticeRules.wantsNotice(ownerUid, "adapter.auth_required")
+  ) {
+    ctx.ownerNotices.noteOnce(ownerUid, `adapter.auth_required:${identity}:${current.updatedAt}`, "adapter.auth_required",
+      { from: boundedUntrustedText(current.adapter, 64), adapter: current.adapter, accountId: current.accountId }, current.updatedAt);
+    ctx.defer(ctx.queueOwnerNotices(ownerUid));
+  }
   if (
     authenticationLost
     && !options.suppressAuthenticationRequired

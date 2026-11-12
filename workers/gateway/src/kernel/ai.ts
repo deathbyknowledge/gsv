@@ -251,7 +251,6 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
-  const seededSkillsRetired = retireSeededSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
@@ -283,16 +282,6 @@ export async function handleAiConfig(
     accountConfigUids,
   );
   const timezone = principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC";
-  await seededSkillsRetired;
-  const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
-  const skillIndex = skillIndexMode === "off"
-    ? []
-    : await collectPromptSkillIndex(ctx).catch((error) => {
-      console.warn(
-        `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return [];
-    });
 
   const result: AiConfigResult = {
     owner,
@@ -311,8 +300,6 @@ export async function handleAiConfig(
       timezone,
       language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
-    skillIndex,
-    skillIndexMode,
     accountApprovalPolicy,
     capabilities: [...(principalOf(ctx)?.calls ?? [])],
     maxContextBytes,

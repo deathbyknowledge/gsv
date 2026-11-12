@@ -1,8 +1,15 @@
+import { h, render } from "preact";
 import { t } from "../../../i18n/locale";
+import { CodeCopyAction } from "./codeCopy";
 import "./codeBlocks.css";
 
-/** Add local controls after Markdown has been sanitized; copying never executes the code. */
-export function enhanceCodeBlocks(container: HTMLElement): void {
+/**
+ * Add local controls after Markdown has been sanitized; copying never executes the code. The copy controls are
+ * Preact roots of their own, so the returned disposer unmounts them: call it before the container's Markdown is
+ * replaced or discarded, or their locale subscriptions keep the orphaned controls and their code alive.
+ */
+export function enhanceCodeBlocks(container: HTMLElement): () => void {
+  const roots: HTMLElement[] = [];
   for (const code of container.querySelectorAll<HTMLElement>("pre > code")) {
     const pre = code.parentElement!;
     if (pre.parentElement?.classList.contains("markdown-code-block")) continue;
@@ -12,27 +19,20 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     header.className = "markdown-code-header";
     const language = document.createElement("span");
     language.textContent = [...code.classList].find((name) => name.startsWith("language-"))?.slice(9) ?? "";
-    if (language.textContent === "text") block.classList.add("is-plain-text");
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.textContent = t("shell.code.copy");
-    copy.title = t("shell.code.copyTitle");
-    copy.setAttribute("aria-live", "polite");
-    copy.addEventListener("click", async () => {
-      try {
-        // Omit Marked's added final newline while preserving the code's internal whitespace.
-        await navigator.clipboard.writeText((code.textContent ?? "").replace(/\n$/, ""));
-        copy.textContent = t("shell.copied");
-        copy.title = t("shell.code.copyTitle");
-      } catch {
-        copy.textContent = t("shell.code.copyFailed");
-        copy.title = t("shell.code.copyManually");
-      }
-    });
-    header.append(language, copy);
+    // Untagged fences carry prose more often than code; let them wrap at every width.
+    if (language.textContent === "" || language.textContent === "text") block.classList.add("is-plain-text");
+    const actions = document.createElement("span");
+    actions.className = "markdown-code-actions";
+    // Omit Marked's added final newline while preserving the code's internal whitespace.
+    render(h(CodeCopyAction, { read: () => (code.textContent ?? "").replace(/\n$/, "") }), actions);
+    roots.push(actions);
+    header.append(language, actions);
     pre.before(block);
     pre.tabIndex = 0;
     pre.setAttribute("aria-label", t("shell.code.label"));
     block.append(header, pre);
   }
+  return () => {
+    for (const root of roots) render(null, root);
+  };
 }
