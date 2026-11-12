@@ -11,5 +11,9 @@ export function openBlobStore(env: Env): BlobStore {
   if (env.BLOBS) return new R2BlobStore(env.BLOBS);
   const { S3_ENDPOINT: endpoint, S3_BUCKET: bucket, S3_ACCESS_KEY_ID: accessKeyId, S3_SECRET_ACCESS_KEY: secretAccessKey } = env;
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error("No blob store is configured");
-  return new S3BlobStore({ endpoint, bucket, region: env.S3_REGION ?? "auto", accessKeyId, secretAccessKey });
+  const network = env.S3_NETWORK;
+  return new S3BlobStore({
+    endpoint, bucket, region: env.S3_REGION ?? "auto", accessKeyId, secretAccessKey,
+    ...(network ? { fetch: (url: string, init: RequestInit) => network.fetch(url, init) } : {}),
+  });
 }

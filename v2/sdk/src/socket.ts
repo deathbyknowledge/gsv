@@ -18,7 +18,7 @@ export class GsvRequestError extends Error {
 }
 
 export type ConnectOptions = {
-  /** The space's hostname, such as `alice.ship.space`. */
+  /** The space's hostname, such as `alice.example.com`. */
   host: string;
   /** A session token, or a function that returns a fresh one; the SDK calls it again after `unauthorized`. */
   token: string | (() => Promise<string>);

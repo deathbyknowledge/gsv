@@ -1,4 +1,4 @@
-// The runtime as the config compiler emits it, with test values. test/config.test.ts keeps the two in step.
+// The runtime as the config compiler emits it, with test values. tools/test/compile.test.ts keeps the two in step.
 {
   "name": "gsv-runtime-test",
   "main": "src/index.ts",

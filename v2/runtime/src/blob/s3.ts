@@ -1,7 +1,15 @@
 import { GsvFailure } from "@gsv/catalog";
 import { checkHash, hex, readBody, type BlobBody, type BlobStore, type MultipartUpload } from "./blob.ts";
 
-export type S3Config = { endpoint: string; bucket: string; region: string; accessKeyId: string; secretAccessKey: string };
+export type S3Config = {
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** Reaches the endpoint; self-hosted deployments pass a fetcher allowed onto their private network. */
+  fetch?: (url: string, init: RequestInit) => Promise<Response>;
+};
 
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const encoder = new TextEncoder();
@@ -101,7 +109,7 @@ export class S3BlobStore implements BlobStore {
     requestHeaders.delete("host");
     requestHeaders.set("authorization", `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${scope}, SignedHeaders=${signed.join(";")}, Signature=${signature}`);
     const url = `${endpoint.origin}${path}${canonicalQuery ? `?${canonicalQuery}` : ""}`;
-    const response = await fetch(url, { method, headers: requestHeaders, ...(opts.body ? { body: opts.body } : {}) });
+    const response = await (this.config.fetch ?? fetch)(url, { method, headers: requestHeaders, ...(opts.body ? { body: opts.body } : {}) });
     if (!response.ok && !(opts.allow ?? []).includes(response.status)) {
       await response.body?.cancel();
       throw new GsvFailure("unavailable", `The blob store answered ${response.status} to ${method}.`);

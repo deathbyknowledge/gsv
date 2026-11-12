@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "lib": ["es2024", "esnext.disposable", "dom"], "types": ["node"] },
+  "include": ["src/**/*", "test/**/*", "../config/**/*"]
+}

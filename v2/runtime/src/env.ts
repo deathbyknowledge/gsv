@@ -22,6 +22,8 @@ export interface Env {
   S3_REGION?: string;
   S3_ACCESS_KEY_ID?: string;
   S3_SECRET_ACCESS_KEY?: string;
+  /** On workerd, the only outbound route allowed onto private networks, so a local S3 server is reachable and nothing else is. */
+  S3_NETWORK?: Fetcher;
   /** Spaces live at `<handle>.<domain>`; sign-in and setup pages at the domain itself. */
   GSV_DOMAIN: string;
   GSV_RELEASE: string;

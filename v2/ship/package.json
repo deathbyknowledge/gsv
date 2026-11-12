@@ -7,10 +7,13 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "build": "node ../tools/src/cli.ts build-ui ."
+    "build": "esbuild web/src/main.ts --bundle --format=esm --target=es2022 --minify --outfile=web/dist/main.js && cp web/index.html web/dist/index.html"
   },
   "dependencies": {
     "@gsv/runtime": "*",
     "@gsv/sdk": "*"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
   }
 }

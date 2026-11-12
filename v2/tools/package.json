@@ -9,6 +9,13 @@
   "dependencies": {
     "@gsv/catalog": "*",
     "@gsv/runtime": "*",
-    "@gsv/sdk": "*"
+    "@gsv/sdk": "*",
+    "esbuild": "0.28.1",
+    "workerd": "1.20260815.1",
+    "wrangler": "4.147.0",
+    "zod": "4.3.6"
+  },
+  "bin": {
+    "gsv": "./src/cli.ts"
   }
 }
