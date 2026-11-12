@@ -385,18 +385,44 @@ export const attributionExampleSchema = z.enum([
   "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
 ]);
 
+// `invite` means the signup carried another Ship's contact invitation and
+// Accounts resolved that Ship. Which Ship it was stays in Accounts; the record
+// never names it, so two installations' product series cannot be joined.
 // Campaign tags are the operator's own names for an ad or a post, bounded to the
 // same slug shape; the visitor's click id and anything else on the link stay out.
 const installationAttributedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("installation.attributed"),
   properties: z.strictObject({
-    origin: z.enum(["website", "campaign", "direct"]),
+    origin: z.enum(["invite", "website", "campaign", "direct"]),
     placement: z.optional(attributionPlacementSchema),
     example: z.optional(attributionExampleSchema),
     utmSource: z.optional(attributionSlugSchema),
     utmCampaign: z.optional(attributionSlugSchema),
   }),
+});
+
+// A Ship issuing a contact invitation link, and the first time another Ship
+// accepts one it issued. Both are counted for the issuing Ship only: the other
+// side's identity, the link and the name stay in the Kernel.
+const contactInviteCreatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.created"),
+  properties: z.strictObject({}),
+});
+
+const contactInviteAcceptedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.accepted"),
+  properties: z.strictObject({}),
+});
+// Accounts reports a signup that followed one of the Ship's invitations under the
+// inviting Ship's pseudonym; the new Ship's own record says only `origin: "invite"`,
+// so the two series share no key.
+const contactInviteSignupSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.signup"),
+  properties: z.strictObject({}),
 });
 
 const targetConnectedSchema = z.strictObject({
@@ -562,6 +588,9 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   installationAttributedSchema,
+  contactInviteCreatedSchema,
+  contactInviteAcceptedSchema,
+  contactInviteSignupSchema,
   shipMessageCommittedSchema,
   shipMessageReceivedSchema,
   conversationReplyFailedSchema,
@@ -598,6 +627,9 @@ export const telemetryEventComponents = {
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
   "installation.attributed": ["accounts"],
+  "contact.invite.created": ["gateway"],
+  "contact.invite.accepted": ["gateway"],
+  "contact.invite.signup": ["accounts"],
   "ship.message.committed": ["gateway"],
   "ship.message.received": ["gateway"],
   "conversation.reply.failed": ["gateway"],
@@ -671,9 +703,12 @@ export function signupAttributionFromSlugs(slugs: SignupLinkSlugs): SignupAttrib
   return classified;
 }
 
-/** The record for one signup: the website's placement wins, then a campaign tag, otherwise the signup was direct. */
-export function installationAttributedProperties(attribution?: SignupAttribution): InstallationAttributedProperties {
-  const origin = attribution?.placement ? "website" : attribution?.utmSource || attribution?.utmCampaign ? "campaign" : "direct";
+/**
+ * The record for one signup: a resolved inviter wins, then the website's placement, then a
+ * campaign tag, otherwise the signup was direct. The slugs ride along whichever origin wins.
+ */
+export function installationAttributedProperties(attribution?: SignupAttribution, invited = false): InstallationAttributedProperties {
+  const origin = invited ? "invite" : attribution?.placement ? "website" : attribution?.utmSource || attribution?.utmCampaign ? "campaign" : "direct";
   return { origin, ...attribution };
 }
 export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;

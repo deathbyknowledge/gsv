@@ -198,3 +198,58 @@ describe("signup attribution", () => {
     }
   });
 });
+
+describe("signup inviter", () => {
+  async function ship(state: "active" | "restricted" = "active", principalId?: string) {
+    const ownerId = principalId ?? await owner();
+    const space = await accounts.reserveInstallation({ principalId: ownerId, operationId: crypto.randomUUID(), handle: handle() });
+    await db.batch([
+      db.prepare("UPDATE installations SET state = ? WHERE id = ?").bind(state, space.installationId),
+      db.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id = ?").bind(space.installationId),
+    ]);
+    return { installationId: space.installationId, hostname: `${space.handle}.example.com` };
+  }
+  const reporting = new InstallationSignup(db, accounts, onboarding, true, undefined, { GSV_TELEMETRY_ENABLED: "1" });
+  const spyLog = () => vi.spyOn(console, "log").mockImplementation(() => {});
+  const products = (log: ReturnType<typeof spyLog>) => log.mock.calls.flatMap(([value]) => {
+    const record = telemetryRecordSchema.safeParse(value);
+    return record.success && record.data.event.stream === "product" ? [record.data] : [];
+  });
+
+  it("tells the inviting Ship of the signup and marks the new Ship invited, naming neither to the other", async () => {
+    const inviter = await ship();
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const log = spyLog();
+    try {
+      await reporting.prepare(operationId, principalId, name, { placement: "hero" }, inviter.hostname);
+      const created = (await accounts.getReservationByOperation(operationId))!;
+      expect(products(log).map((record) => [record.installationId, record.event])).toEqual([
+        [inviter.installationId, { stream: "product", name: "contact.invite.signup", properties: {} }],
+        [created.installationId, { stream: "product", name: "installation.attributed", properties: { origin: "invite", placement: "hero" } }],
+      ]);
+      // A resumed signup replays the reservation and reports nothing again, whatever it carries.
+      await reporting.prepare(operationId, principalId, name, undefined, (await ship()).hostname);
+      await reporting.prepare(operationId, principalId, name);
+      expect(products(log)).toHaveLength(2);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("drops an unknown or inactive Ship without failing the signup, which then reports as direct", async () => {
+    // The owner's own Ship cannot be offered through this path: owner setup refuses a second Ship first.
+    const restricted = await ship("restricted");
+    for (const hostname of ["nobody-here.example.com", restricted.hostname]) {
+      const log = spyLog();
+      try {
+        await expect(reporting.prepare(crypto.randomUUID(), await owner(), handle(), undefined, hostname))
+          .resolves.toMatchObject({ onboardingToken: expect.any(String) });
+        expect(products(log).map((record) => record.event)).toEqual([
+          { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
+        ]);
+      } finally {
+        log.mockRestore();
+      }
+    }
+  });
+});

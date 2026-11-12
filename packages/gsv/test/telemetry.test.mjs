@@ -459,6 +459,8 @@ describe("installation.attributed", () => {
     assert.equal(record("accounts", { origin: "website", placement: "hero", example: "tickets" }).success, true);
     assert.equal(record("accounts", { origin: "website", placement: "example", example: "other" }).success, true);
     assert.equal(record("accounts", { origin: "campaign", utmSource: "facebook", utmCampaign: "launch-nov" }).success, true);
+    assert.equal(record("accounts", { origin: "invite", placement: "hero" }).success, true);
+    assert.equal(record("accounts", { origin: "invite", inviter: "inst_other" }).success, false);
     assert.equal(record("accounts", { origin: "website", placement: "hero-heading" }).success, false);
     assert.equal(record("accounts", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
     assert.equal(record("accounts", { origin: "campaign", utmSource: "Face Book" }).success, false);
@@ -482,6 +484,32 @@ describe("installation.attributed", () => {
     assert.deepEqual(installationAttributedProperties({}), { origin: "direct" });
     assert.deepEqual(installationAttributedProperties({ utmCampaign: "launch" }), { origin: "campaign", utmCampaign: "launch" });
     assert.deepEqual(installationAttributedProperties({ placement: "hero", utmSource: "facebook" }), { origin: "website", placement: "hero", utmSource: "facebook" });
+    assert.deepEqual(installationAttributedProperties({ placement: "hero" }, true), { origin: "invite", placement: "hero" });
+  });
+});
+
+describe("contact invitations", () => {
+  const record = (component, name, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name, properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch {
+      return { success: false };
+    }
+  };
+
+  it("counts them for the issuing Ship with no content", () => {
+    assert.equal(record("gateway", "contact.invite.created", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.accepted", {}).success, true);
+    assert.equal(record("accounts", "contact.invite.created", {}).success, false);
+    assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
+    assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
+    assert.equal(record("accounts", "contact.invite.signup", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.signup", {}).success, false);
+    assert.equal(record("accounts", "contact.invite.signup", { invitee: "inst_new" }).success, false);
   });
 });
 

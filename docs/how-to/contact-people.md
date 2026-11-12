@@ -32,6 +32,9 @@ On a managed deployment, the link opens a centered invitation showing who invite
 Choose **Continue**. Existing users select their Ship; new users verify their
 email and create one. The contact invitation stays with them through signup and
 activation. In their Ship, they choose who handles new messages and accept the connection.
+On a managed deployment, a Ship created through your invitation link is counted for
+your Ship in the operator's metrics, without naming the new Ship; what the two of
+you say stays between your Ships.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 

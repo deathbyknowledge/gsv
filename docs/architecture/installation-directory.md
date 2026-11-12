@@ -170,6 +170,15 @@ their shape, classifies the placement and example into a closed allowlist
 (see the telemetry architecture). Nothing is stored with the reservation, a
 replayed request reports nothing, and they never identify a visitor.
 
+A signup that followed a contact invitation link may also name the inviting
+Ship's hostname. Accounts resolves it through its own directory and counts it
+only when it is an active installation that the signing owner does not own;
+anything else is ignored without error, since the hostname is a claim from the
+link, not proof of who sent it. The request that creates the reservation then
+reports `contact.invite.signup` under the inviting Ship and `origin: "invite"`
+on the new Ship's `installation.attributed`, and stores nothing: Accounts keeps
+no record of who invited whom, and administration shows none.
+
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward
 migration preserves this marker for Spaces created through legacy signup codes;

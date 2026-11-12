@@ -1,8 +1,9 @@
 import type { ComponentProps, VNode } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { contactInvitationUrl, encodeContactInvitation } from "@humansandmachines/gsv/protocol";
 import { collectNodes, collectText } from "../app/testing/testHarness";
-import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
+import { OwnerWelcome, type WelcomeSnapshot, type WelcomeState } from "../app/services/session/ownerWelcome";
 
 import { loadSignupPage } from "./page";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
@@ -142,5 +143,51 @@ describe("signup attribution", () => {
     window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
     const props = await screen();
     expect((await props.load()).state.attribution).toBeNull();
+  });
+});
+
+describe("signup inviter", () => {
+  const preparedSpace = () => new Response(JSON.stringify({ origin: "https://newbie.example.com", handle: "newbie",
+    onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 }), { status: 200 });
+  const spacesBodySchema = z.object({
+    operationId: z.string(), handle: z.string(),
+    attribution: z.object({ placement: z.string(), example: z.string().optional() }).optional(),
+    inviter: z.string().optional(),
+  }).strict();
+  function spacesBody(fetcher: ReturnType<typeof vi.fn>): z.infer<typeof spacesBodySchema> {
+    const call = fetcher.mock.calls.find(([url]) => String(url).endsWith("/owner/api/spaces"));
+    if (!call) throw new Error("Expected a space preparation request");
+    // SAFETY: OwnerWelcome posts a JSON string body.
+    return spacesBodySchema.parse(JSON.parse((call[1] as { body: string }).body));
+  }
+
+  it("names the inviting Ship, and never the invitation, when a friend creates a Ship", async () => {
+    const fetcher = vi.fn(async () => preparedSpace());
+    vi.stubGlobal("fetch", fetcher);
+    const client = await (await screen()).load();
+    await client.prepare("newbie");
+    const body = spacesBody(fetcher);
+    expect(body).toEqual({ operationId: expect.any(String), handle: "newbie", inviter: "sponsor.example" });
+    const raw = JSON.stringify(body);
+    expect(raw).not.toContain(contact.slice(contact.indexOf(":") + 1));
+    expect(raw).not.toContain("x".repeat(43));
+  });
+
+  it("sends both the website's origin and the inviting Ship", async () => {
+    window.location.href = `${contactInvitationUrl(contact, origin)}&from=hero&example=plan-a-trip`;
+    const fetcher = vi.fn(async () => preparedSpace());
+    vi.stubGlobal("fetch", fetcher);
+    const client = await (await screen()).load();
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie",
+      attribution: { placement: "hero", example: "plan-a-trip" }, inviter: "sponsor.example" });
+  });
+
+  it("names nobody for an invitation code that does not parse", async () => {
+    const fetcher = vi.fn(async () => preparedSpace());
+    const client = new OwnerWelcome({ revision: "saved", value: { origin, flow: "create", sessionSecret: null, challenge: null,
+      operationId: null, handle: null, contactInvite: "not an invitation" } }, storage, origin, fetcher);
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie" });
   });
 });

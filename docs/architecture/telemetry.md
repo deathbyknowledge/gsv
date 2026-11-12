@@ -153,7 +153,11 @@ producer switch and tail consumer; schema support alone does not export anything
 without granting those adapters ownership of another component's application events.
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
-  committed messages, target/adapter connection and adapter transport outcomes.
+  committed messages, target/adapter connection, adapter transport outcomes and
+  contact invitations. `contact.invite.created` counts an invitation link the
+  Ship issued and `contact.invite.accepted` the first time another Ship
+  accepted one; both carry no properties and are recorded for the issuing Ship
+  only, so the other Ship, its handle and the link never enter a record.
   `delegation.finished` distinguishes `aborted` child runs from `failed` work,
   including when completion delivery is recovered after a Kernel restart.
   Terminal adapter delivery failures report the route/media/adapter stage,
@@ -198,9 +202,16 @@ without granting those adapters ownership of another component's application eve
   an operator created or reset never passes through it. The properties are a
   closed placement class (`hero`, `final-call`, `example` or `other`) and, for
   example cards, a closed example id, plus the campaign's `utm_source` and
-  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `website` when
-  the link carried a placement, `campaign` when it carried only a campaign tag,
-  otherwise `direct`. The signup page reads the placement slugs from the signup
+  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `invite` when the
+  signup carried another Ship's contact invitation that Accounts resolved,
+  `website` when the link carried a placement, `campaign` when it carried only
+  a campaign tag, otherwise `direct`. The same request reports
+  `contact.invite.signup`, with no properties, under the inviting Ship's own
+  pseudonym, so invitations that became Ships count for the inviter there.
+  Neither record names the other Ship: the two series share no key, and
+  Accounts keeps no record of who invited whom. Both leave the same request,
+  so a reader of the raw stream could pair them by time; the breakdowns need no
+  pairing, and the operator's own deployment is the only reader. The signup page reads the placement slugs from the signup
   link's fragment and the campaign tags from its query, keeps them in its own
   signup state until the space request and takes them off the URL; the owner
   API bounds every value to one slug shape and classifies the placement and
