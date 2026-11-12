@@ -23,8 +23,9 @@ common tools for documents and data:
 `pip install` and `apt-get install` add software for the life of the computer;
 LibreOffice, for example, is not preinstalled. Work in `/workspace`. Save useful
 files in the owner's home on `gsv`, using a GSV repository for reusable source
-when appropriate. Copy results back before stopping the computer: stop or expiry
-destroys its files and running commands. There is no automatic restore.
+when appropriate. Copy results back before stopping the computer: stopping it
+destroys its files and running commands. A computer whose lifetime expires saves
+`/workspace` first; see [continue from an expired computer](#continue-from-an-expired-computer).
 
 ## Start and use one
 
@@ -74,6 +75,30 @@ expiry. `--seconds` sets the first expiry; use extends it from there.
 A computer costs time while it runs, whether or not anything uses it. Stop it as
 soon as its work is done and the needed files are saved on `gsv`. A forgotten
 computer stops 30 minutes after its last use.
+
+## Continue from an expired computer
+
+When a computer's lifetime expires, it saves `/workspace` before it stops.
+`instance get ID` shows the save in `workspace.saveStatus`: `saving`, then
+`saved` with its size and `expiresAt`, or `failed`. A save is kept for 7 days,
+then deleted. A workspace larger than 1 GiB compressed is not saved. Saves are
+encrypted with a key that only the instance service holds, and are deleted with
+the space.
+
+Start a new computer from a kept save with `--from`:
+
+```sh
+instance start computer --request-id REQUEST_ID --from OLD_TARGET_ID --wait
+```
+
+The new computer becomes ready only after the saved `/workspace` is in place,
+and its `restore.status` reads `restored`. If the save cannot be read, the start
+fails with `restore.status` set to `failed` rather than starting empty. Only
+`/workspace` is saved: installed packages, files elsewhere and running commands
+are not.
+
+Stopping a computer means its work is done, so stopping saves nothing. The save
+catches work cut off by expiry; keep the files you need on `gsv`.
 
 ## Permissions and limits
 

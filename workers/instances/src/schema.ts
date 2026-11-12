@@ -37,6 +37,16 @@ const migrations = [{
     "CREATE INDEX diagnostics_recent ON diagnostics(occurred_at)",
     "CREATE TABLE retirement (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), operation_id TEXT NOT NULL, phase TEXT NOT NULL, updated_at INTEGER NOT NULL)",
   ],
+}, {
+  id: 2,
+  statements: [
+    // One key per computer encrypts its saved /workspace; deleting the row forgets the archive.
+    `CREATE TABLE workspaces (
+      instance_id TEXT PRIMARY KEY, owner_uid INTEGER NOT NULL, object_key TEXT NOT NULL,
+      key BLOB NOT NULL, expires_at INTEGER
+    )`,
+    "CREATE INDEX workspaces_expiry ON workspaces(expires_at) WHERE expires_at IS NOT NULL",
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {
