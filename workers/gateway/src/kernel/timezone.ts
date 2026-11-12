@@ -18,7 +18,8 @@ export function isLocalTime(value: string): boolean {
   return LOCAL_TIME.test(value);
 }
 
-function utcOffsetReader(timezone: string): (ms: number) => number {
+/** The UTC offset in force at an instant, in milliseconds, as this runtime's zone data has it. */
+export function utcOffsetReader(timezone: string): (ms: number) => number {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
