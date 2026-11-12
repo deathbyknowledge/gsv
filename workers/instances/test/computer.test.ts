@@ -167,7 +167,8 @@ describe("cloud computer lifecycle", () => {
     expect(await computer.status()).toEqual({ state: "ready", busy: true });
     vi.spyOn(Date, "now").mockReturnValue(startedAt + 30_000);
     await exec("poll", { input: "", sessionId: "train" });
-    vi.spyOn(Date, "now").mockReturnValue(startedAt + 60_001);
+    // Past the launch's own deadline, short of the one a poll resetting it would set (+90 s).
+    vi.spyOn(Date, "now").mockReturnValue(startedAt + 75_000);
     expect(await computer.status()).toEqual({ state: "ready" });
     await exec("unbounded", { input: "serve", background: true, timeout: 0 });
     vi.spyOn(Date, "now").mockReturnValue(startedAt + 200_000);
