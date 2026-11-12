@@ -120,7 +120,9 @@
         "propertyNames": {
           "type": "string"
         },
-        "additionalProperties": {}
+        "additionalProperties": {
+          "$ref": "#/$defs/__schema0"
+        }
       }
     },
     "required": [
@@ -128,7 +130,40 @@
       "message",
       "retryable"
     ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "$defs": {
+      "__schema0": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema0"
+            }
+          }
+        ]
+      }
+    }
   },
   "frame": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -148,7 +183,9 @@
           "op": {
             "type": "string"
           },
-          "args": {},
+          "args": {
+            "$ref": "#/$defs/__schema0"
+          },
           "traceparent": {
             "type": "string"
           }
@@ -178,7 +215,9 @@
                 "type": "boolean",
                 "const": true
               },
-              "result": {}
+              "result": {
+                "$ref": "#/$defs/__schema0"
+              }
             },
             "required": [
               "t",
@@ -248,7 +287,9 @@
                     "propertyNames": {
                       "type": "string"
                     },
-                    "additionalProperties": {}
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
                   }
                 },
                 "required": [
@@ -285,7 +326,9 @@
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
-              "event": {}
+              "event": {
+                "$ref": "#/$defs/__schema0"
+              }
             },
             "required": [
               "t",
@@ -317,7 +360,40 @@
           }
         ]
       }
-    ]
+    ],
+    "$defs": {
+      "__schema0": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema0"
+            }
+          }
+        ]
+      }
+    }
   },
   "operations": {
     "connect": {

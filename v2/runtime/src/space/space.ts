@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env.ts";
-import { migrate, type Migration } from "../schema.ts";
+import { migrate, type Migration, type ObjectDescription } from "../schema.ts";
 import { issueSession } from "../token.ts";
 
 const MIGRATIONS: Migration[] = [{
@@ -35,7 +35,7 @@ export class Space extends DurableObject<Env> {
     return issueSession(this.env.GSV_SECRET, { uid: input.person.uid, space: input.space, host: input.host, epoch });
   }
 
-  describe(): { class: string; schema: number } {
+  describe(): ObjectDescription {
     return { class: "Space", schema: MIGRATIONS.length };
   }
 }

@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { GsvFailure } from "@gsv/catalog";
+import { z } from "zod";
 import type { Env } from "../env.ts";
-import { migrate, type Migration } from "../schema.ts";
+import { migrate, type Migration, type ObjectDescription } from "../schema.ts";
 import { sha256Hex } from "../token.ts";
 
 const MIGRATIONS: Migration[] = [{
@@ -14,7 +15,9 @@ const MIGRATIONS: Migration[] = [{
 }];
 
 export type NameEntry = { space: string; owner: string | null; generation: number };
-type SetupInput = { space: string; uid: string; handle: string; name: string };
+const setupInputSchema = z.object({ space: z.string(), uid: z.string(), handle: z.string(), name: z.string() });
+type SetupInput = z.infer<typeof setupInputSchema>;
+export type SetupResult = { host: string; token: string; expiresAt: number };
 
 /** Hostnames and handles to ids, and signup provisioning. Off the signed-in path: only first contact by name reads it. */
 export class Directory extends DurableObject<Env> {
@@ -31,7 +34,7 @@ export class Directory extends DurableObject<Env> {
    * Redeems the deployment's one-time setup code for the operator space. The code is single use and
    * expires; a retry after a partial failure resumes the same provisioning operation.
    */
-  async setup(code: string, name: string): Promise<{ host: string; token: string; expiresAt: number }> {
+  async setup(code: string, name: string): Promise<SetupResult> {
     const [expiresAt, expected] = (this.env.GSV_SETUP ?? "").split(".");
     const codeHash = await sha256Hex(code);
     if (!expected || codeHash !== expected || Number(expiresAt) <= Date.now()) throw new GsvFailure("forbidden", "This setup link isn't valid. Print a new one with gsv deploy --setup, or gsv dev --setup locally.");
@@ -42,7 +45,7 @@ export class Directory extends DurableObject<Env> {
         "SELECT o.id, o.input, o.finished_at FROM setup s JOIN operations o ON o.id = s.operation WHERE s.code_hash = ?", codeHash,
       ).toArray()[0];
       if (existing?.finished_at) throw new GsvFailure("forbidden", "This setup link was already used.");
-      if (existing) return { id: existing.id, input: JSON.parse(existing.input) as SetupInput };
+      if (existing) return { id: existing.id, input: setupInputSchema.parse(JSON.parse(existing.input)) };
       if (this.resolve(handle)) throw new GsvFailure("conflict", "The operator space already exists.");
       const input: SetupInput = { space: crypto.randomUUID(), uid: crypto.randomUUID(), handle, name };
       const id = crypto.randomUUID();
@@ -58,7 +61,7 @@ export class Directory extends DurableObject<Env> {
     return { host, ...session };
   }
 
-  describe(): { class: string; schema: number } {
+  describe(): ObjectDescription {
     return { class: "Directory", schema: MIGRATIONS.length };
   }
 }

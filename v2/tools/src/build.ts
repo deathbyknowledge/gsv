@@ -17,8 +17,8 @@ export type Build = {
 /** Reads a deployment's `gsv.config.ts`. */
 export async function loadConfig(path: string): Promise<{ config: GsvConfig; dir: string }> {
   const file = resolve(path);
-  const module = await import(pathToFileURL(file).href) as { default?: unknown };
-  return { config: configSchema.parse(module.default), dir: dirname(file) };
+  const { default: config } = await import(pathToFileURL(file).href);
+  return { config: configSchema.parse(config), dir: dirname(file) };
 }
 
 /**

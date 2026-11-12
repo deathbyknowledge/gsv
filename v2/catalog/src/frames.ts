@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { gsvErrorSchema } from "./errors.ts";
+import { jsonSchema } from "./json.ts";
 
 export const PROTOCOL = 5;
 /** The subprotocol a socket answers with; the session token travels as a second one. */
@@ -16,16 +17,16 @@ export const reqFrameSchema = z.object({
   t: z.literal("req"),
   id: opIdSchema,
   op: z.string(),
-  args: z.unknown(),
+  args: jsonSchema,
   traceparent: z.string().optional(),
 });
 export const resFrameSchema = z.discriminatedUnion("ok", [
-  z.object({ t: z.literal("res"), id: opIdSchema, ok: z.literal(true), result: z.unknown() }),
+  z.object({ t: z.literal("res"), id: opIdSchema, ok: z.literal(true), result: jsonSchema }),
   z.object({ t: z.literal("res"), id: opIdSchema, ok: z.literal(false), error: gsvErrorSchema }),
 ]);
 /** A `sig` with `seq` is a stored, replayable event; without it, an ephemeral hint carrying no data. */
 export const sigFrameSchema = z.union([
-  z.object({ t: z.literal("sig"), feed: feedSchema, seq: z.number().int().nonnegative(), event: z.unknown() }),
+  z.object({ t: z.literal("sig"), feed: feedSchema, seq: z.number().int().nonnegative(), event: jsonSchema }),
   z.object({ t: z.literal("sig"), feed: feedSchema, head: z.string() }),
 ]);
 export const frameSchema = z.union([reqFrameSchema, resFrameSchema, sigFrameSchema]);

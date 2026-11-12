@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env.ts";
 import { LINK_TABLE } from "../link.ts";
-import { migrate, type Migration } from "../schema.ts";
+import { migrate, type Migration, type ObjectDescription } from "../schema.ts";
 
 const MIGRATIONS: Migration[] = [{ version: 1, sql: LINK_TABLE }];
 
@@ -12,7 +12,7 @@ export class Process extends DurableObject<Env> {
     void ctx.blockConcurrencyWhile(async () => { migrate(ctx.storage, MIGRATIONS); });
   }
 
-  describe(): { class: string; schema: number } {
+  describe(): ObjectDescription {
     return { class: "Process", schema: MIGRATIONS.length };
   }
 }

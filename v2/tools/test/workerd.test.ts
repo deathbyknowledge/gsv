@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "@gsv/sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { build, type Build } from "../src/build.ts";
 import { issueSetup, newSecret } from "../src/setup.ts";
 import { startWorkerd, type Workerd } from "../src/workerd/run.ts";
@@ -50,7 +51,7 @@ describe("the deployment on raw workerd", () => {
     const redeem = () => fetch(`${origin("ops")}/_gsv/setup`, { method: "POST", body: JSON.stringify({ code: setup.code, name: "Ana" }) });
     const answer = await redeem();
     expect(answer.status).toBe(200);
-    const { host, token } = await answer.json() as { host: string; token: string };
+    const { host, token } = z.object({ host: z.string(), token: z.string() }).parse(await answer.json());
     expect(host).toBe("ops.localhost");
 
     const first = await connect({ host: `${host}:${port}`, token, insecure: true });
@@ -71,7 +72,7 @@ function freePort(): Promise<number> {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, () => {
-      const { port } = server.address() as AddressInfo;
+      const { port } = z.object({ port: z.number() }).parse(server.address());
       server.close(() => resolve(port));
     });
   });

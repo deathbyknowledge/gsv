@@ -1,19 +1,21 @@
 import { listDurableObjectIds, runInDurableObject, SELF } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import { parseResult, resFrameSchema, type JsonValue, type ResFrame } from "@gsv/catalog";
 import { migrate } from "../src/schema.ts";
+import { sessionSchema } from "../src/token.ts";
 
-type Socket = { ws: WebSocket; protocol: string | null; next(): Promise<unknown>; closed: Promise<{ code: number; reason: string }> };
+type Socket = { ws: WebSocket; protocol: string | null; next(): Promise<ResFrame>; closed: Promise<{ code: number; reason: string }> };
 
 async function openSocket(host: string, token: string | undefined): Promise<Socket> {
   const protocols = ["gsv.5", ...(token ? [`gsv.token.${token}`] : [])];
   const response = await SELF.fetch(`https://${host}/_gsv/socket`, { headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": protocols.join(", ") } });
   const ws = response.webSocket;
   if (!ws) throw new Error(`No socket: ${response.status}`);
-  const messages: unknown[] = [];
-  const waiting: ((frame: unknown) => void)[] = [];
+  const messages: ResFrame[] = [];
+  const waiting: ((frame: ResFrame) => void)[] = [];
   ws.addEventListener("message", event => {
-    const frame: unknown = JSON.parse(String(event.data));
+    const frame = resFrameSchema.parse(JSON.parse(String(event.data)));
     const resolve = waiting.shift();
     if (resolve) resolve(frame); else messages.push(frame);
   });
@@ -22,12 +24,15 @@ async function openSocket(host: string, token: string | undefined): Promise<Sock
   return {
     ws,
     protocol: response.headers.get("Sec-WebSocket-Protocol"),
-    next: () => messages.length ? Promise.resolve(messages.shift()) : new Promise(resolve => waiting.push(resolve)),
+    next: () => {
+      const frame = messages.shift();
+      return frame ? Promise.resolve(frame) : new Promise(resolve => waiting.push(resolve));
+    },
     closed,
   };
 }
 
-function request(socket: Socket, id: string, op: string, args: unknown): Promise<unknown> {
+function request(socket: Socket, id: string, op: string, args: JsonValue): Promise<ResFrame> {
   socket.ws.send(JSON.stringify({ t: "req", id, op, args }));
   return socket.next();
 }
@@ -61,7 +66,8 @@ describe("first space", () => {
     expect(socket.protocol).toBe("gsv.5");
     const response = await request(socket, "op-connect-1", "connect", CONNECT);
     expect(response).toMatchObject({ t: "res", id: "op-connect-1", ok: true, result: { resumed: true, minVersion: {}, deprecations: [] } });
-    const { result } = response as { result: { owner: string; person: string } };
+    if (!response.ok) throw new Error("connect failed");
+    const result = parseResult("connect", response.result);
     expect(result.owner).toBe(result.person);
     expect(await request(socket, "op-connect-2", "connect", { ...CONNECT, since: { events: 3 } })).toMatchObject({ ok: true, result: { resumed: "reset" } });
     socket.ws.close(1000);
@@ -88,7 +94,7 @@ describe("first space", () => {
   it("refuses a token on another hostname or with an edited space", async () => {
     expect(await (await openSocket("gsv.test", token)).closed).toEqual({ code: 4401, reason: "unauthorized" });
     const [body, signature] = token.split(".");
-    const claims = JSON.parse(atob((body ?? "").replace(/-/g, "+").replace(/_/g, "/"))) as Record<string, unknown>;
+    const claims = sessionSchema.parse(JSON.parse(atob((body ?? "").replace(/-/g, "+").replace(/_/g, "/"))));
     const edited = btoa(JSON.stringify({ ...claims, space: crypto.randomUUID() })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     expect(await (await openSocket("ops.gsv.test", `${edited}.${signature}`)).closed).toEqual({ code: 4401, reason: "unauthorized" });
     expect(await (await openSocket("ops.gsv.test", undefined)).closed).toEqual({ code: 4401, reason: "unauthorized" });

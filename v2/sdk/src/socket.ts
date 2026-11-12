@@ -1,6 +1,6 @@
 import {
-  CATALOG, connect as connectOp, frameSchema, PROTOCOL, SUBPROTOCOL, TOKEN_SUBPROTOCOL_PREFIX,
-  type Args, type CatalogName, type Feed, type GsvError, type ResFrame, type Result,
+  catalogOp, connect as connectOp, frameSchema, parseResult, PROTOCOL, SUBPROTOCOL, TOKEN_SUBPROTOCOL_PREFIX,
+  type Args, type CatalogName, type Feed, type GsvError, type JsonValue, type ResFrame, type Result,
 } from "@gsv/catalog";
 
 /** A failed call. Decide on `code` and `retryable`; `message` is for people. */
@@ -26,15 +26,27 @@ export type ConnectOptions = {
   watches?: Feed[];
   /** `ws:` for local development hosts; `wss:` everywhere else. */
   insecure?: boolean;
-  WebSocket?: typeof WebSocket;
+  WebSocket?: SocketConstructor;
   /** Reconnect waits and the random source for jitter; tests make them deterministic. */
   backoff?: { baseMs?: number; maxMs?: number; random?: () => number };
 };
 
-type Pending = { frame: string; resolve(result: unknown): void; reject(error: Error): void };
+/** What the SDK uses of a WebSocket; the browser's and Node's both fit. */
+export type SocketLike = {
+  readonly readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  onopen: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+};
+export type SocketConstructor = new (url: string, protocols: string[]) => SocketLike;
+
+type Pending = { frame: string; resolve(result: JsonValue): void; reject(error: Error): void };
+type TokenSource = () => Promise<string>;
 type Deferred = { promise: Promise<void>; settled: boolean; resolve(): void; reject(error: Error): void };
 
-const CLOSE_CODES: Record<number, GsvError["code"]> = { 4401: "unauthorized", 4409: "moved", 4426: "upgrade_required" };
+const CLOSE_CODES = new Map<number, GsvError["code"]>([[4401, "unauthorized"], [4409, "moved"], [4426, "upgrade_required"]]);
 const PING_MS = 30_000;
 
 /**
@@ -44,7 +56,7 @@ const PING_MS = 30_000;
 export class GsvSocket {
   info: Result<"connect"> | undefined;
   private readonly options: ConnectOptions;
-  private socket: WebSocket | undefined;
+  private socket: SocketLike | undefined;
   private readonly pending = new Map<string, Pending>();
   /** Set once the connection ends for good; every later call fails with it. */
   private terminal: Error | undefined;
@@ -70,11 +82,11 @@ export class GsvSocket {
 
   /** Calls one operation, retrying what the server marks retryable within the operation's timeout. */
   async call<N extends CatalogName>(op: N, args: Args<N>, opts: { opId?: string } = {}): Promise<Result<N>> {
-    const deadline = Date.now() + (CATALOG.get(op)?.timeoutMs ?? 30_000);
+    const deadline = Date.now() + catalogOp(op).timeoutMs;
     const id = opts.opId ?? crypto.randomUUID();
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.send(id, op, args) as Result<N>;
+        return parseResult(op, await this.send(id, op, args));
       } catch (cause) {
         if (!(cause instanceof GsvRequestError) || !cause.retryable || this.terminal) throw cause;
         const wait = cause.error.retryAfterMs ?? this.delay(attempt);
@@ -89,7 +101,7 @@ export class GsvSocket {
     this.socket?.close(1000, "Closed by the client");
   }
 
-  private send(id: string, op: string, args: unknown): Promise<unknown> {
+  private send(id: string, op: CatalogName, args: Args<CatalogName>): Promise<JsonValue> {
     if (this.terminal) return Promise.reject(this.terminal);
     return new Promise((resolve, reject) => {
       const frame = JSON.stringify({ t: "req", id, op, args });
@@ -103,30 +115,27 @@ export class GsvSocket {
   }
 
   private async dial(): Promise<void> {
-    const token = typeof this.options.token === "string" ? this.options.token : await this.options.token();
+    const token = isTokenSource(this.options.token) ? await this.options.token() : this.options.token;
     if (this.terminal) return;
-    const Socket = this.options.WebSocket ?? globalThis.WebSocket;
+    const Socket: SocketConstructor = this.options.WebSocket ?? globalThis.WebSocket;
     const socket = new Socket(`${this.options.insecure ? "ws" : "wss"}://${this.options.host}/_gsv/socket`, [SUBPROTOCOL, `${TOKEN_SUBPROTOCOL_PREFIX}${token}`]);
     this.socket = socket;
     this.info = undefined;
-    socket.addEventListener("open", () => { void this.handshake(socket); });
-    socket.addEventListener("message", event => this.receive(event.data));
-    socket.addEventListener("close", event => this.lost(socket, event.code));
+    socket.onopen = () => { void this.handshake(socket); };
+    socket.onmessage = event => this.receive(String(event.data));
+    socket.onclose = event => this.lost(socket, event.code);
   }
 
-  private async handshake(socket: WebSocket): Promise<void> {
+  private async handshake(socket: SocketLike): Promise<void> {
     const id = crypto.randomUUID();
     this.handshakeId = id;
-    const args: Args<"connect"> = {
-      protocol: PROTOCOL,
-      client: this.options.client ?? { name: "gsv-sdk", version: "0", platform: "js" },
-      ...(this.options.watches ? { watches: this.options.watches } : {}),
-    };
+    const args: Args<"connect"> = { protocol: PROTOCOL, client: this.options.client ?? { name: "gsv-sdk", version: "0", platform: "js" } };
+    if (this.options.watches) args.watches = this.options.watches;
     const frame = JSON.stringify({ t: "req", id, op: connectOp.name, args });
-    const answered = new Promise<unknown>((resolve, reject) => this.pending.set(id, { frame, resolve, reject }));
+    const answered = new Promise<JsonValue>((resolve, reject) => this.pending.set(id, { frame, resolve, reject }));
     socket.send(frame);
     let info: Result<"connect">;
-    try { info = await answered as Result<"connect">; } catch { return; }
+    try { info = connectOp.result.parse(await answered); } catch { return; }
     if (socket !== this.socket) return;
     this.info = info;
     this.attempt = 0;
@@ -138,9 +147,11 @@ export class GsvSocket {
     this.ready.resolve();
   }
 
-  private receive(data: unknown): void {
-    if (data === "pong" || typeof data !== "string") return;
-    const parsed = frameSchema.safeParse(JSON.parse(data));
+  private receive(data: string): void {
+    if (data === "pong") return;
+    let raw: JsonValue;
+    try { raw = JSON.parse(data); } catch { return; }
+    const parsed = frameSchema.safeParse(raw);
     if (!parsed.success || parsed.data.t !== "res") return;
     const frame: ResFrame = parsed.data;
     const pending = this.pending.get(frame.id);
@@ -150,14 +161,14 @@ export class GsvSocket {
     else pending.reject(new GsvRequestError(frame.error));
   }
 
-  private lost(socket: WebSocket, code: number): void {
+  private lost(socket: SocketLike, code: number): void {
     if (socket !== this.socket || this.terminal) return;
     clearInterval(this.ping);
     if (this.handshakeId) this.pending.delete(this.handshakeId);
     this.info = undefined;
-    const refused = CLOSE_CODES[code];
+    const refused = CLOSE_CODES.get(code);
     // One fresh token is worth a try; anything else the owner refused ends the connection.
-    const refresh = refused === "unauthorized" && typeof this.options.token === "function" && !this.refreshed;
+    const refresh = refused === "unauthorized" && isTokenSource(this.options.token) && !this.refreshed;
     if (refused && !refresh) {
       this.end(new GsvRequestError({ code: refused, message: `The connection was refused: ${refused}.`, retryable: false }));
       return;
@@ -184,16 +195,19 @@ export class GsvSocket {
 }
 
 function deferred(): Deferred {
-  let settle!: { resolve(): void; reject(error: Error): void };
-  const promise = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
   promise.catch(() => {});
-  const result = {
+  const result: Deferred = {
     promise,
     settled: false,
-    resolve: () => { result.settled = true; settle.resolve(); },
-    reject: (error: Error) => { result.settled = true; settle.reject(error); },
+    resolve: () => { result.settled = true; resolve(); },
+    reject: error => { result.settled = true; reject(error); },
   };
   return result;
+}
+
+function isTokenSource(token: string | TokenSource): token is TokenSource {
+  return typeof token === "function";
 }
 
 function sleep(ms: number): Promise<void> {

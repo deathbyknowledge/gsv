@@ -1,8 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import { CATALOG, connect, GsvFailure, reqFrameSchema, SUBPROTOCOL, toGsvError, type Args, type OpDef, type ResFrame, type Result } from "@gsv/catalog";
+import {
+  CATALOG, connect, GsvFailure, parseArgs, reqFrameSchema, SUBPROTOCOL, toGsvError, type Args, type JsonValue, type OpDef, type ResFrame, type Result,
+} from "@gsv/catalog";
 import type { Env } from "../env.ts";
-import { migrate, type Migration } from "../schema.ts";
-import { sessionSchema, type Session } from "../token.ts";
+import { migrate, type Migration, type ObjectDescription } from "../schema.ts";
+import { sessionSchema } from "../token.ts";
 
 const MIGRATIONS: Migration[] = [{
   version: 1,
@@ -64,22 +66,20 @@ export class Owner extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string") return ws.close(1003, "Control frames are text");
+    if (message instanceof ArrayBuffer) return ws.close(1003, "Control frames are text");
     const attachment: Attachment = ws.deserializeAttachment();
     if (attachment.exp <= Date.now()) return ws.close(CLOSE.unauthorized, "unauthorized");
-    let raw: unknown;
+    let raw: JsonValue;
     try { raw = JSON.parse(message); } catch { return ws.close(1007, "Frames are JSON"); }
     const frame = reqFrameSchema.safeParse(raw);
     if (!frame.success) return ws.close(1007, "Unknown frame");
-    const { id, op } = frame.data;
+    const { id, op, args } = frame.data;
     const def = CATALOG.get(op);
     let response: ResFrame;
     try {
       if (!def) throw new GsvFailure("bad_request", `Unknown operation ${op}.`);
       if (!attachment.connected && op !== connect.name) throw new GsvFailure("bad_request", "Send connect first.");
-      const args = def.args.safeParse(frame.data.args);
-      if (!args.success) throw new GsvFailure("bad_request", `Arguments for ${op} don't match the catalog.`, { details: { issues: args.error.issues.map(issue => ({ path: issue.path.join("."), message: issue.message })) } });
-      response = { t: "res", id, ok: true, result: await this.dispatch(ws, attachment, def, args.data) };
+      response = { t: "res", id, ok: true, result: await this.dispatch(ws, attachment, def, args) };
     } catch (cause) {
       const ref = cause instanceof GsvFailure ? undefined : crypto.randomUUID();
       if (ref) console.error(JSON.stringify({ event: "owner.request.failed", ref, op: def?.name, error: String(cause) }));
@@ -95,9 +95,9 @@ export class Owner extends DurableObject<Env> {
     ws.close(code === 1005 ? 1000 : code, reason);
   }
 
-  private async dispatch(ws: WebSocket, attachment: Attachment, def: OpDef, args: unknown): Promise<unknown> {
+  private async dispatch(ws: WebSocket, attachment: Attachment, def: OpDef, args: JsonValue): Promise<JsonValue> {
     switch (def.name) {
-      case connect.name: return this.connectSocket(ws, attachment, args as Args<"connect">);
+      case connect.name: return this.connectSocket(ws, attachment, parseArgs(connect, args));
       default: throw new GsvFailure("bad_request", `${def.name} is not served here yet.`);
     }
   }
@@ -112,7 +112,7 @@ export class Owner extends DurableObject<Env> {
     return this.ctx.storage.sql.exec<Link>("SELECT owner, kind, space, generation, epoch, home FROM link WHERE id = 1").toArray()[0];
   }
 
-  describe(): { class: string; schema: number } {
+  describe(): ObjectDescription {
     return { class: "Owner", schema: MIGRATIONS.length };
   }
 }

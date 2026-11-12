@@ -1,38 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { reqFrameSchema, type ReqFrame } from "@gsv/catalog";
 import { connect, GsvRequestError } from "../src/index.ts";
 
-type Req = { t: "req"; id: string; op: string; args: unknown };
+type Req = ReqFrame;
 type Script = (req: Req, socket: FakeSocket) => void;
 
 /** A scripted server behind a WebSocket-shaped object. */
-class FakeSocket extends EventTarget {
+class FakeSocket {
   static opened: FakeSocket[] = [];
   static script: Script = () => {};
   readyState = 0;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
   readonly sent: Req[] = [];
   readonly url: string;
   readonly protocols: string[];
   constructor(url: string, protocols: string[]) {
-    super();
     this.url = url;
     this.protocols = protocols;
     FakeSocket.opened.push(this);
-    setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); });
+    setTimeout(() => { this.readyState = 1; this.onopen?.(new Event("open")); });
   }
   send(data: string): void {
     if (data === "ping") return;
-    const req = JSON.parse(data) as Req;
+    const req = reqFrameSchema.parse(JSON.parse(data));
     this.sent.push(req);
     queueMicrotask(() => FakeSocket.script(req, this));
   }
   reply(req: Req, body: { result: unknown } | { error: { code: string; message: string; retryable: boolean; retryAfterMs?: number } }): void {
     const frame = "result" in body ? { t: "res", id: req.id, ok: true, result: body.result } : { t: "res", id: req.id, ok: false, error: body.error };
-    this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) }));
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(frame) }));
   }
   close(code = 1000): void {
     if (this.readyState === 3) return;
     this.readyState = 3;
-    this.dispatchEvent(Object.assign(new Event("close"), { code }));
+    this.onclose?.(new CloseEvent("close", { code }));
   }
 }
 
@@ -41,7 +44,7 @@ const options = (token: string | (() => Promise<string>) = "tok") => ({
   host: "ana.gsv.test",
   token,
   insecure: true,
-  WebSocket: FakeSocket as unknown as typeof WebSocket,
+  WebSocket: FakeSocket,
   backoff: { baseMs: 1, maxMs: 2, random: () => 0.5 },
 });
 

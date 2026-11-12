@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
+import { z } from "zod";
 import type { Build } from "../build.ts";
 
 /** The pinned binary: each release runs the workerd version it was tested on. */
-const workerdPath = (createRequire(import.meta.url)("workerd") as { default: string }).default;
+const workerdPath = z.object({ default: z.string() }).parse(createRequire(import.meta.url)("workerd")).default;
 
 export type Workerd = { process: ChildProcess; origin: string; exited: Promise<number | null>; stop(): Promise<void> };
 

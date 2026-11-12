@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { DURABLE_OBJECTS } from "@gsv/runtime/config";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { compileWorkerd, compileWrangler, SECRETS } from "../src/compile.ts";
 import { testConfig } from "./config.ts";
@@ -9,7 +10,7 @@ const paths = { main: "worker.js", ui: "ui", worker: "worker.js", assets: "asset
 describe("config compiler", () => {
   it("emits what the runtime's test config declares", () => {
     const source = readFileSync(new URL("../../runtime/wrangler.test.jsonc", import.meta.url), "utf8");
-    const declared = JSON.parse(source.replace(/^\s*\/\/.*$/gm, "")) as Record<string, unknown> & { vars: Record<string, string> };
+    const declared = z.object({ vars: z.record(z.string(), z.string()) }).catchall(z.json()).parse(JSON.parse(source.replace(/^\s*\/\/.*$/gm, "")));
     const compiled = compileWrangler(testConfig(), paths);
     for (const key of ["name", "compatibility_date", "compatibility_flags", "durable_objects", "migrations"] as const) {
       expect(declared[key], key).toEqual(compiled[key]);

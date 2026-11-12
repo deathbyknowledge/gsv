@@ -2,6 +2,9 @@ import { GsvFailure } from "@gsv/catalog";
 
 export type Migration = { version: number; sql: string };
 
+/** What every Durable Object class reports about itself. */
+export type ObjectDescription = { class: string; schema: number };
+
 /**
  * Runs each class's forward-only migrations at the object's first wake. Code older than the object's
  * recorded version refuses to run, so a rollback never reads a schema it doesn't know.

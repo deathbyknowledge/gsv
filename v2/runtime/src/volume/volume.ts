@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env.ts";
 import { acceptLink, LINK_TABLE, type SpaceLink } from "../link.ts";
-import { migrate, type Migration } from "../schema.ts";
+import { migrate, type Migration, type ObjectDescription } from "../schema.ts";
 
 const MIGRATIONS: Migration[] = [{
   version: 1,
@@ -22,7 +22,7 @@ export class Volume extends DurableObject<Env> {
     });
   }
 
-  describe(): { class: string; schema: number } {
+  describe(): ObjectDescription {
     return { class: "Volume", schema: MIGRATIONS.length };
   }
 }

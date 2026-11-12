@@ -46,8 +46,8 @@ export class S3BlobStore implements BlobStore {
   }
 
   async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
-    const query: Record<string, string> = { "list-type": "2", prefix, "max-keys": "1000" };
-    if (cursor) query["continuation-token"] = cursor;
+    const first = { "list-type": "2", prefix, "max-keys": "1000" };
+    const query = cursor ? { ...first, "continuation-token": cursor } : first;
     const xml = await (await this.send("GET", "", query, {})).text();
     const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map(match => unescapeXml(match[1] ?? ""));
     const next = /<NextContinuationToken>([^<]*)<\/NextContinuationToken>/.exec(xml)?.[1];
@@ -92,24 +92,27 @@ export class S3BlobStore implements BlobStore {
     const path = `/${this.config.bucket}${key ? `/${key.split("/").map(uriEncode).join("/")}` : ""}`;
     const canonicalQuery = Object.keys(query).sort().map(name => `${uriEncode(name)}=${uriEncode(query[name] ?? "")}`).join("&");
     const amzDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-    const headers: Record<string, string> = {
-      host: endpoint.host,
-      "x-amz-content-sha256": opts.sha256 ?? EMPTY_SHA256,
-      "x-amz-date": amzDate,
-      ...Object.fromEntries(Object.entries(opts.headers ?? {}).filter(([name]) => name.startsWith("x-amz-"))),
-    };
-    const signed = Object.keys(headers).sort();
-    const canonicalRequest = [method, path, canonicalQuery, ...signed.map(name => `${name}:${(headers[name] ?? "").trim()}`), "", signed.join(";"), headers["x-amz-content-sha256"]].join("\n");
+    const contentSha256 = opts.sha256 ?? EMPTY_SHA256;
+    const headers = new Map([
+      ["host", endpoint.host],
+      ["x-amz-content-sha256", contentSha256],
+      ["x-amz-date", amzDate],
+      ...Object.entries(opts.headers ?? {}).filter(([name]) => name.startsWith("x-amz-")),
+    ]);
+    const signed = [...headers.keys()].sort();
+    const canonicalRequest = [method, path, canonicalQuery, ...signed.map(name => `${name}:${(headers.get(name) ?? "").trim()}`), "", signed.join(";"), contentSha256].join("\n");
     const scope = `${amzDate.slice(0, 8)}/${this.config.region}/s3/aws4_request`;
     const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, hex(await crypto.subtle.digest("SHA-256", encoder.encode(canonicalRequest)))].join("\n");
     let signingKey: BufferSource = encoder.encode(`AWS4${this.config.secretAccessKey}`);
     for (const part of [amzDate.slice(0, 8), this.config.region, "s3", "aws4_request"]) signingKey = await hmac(signingKey, part);
     const signature = hex(await hmac(signingKey, stringToSign));
-    const requestHeaders = new Headers({ ...opts.headers, ...headers });
-    requestHeaders.delete("host");
+    const requestHeaders = new Headers(opts.headers);
+    for (const [name, value] of headers) if (name !== "host") requestHeaders.set(name, value);
     requestHeaders.set("authorization", `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${scope}, SignedHeaders=${signed.join(";")}, Signature=${signature}`);
     const url = `${endpoint.origin}${path}${canonicalQuery ? `?${canonicalQuery}` : ""}`;
-    const response = await (this.config.fetch ?? fetch)(url, { method, headers: requestHeaders, ...(opts.body ? { body: opts.body } : {}) });
+    const init: RequestInit = { method, headers: requestHeaders };
+    if (opts.body) init.body = opts.body;
+    const response = await (this.config.fetch ?? fetch)(url, init);
     if (!response.ok && !(opts.allow ?? []).includes(response.status)) {
       await response.body?.cancel();
       throw new GsvFailure("unavailable", `The blob store answered ${response.status} to ${method}.`);

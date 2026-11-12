@@ -5,7 +5,7 @@ describe("catalog", () => {
   it("gives every operation a schema, a timeout, a verb its kind has and only listed error codes", () => {
     for (const def of CATALOG.values()) {
       expect(def.timeoutMs, def.name).toBeGreaterThan(0);
-      expect(KIND_VERBS[def.kind] as readonly string[], def.name).toContain(def.verb);
+      expect(KIND_VERBS[def.kind], def.name).toContain(def.verb);
       for (const code of def.errors) expect(Object.keys(ERROR_CODES), def.name).toContain(code);
       expect(def.doc.length, def.name).toBeGreaterThan(0);
     }

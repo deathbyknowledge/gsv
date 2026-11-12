@@ -1,1 +1,1 @@
-// test script
+export const marker = "test script";

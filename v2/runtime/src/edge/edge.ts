@@ -1,6 +1,6 @@
-import { GsvFailure, TOKEN_SUBPROTOCOL_PREFIX, toGsvError, type ErrorCode } from "@gsv/catalog";
+import { GsvFailure, TOKEN_SUBPROTOCOL_PREFIX, toGsvError, type ErrorCode, type GsvError } from "@gsv/catalog";
 import { z } from "zod";
-import type { NameEntry } from "../directory/directory.ts";
+import type { NameEntry, SetupResult } from "../directory/directory.ts";
 import type { Env } from "../env.ts";
 import { CLOSE } from "../owner/owner.ts";
 import { verifySession } from "../token.ts";
@@ -11,7 +11,7 @@ const names = new Map<string, { entry: NameEntry | null; until: number }>();
 
 const setupSchema = z.object({ code: z.string().min(16).max(128), name: z.string().trim().min(1).max(80) });
 
-const STATUS: Partial<Record<ErrorCode, number>> = { bad_request: 400, unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, unavailable: 503 };
+const STATUS = new Map<ErrorCode, number>([["bad_request", 400], ["unauthorized", 401], ["forbidden", 403], ["not_found", 404], ["conflict", 409], ["unavailable", 503]]);
 
 /**
  * Signed-in traffic routes by the session token alone and never asks the directory. Only first contact
@@ -24,7 +24,8 @@ export async function edge(request: Request, env: Env): Promise<Response> {
   const label = host.endsWith(`.${domain}`) ? host.slice(0, -domain.length - 1) : undefined;
   if (host !== domain && (!label || label.includes("."))) return notFound();
   const headers = new Headers(request.headers);
-  for (const name of [...headers.keys()]) if (name.startsWith("x-gsv-")) headers.delete(name);
+  // A copy of the names: deleting while iterating a Headers object skips entries.
+  for (const name of Array.from(headers.keys())) if (name.startsWith("x-gsv-")) headers.delete(name);
 
   if (url.pathname === "/_gsv/socket") return socket(new Request(request, { headers }), env, host);
   // The deployment claims its operator host, so it serves the setup page before the directory knows it.
@@ -65,7 +66,7 @@ async function setup(request: Request, env: Env): Promise<Response> {
     const ref = GsvFailure.revive(cause) ? undefined : crypto.randomUUID();
     if (ref) console.error(JSON.stringify({ event: "edge.setup.failed", ref, error: String(cause) }));
     const error = toGsvError(cause, undefined, ref);
-    return json({ error }, STATUS[error.code] ?? 500);
+    return json({ error }, STATUS.get(error.code) ?? 500);
   }
 }
 
@@ -84,7 +85,7 @@ async function ui(request: Request, env: Env): Promise<Response> {
   return env.ASSETS.fetch(new Request(new URL("/", request.url), request));
 }
 
-function json(body: unknown, status: number): Response {
+function json(body: { error: GsvError } | SetupResult, status: number): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 

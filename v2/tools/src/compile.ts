@@ -101,7 +101,7 @@ export function migrations(): { tag: string; new_sqlite_classes: string[] }[] {
   return tags.map(tag => ({ tag, new_sqlite_classes: DURABLE_OBJECTS.filter(object => object.since === tag).map(object => object.className) }));
 }
 
-function vars(config: GsvConfig): Record<string, string> {
+function vars(config: GsvConfig) {
   return { GSV_DOMAIN: config.domain, GSV_RELEASE: config.release, GSV_OPERATOR_SPACE: config.operatorSpace };
 }
 
@@ -118,7 +118,7 @@ function refuseUnwired(config: GsvConfig): void {
 
 /** A Cap'n Proto text literal. Config values are plain strings, so control characters are refused rather than escaped. */
 function text(value: string): string {
-  if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error(`Unexpected control character in ${JSON.stringify(value)}`);
+  if (/\p{Cc}/u.test(value)) throw new Error(`Unexpected control character in ${JSON.stringify(value)}`);
   return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
 }
 

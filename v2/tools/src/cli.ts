@@ -26,6 +26,9 @@ Options:
 
 /** Builds, local data and dev secrets, like `.wrangler`. */
 const STATE = resolve(".gsv");
+const devSecretsSchema = z.object({ GSV_SECRET: z.string(), GSV_SETUP: z.string() });
+const secretListSchema = z.array(z.object({ name: z.string() }));
+
 const WRANGLER = join(dirname(createRequire(import.meta.url).resolve("wrangler/package.json")), "bin", "wrangler.js");
 
 const { positionals, values } = parseArgs({
@@ -56,7 +59,7 @@ async function dev(): Promise<void> {
   const data = join(root, "data");
   await mkdir(data, { recursive: true });
   const secretsPath = join(root, "secrets.json");
-  const saved = existsSync(secretsPath) ? JSON.parse(await readFile(secretsPath, "utf8")) as { GSV_SECRET: string; GSV_SETUP: string } : undefined;
+  const saved = existsSync(secretsPath) ? devSecretsSchema.parse(JSON.parse(await readFile(secretsPath, "utf8"))) : undefined;
   const issued = !saved || values.setup ? issueSetup() : undefined;
   const secrets = { GSV_SECRET: saved?.GSV_SECRET ?? newSecret(), GSV_SETUP: issued ? issued.binding : saved?.GSV_SETUP ?? "" };
 
@@ -84,15 +87,14 @@ async function deploy(): Promise<void> {
   }
   const existing = await secretNames(output.wrangler);
   const issued = values.setup || !existing.includes("GSV_SETUP") ? issueSetup() : undefined;
-  const secrets = {
-    ...(existing.includes("GSV_SECRET") ? {} : { GSV_SECRET: newSecret() }),
-    ...(issued ? { GSV_SETUP: issued.binding } : {}),
-  };
+  const secrets = new Map<string, string>();
+  if (!existing.includes("GSV_SECRET")) secrets.set("GSV_SECRET", newSecret());
+  if (issued) secrets.set("GSV_SETUP", issued.binding);
   const temp = await mkdtemp(join(tmpdir(), "gsv-deploy-"));
   try {
     const file = join(temp, "secrets.json");
-    await writeFile(file, JSON.stringify(secrets), { mode: 0o600 });
-    await wrangler(["deploy", "--config", output.wrangler, ...(Object.keys(secrets).length ? ["--secrets-file", file] : [])]);
+    await writeFile(file, JSON.stringify(Object.fromEntries(secrets)), { mode: 0o600 });
+    await wrangler(["deploy", "--config", output.wrangler, ...(secrets.size ? ["--secrets-file", file] : [])]);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -101,7 +103,7 @@ async function deploy(): Promise<void> {
 
 async function secretNames(config: string): Promise<string[]> {
   const { code, stdout, output } = await wrangler(["secret", "list", "--config", config, "--format", "json"], { capture: true });
-  if (code === 0) return (JSON.parse(stdout.slice(stdout.indexOf("["))) as { name: string }[]).map(secret => secret.name);
+  if (code === 0) return secretListSchema.parse(JSON.parse(stdout.slice(stdout.indexOf("[")))).map(secret => secret.name);
   // A Worker that was never deployed has no secrets yet.
   if (output.includes("[code: 10007]")) return [];
   throw new Error(`wrangler couldn't list the Worker's secrets:\n${output}`);
@@ -131,8 +133,8 @@ if (values.help || !command) {
   console.log(USAGE);
   if (!values.help) process.exitCode = 1;
 } else {
-  await command().catch((error: unknown) => {
-    console.error(error instanceof z.ZodError ? z.prettifyError(error) : error instanceof Error ? error.message : error);
+  await command().catch((cause: unknown) => {
+    console.error(cause instanceof z.ZodError ? z.prettifyError(cause) : cause instanceof Error ? cause.message : cause);
     process.exitCode = 1;
   });
 }

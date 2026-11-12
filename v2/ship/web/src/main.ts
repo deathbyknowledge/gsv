@@ -1,7 +1,9 @@
 import { connect, GsvRequestError } from "@gsv/sdk";
+import { z } from "zod";
 
-type Session = { token: string; expiresAt: number };
-type SetupAnswer = Session & { host: string } | { error: { message: string } };
+const sessionSchema = z.object({ token: z.string(), expiresAt: z.number() });
+type Session = z.infer<typeof sessionSchema>;
+const setupAnswerSchema = z.union([sessionSchema.extend({ host: z.string() }), z.object({ error: z.object({ message: z.string() }) })]);
 
 const SESSION_KEY = "gsv.session";
 const main = document.querySelector("main") ?? document.body;
@@ -18,8 +20,8 @@ function show(title: string, body: string): void {
 
 function savedSession(): Session | null {
   try {
-    const session = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as Session | null;
-    return session && session.expiresAt > Date.now() ? session : null;
+    const session = sessionSchema.safeParse(JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null"));
+    return session.success && session.data.expiresAt > Date.now() ? session.data : null;
   } catch {
     return null;
   }
@@ -51,7 +53,8 @@ function setup(): void {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, name: name.value }),
-    }).then(response => response.json() as Promise<SetupAnswer>).then(answer => {
+    }).then(response => response.json()).then(json => {
+      const answer = setupAnswerSchema.parse(json);
       if ("error" in answer) throw new Error(answer.error.message);
       localStorage.setItem(SESSION_KEY, JSON.stringify({ token: answer.token, expiresAt: answer.expiresAt }));
       location.replace("/");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonObjectSchema, type JsonObject } from "./json.ts";
 
 /** The closed list. The server sets `retryable`; clients never guess it from the code or read `message`. */
 export const ERROR_CODES = {
@@ -23,7 +24,10 @@ export const ERROR_CODES = {
 } as const satisfies Record<string, { retryable: boolean | "catalog"; meaning: string }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
-export const errorCodeSchema = z.enum(Object.keys(ERROR_CODES) as [ErrorCode, ...ErrorCode[]]);
+export const errorCodeSchema = z.enum(
+  // SAFETY: ERROR_CODES is a non-empty const object, so its keys are exactly the ErrorCode union.
+  Object.keys(ERROR_CODES) as [ErrorCode, ...ErrorCode[]],
+);
 
 export const gsvErrorSchema = z.object({
   code: errorCodeSchema,
@@ -31,16 +35,18 @@ export const gsvErrorSchema = z.object({
   retryable: z.boolean(),
   retryAfterMs: z.number().int().nonnegative().optional(),
   ref: z.string().optional(),
-  details: z.record(z.string(), z.unknown()).optional(),
+  details: jsonObjectSchema.optional(),
 });
 export type GsvError = z.infer<typeof gsvErrorSchema>;
+
+const failureFieldsSchema = gsvErrorSchema.pick({ code: true, retryAfterMs: true, details: true });
 
 /** A failure an entry point answers with. Anything else thrown is `internal`. */
 export class GsvFailure extends Error {
   readonly code: ErrorCode;
   readonly retryAfterMs: number | undefined;
-  readonly details: Record<string, unknown> | undefined;
-  constructor(code: ErrorCode, message: string, options: { retryAfterMs?: number; details?: Record<string, unknown> } = {}) {
+  readonly details: JsonObject | undefined;
+  constructor(code: ErrorCode, message: string, options: { retryAfterMs?: number | undefined; details?: JsonObject | undefined } = {}) {
     super(message);
     this.name = "GsvFailure";
     this.code = code;
@@ -52,11 +58,7 @@ export class GsvFailure extends Error {
   static revive(cause: unknown): GsvFailure | undefined {
     if (cause instanceof GsvFailure) return cause;
     if (!(cause instanceof Error) || cause.name !== "GsvFailure") return undefined;
-    const fields: Error & { code?: unknown; retryAfterMs?: unknown; details?: unknown } = cause;
-    if (typeof fields.code !== "string" || !Object.hasOwn(ERROR_CODES, fields.code)) return undefined;
-    return new GsvFailure(fields.code as ErrorCode, cause.message, {
-      ...(typeof fields.retryAfterMs === "number" ? { retryAfterMs: fields.retryAfterMs } : {}),
-      ...(fields.details && typeof fields.details === "object" ? { details: fields.details as Record<string, unknown> } : {}),
-    });
+    const fields = failureFieldsSchema.safeParse(cause);
+    return fields.success ? new GsvFailure(fields.data.code, cause.message, fields.data) : undefined;
   }
 }
