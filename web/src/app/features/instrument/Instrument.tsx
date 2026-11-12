@@ -61,15 +61,16 @@ function distanceForPath(path: string): Distance {
 }
 
 const SCALE_KEY = "gsv.instrument.scale";
-const SCALES = [0.75, 0.85, 1, 1.5, 2] as const;
+const SCALES = [0.65, 0.75, 0.85, 1, 1.5, 2] as const;
 type Scale = (typeof SCALES)[number];
+const DEFAULT_SCALE: Scale = 0.75;
 
 function storedScale(): Scale {
   try {
     const value = Number(window.localStorage.getItem(SCALE_KEY));
-    return SCALES.find((scale) => scale === value) ?? 1;
+    return SCALES.find((scale) => scale === value) ?? DEFAULT_SCALE;
   } catch {
-    return 1;
+    return DEFAULT_SCALE;
   }
 }
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
@@ -295,7 +296,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 0.75 ? " is-scale-075" : scale === 0.85 ? " is-scale-085" : scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 0.65 ? " is-scale-065" : scale === 0.75 ? " is-scale-075" : scale === 0.85 ? " is-scale-085" : scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
       <div class="instrument-viewport">
