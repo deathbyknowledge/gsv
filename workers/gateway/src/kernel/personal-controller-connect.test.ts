@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ResponsibilityStore } from "./responsibility-store";
+import { KernelConnection } from "./connection";
 import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "./onboarding-responsibility";
 
 import * as utils from "../shared/utils";
@@ -153,6 +154,66 @@ describe("Kernel personal controller connect lifecycle", () => {
 
     expect(kernel.connectionRuntime.activateConnection).not.toHaveBeenCalled();
     expect(kernel.transport.sendOk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { kind: "human", uid: 1000, country: "CH", expected: 1 },
+    { kind: "human", uid: 1000, country: undefined, expected: 0 },
+    { kind: "human", uid: 1000, country: "CH", rejected: true, expected: 0 },
+    { kind: "human", uid: 1000, country: "CH", revoked: true, expected: 0 },
+    { kind: "human", uid: 0, country: "US", expected: 0 },
+    { kind: "machine", uid: 1000, country: "US", expected: 0 },
+    { kind: "service", uid: 1000, country: "US", expected: 0 },
+    { kind: "human", uid: 1001, country: "US", agent: true, expected: 0 },
+  ] as const)("reports country only after a successful owner sign-in: %j", async (scenario) => {
+    const kernel = bareKernel();
+    const account = { ...PROCESS_IDENTITY, uid: scenario.uid };
+    const principal = { kind: scenario.kind, account };
+    const peer = { id: "web", sessionId: "connection-1", principal, grant: { calls: [], signals: [], implements: [] } };
+    handleConnectMock.mockResolvedValueOnce("rejected" in scenario
+      ? { ok: false, code: 401, message: "Invalid credentials" }
+      : { ok: true, peer, result: { protocol: 4, server: { version: "test", release: "dev", connectionId: "connection-1" }, peer } });
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      auth: {
+        isPersonalAgentUid: () => "agent" in scenario,
+        getPasswdByUsername: () => account,
+        credentialEpoch: vi.fn().mockReturnValueOnce(0).mockReturnValue("revoked" in scenario ? 1 : 0),
+        isAccountDisabled: () => false,
+      },
+      conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
+      config: { get: () => null, getExplicit: () => "1" },
+      env: {},
+      welcome: { activate: () => false },
+      defer: (promise: Promise<unknown>) => deferred.push(promise),
+    };
+    kernel.installationId = "inst_country";
+    kernel.bindings = { GSV_TELEMETRY_ENABLED: "1" };
+    kernel.connections = new Map();
+    kernel.buildContext = () => ctx;
+    kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
+    kernel.transport.sendOk = vi.fn();
+    kernel.transport.sendError = vi.fn();
+    const socket = { serializeAttachment: vi.fn() };
+    // SAFETY: this path uses only the attachment writer on the WebSocket.
+    const connection = new KernelConnection(socket as never, "connection-1", "https://gsv.test/ws", { step: "pending" as const, country: scenario.country });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
+      await Promise.all(deferred);
+      const records = log.mock.calls.map(([record]) => record).filter((record) => record?.event?.name === "ship.owner.connected");
+      expect(records).toHaveLength(scenario.expected);
+      if (scenario.expected) {
+        expect(records[0]).toMatchObject({ component: "gateway", installationId: "inst_country", event: { stream: "product", properties: { country: "CH" } } });
+        expect(records[0].event.properties).toEqual({ country: "CH" });
+      }
+      if (!("rejected" in scenario) && !("revoked" in scenario)) {
+        expect(connection.state).not.toHaveProperty("country");
+        expect(socket.serializeAttachment).toHaveBeenCalledWith(expect.objectContaining({ state: expect.not.objectContaining({ country: expect.anything() }) }));
+      }
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it.each([

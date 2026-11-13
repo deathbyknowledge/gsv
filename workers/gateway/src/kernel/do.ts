@@ -178,6 +178,7 @@ import {
 import type { GatewayEnv } from "../runtime-env";
 import {
   acceptKernelWebSocket,
+  connectionCountry,
   KernelConnection,
   type KernelConnectionState as ConnectionState,
   type KernelWebSocketMessage,
@@ -942,6 +943,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const initial: ConnectionState = { step: "pending" };
       const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
       if (source) initial.source = source;
+      const country = connectionCountry(request);
+      if (country) initial.country = country;
       const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;

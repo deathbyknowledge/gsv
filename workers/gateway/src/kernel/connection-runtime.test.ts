@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectedPeer } from "@humansandmachines/gsv/protocol";
 import { ConnectionRuntime } from "./connection-runtime";
-import type { KernelConnectionState } from "./connection";
+import { connectionCountry, KernelConnection, type KernelConnectionState } from "./connection";
 
 const MACHINE_PEER: ConnectedPeer = {
   id: "macbook",
@@ -93,6 +93,17 @@ describe("ConnectionRuntime target-status broadcast", () => {
 });
 
 describe("ConnectionRuntime.rehydrateConnections", () => {
+  it("retains trusted country through pending connection setup and hibernation", () => {
+    const pending = fakeSocket({ step: "pending", country: "CH" });
+    const { runtime, host } = runtimeWith([pending]);
+    const connection = new KernelConnection(pending as never, "pending", "https://gsv.test/ws", { step: "pending", country: "CH" } as KernelConnectionState);
+    runtime.onConnect(connection);
+    expect(connection.state.country).toBe("CH");
+    runtime.rehydrateConnections();
+    expect(Array.from(host.connections.values())[0].state.country).toBe("CH");
+    expect(pending.close).not.toHaveBeenCalled();
+  });
+
   it("restores sockets that negotiated the current protocol", () => {
     const socket = fakeSocket({ step: "connected", protocol: 4, peer: MACHINE_PEER });
     const { runtime, host, setOnline } = runtimeWith([socket]);
@@ -138,6 +149,20 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
 
     expect(pending.close).not.toHaveBeenCalled();
     expect(host.connections.size).toBe(1);
+  });
+});
+
+describe("connectionCountry", () => {
+  it("uses only trusted Cloudflare metadata, ignoring spoofed headers and URLs", () => {
+    const request = new Request("https://gsv.test/ws?country=US", { headers: { "CF-IPCountry": "US" } });
+    expect(connectionCountry(request)).toBeUndefined();
+    Object.defineProperty(request, "cf", { value: { country: "CH" } });
+    expect(connectionCountry(request)).toBe("CH");
+  });
+
+  it.each([undefined, "XX", "T1", "ch", "Switzerland", "1.2.3.4", null])("omits unavailable or invalid metadata: %s", (country) => {
+    // SAFETY: invalid boundary values deliberately exercise metadata validation.
+    expect(connectionCountry({ cf: { country } } as never)).toBeUndefined();
   });
 });
 
