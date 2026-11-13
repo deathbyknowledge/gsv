@@ -285,9 +285,10 @@ System-owned producers use the same ledger contract:
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
   criteria, outcomes and step-by-step instructions. The brief puts onboarding ahead of other work, which Ship
-  tracks or delegates until the user has completed one small task. Its introduction offers three first tasks
-  as choices; whichever the user takes, or whatever they ask for instead, Ship shows a first result before
-  asking more, then offers to keep at it and asks where to send what follows. The welcome starts at sign-in, while the
+  tracks or delegates until the user has completed one small task. Its introduction offers two first tasks
+  and a way to get to know the user first, as choices. A task, or whatever they ask for instead, gets a first result before
+  Ship asks more. Getting to know them is two questions, the second following from their first answer, then three tasks
+  made from what they said; someone with no task in mind is taken the same way. Ship then offers to keep at it and asks where to send what follows. The welcome starts at sign-in, while the
   first-run screen asks where to message Ship; if a messenger connects there before the
   user replies, Ship repeats the welcome in that chat rather than referring to it. The brief is copied when the responsibility is
   prepared; existing records retain their saved instructions across releases. A home
