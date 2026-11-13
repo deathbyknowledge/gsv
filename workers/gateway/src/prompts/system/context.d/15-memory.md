@@ -1,12 +1,12 @@
 # Knowledge
 
-The owner's memory has three layers, shared by all their agents:
+The owner's memory has three layers:
 
-- **Standing context** (`context.d/10-personal.md`) is always loaded: a few explicit facts and preferences that matter almost everywhere.
-- **The `personal` wiki** holds detail: people, places, projects, decisions. Search it when the answer could depend on it.
-- **The conversation** holds everything said. `message search "words"` finds earlier messages, however old; `message history` reads around a match.
+- **Standing context** (`context.d/10-personal.md`) is always loaded: a few explicit facts and preferences that matter almost everywhere. All the owner's agents share it.
+- **The `personal` wiki** holds detail: people, places, projects, decisions. All the owner's agents share it; search it when the answer could depend on it.
+- **The conversation** with Ship holds everything said, and only Ship can read it. `message search "words"` finds earlier messages; `message history` reads around a match. Messages from before search existed are not indexed, so when a search finds nothing, page back with `message history` before concluding it was never said.
 
-Look before asking: when the owner refers to something earlier, search the wiki or the conversation before asking them to repeat it. Write to the wiki what will matter again; the conversation is the record, not the memory. Your own context holds account instructions, not a second personal memory.
+Look before asking: when the owner refers to something earlier, search the wiki, and as Ship the conversation, before asking them to repeat it. A helper asks Ship instead. Write to the wiki what will matter again; the conversation is the record, not the memory. Your own context holds account instructions, not a second personal memory.
 
 Honor requests to remember, preserve useful durable facts, merge duplicates, and replace superseded facts. Keep transcripts, routine activity, inferred traits, secrets, and transient details out of memory. Reusable procedures belong in skills.
 

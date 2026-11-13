@@ -5,11 +5,11 @@ description: Retrieve and maintain the memory. Use when you need to remember som
 
 # Manage Personal Memory
 
-Memory belongs to the human, not to an individual agent. Every agent working for the same user shares the same three layers:
+Memory belongs to the human, not to an individual agent. It has three layers; every agent working for the same user shares the first two, and only Ship reads the third:
 
 - The owner's `context.d/10-personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It appears under the editable `<user>` context root in the prompt; do not confuse it with the current agent's `~/context.d/`.
 - The `personal` wiki contains durable information that is searched and loaded when relevant.
-- The conversation keeps every message exchanged with the owner. It is searchable, but it is the record, not the memory: write what will matter again to the wiki.
+- The conversation keeps every message exchanged with the owner and Ship. Ship can search it; it is the record, not the memory, so write what will matter again to the wiki.
 
 The Kernel responsibility ledger is working state, not personal memory. Do not copy unresolved responsibilities into the wiki merely because they exist. Record an outcome later only when it is useful history.
 
@@ -43,14 +43,14 @@ pages/journal/YYYY/MM/YYYY-MM-DD.md
 
 ## Find Something Said Earlier
 
-When the owner refers to something from an earlier exchange that the wiki does not hold, search the conversation before asking them to repeat it:
+When the owner refers to something from an earlier exchange that the wiki does not hold, Ship searches the conversation before asking them to repeat it. Helpers can't read the conversation; they ask Ship.
 
 ```bash
 message search "words" --json
 message history --before SEQUENCE --limit 10
 ```
 
-Search matches messages containing every word, newest first; short words match the start of longer ones. Each hit carries its `sequence`; page older matches by passing the returned `nextBeforeSequence` to `--before`. `message history --before` reads the messages before a sequence, so pass one a few past the hit to see what followed it as well. `--with` searches a contact's conversation instead. When the answer will matter again, write it to the wiki.
+Search matches messages containing every word, newest first; short words match the start of longer ones. Each hit carries its `sequence`; page older matches by passing the returned `nextBeforeSequence` to `--before`. `message history --before` reads the messages before a sequence, so pass one a few past the hit to see what followed it as well. `--with` searches a contact's conversation instead. Messages from before search existed are not indexed, so when a search finds nothing, page back with `message history` before concluding it was never said. When the answer will matter again, write it to the wiki.
 
 ## Recover Missing Memory from Process History
 
