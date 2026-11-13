@@ -8,7 +8,7 @@ import type {
   SocialMessageMetadata,
   OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
-import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
+import { messageChoiceTaken, socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
 
 const SEARCH_STORAGE_BUDGET_BYTES = 6_000_000_000;
 
@@ -54,6 +54,12 @@ export type ConversationAppendInput = {
 export type ConversationAppendResult = {
   message: ConversationMessage;
   created: boolean;
+  /**
+   * Set when a person's new message follows one that offered choices: how many
+   * were on offer, and the position, counted from 1, of the one it takes. Other
+   * words leave the position out.
+   */
+  answered?: { choicesOffered: number; choiceTaken?: number };
 };
 
 export type ConversationArchiveSegment = {
@@ -120,6 +126,10 @@ export class ConversationStore {
       const row = this.rowBySequence(receipt.sequence);
       return row ? { message: toMessage(meta.conversation_id, row), created: false } : null;
     }
+    // Choices stay on offer until anyone writes again, so a person answers the latest message's.
+    const offered = input.author.kind === "user"
+      ? this.sql.exec<Pick<MessageRow, "choices_json">>("SELECT choices_json FROM messages ORDER BY sequence DESC LIMIT 1").toArray()[0]?.choices_json
+      : null;
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
        (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, choices_json,
@@ -165,7 +175,15 @@ export class ConversationStore {
     // Check merge progress before inserting pending FTS data for this message.
     this.pruneSearch(message.sequence);
     this.sql.exec("INSERT INTO message_search (rowid, text) VALUES (?, ?)", message.sequence, message.text);
-    return { message, created: true };
+    if (!offered) return { message, created: true };
+    // SAFETY: persisted choices_json is written only from validated message choices.
+    const choices = JSON.parse(offered) as string[];
+    const choiceTaken = messageChoiceTaken(message.text, choices);
+    return {
+      message,
+      created: true,
+      answered: choiceTaken === null ? { choicesOffered: choices.length } : { choicesOffered: choices.length, choiceTaken },
+    };
   }
 
   private pruneSearch(latestSequence: number): void {

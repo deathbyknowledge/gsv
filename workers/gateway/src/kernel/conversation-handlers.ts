@@ -190,6 +190,7 @@ export async function handleConversationSend(
             platform: shipPlatformFromPeer(origin.platform),
             hasText: text.trim().length > 0,
             hasMedia: Boolean(media?.length),
+            ...appended.answered,
           },
         },
       });

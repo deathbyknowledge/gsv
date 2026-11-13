@@ -28,3 +28,16 @@ export function messageChoicesText(text: string, choices: readonly string[]): st
   const list = choices.map((choice, index) => `${index + 1}. ${choice}`).join("\n");
   return text ? `${text}\n\n${list}` : list;
 }
+
+/**
+ * Which of a message's choices a reply takes, counted from 1, or null when the
+ * person wrote something else. A tap arrives as the choice's own words; where
+ * the choices were written as a list, its number is the same answer.
+ */
+export function messageChoiceTaken(reply: string, choices: readonly string[]): number | null {
+  const answer = reply.replace(/\s+/gu, " ").trim().toLowerCase();
+  const worded = choices.findIndex((choice) => choice.toLowerCase() === answer);
+  if (worded >= 0) return worded + 1;
+  const numbered = /^\d{1,2}$/u.test(answer) ? Number(answer) : 0;
+  return numbered >= 1 && numbered <= choices.length ? numbered : null;
+}
