@@ -31,7 +31,7 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   credentialEpoch: z.number().int().nonnegative().optional(),
   observedProcessIds: z.array(z.string()).optional(),
   source: z.string().optional(),
-  country: ipCountrySchema.optional(),
+  country: z.optional(ipCountrySchema),
 }) satisfies z.ZodType<KernelConnectionState>;
 
 export function connectionCountry(request: Pick<Request, "cf">): string | undefined {
