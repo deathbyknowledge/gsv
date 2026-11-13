@@ -1,9 +1,9 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
 import calendarSkill from "../../../../../skills/calendar/SKILL.md";
 import connectDeviceSkill from "../../../../../skills/connect-device/SKILL.md";
-import connectEmailSkill from "../../../../../skills/connect-email/SKILL.md";
 import contactsSkill from "../../../../../skills/contacts/SKILL.md";
 import eventSourcesSkill from "../../../../../skills/event-sources/SKILL.md";
+import forwardMailSkill from "../../../../../skills/forward-mail/SKILL.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
@@ -18,9 +18,9 @@ const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["browser-target/SKILL.md", browserTargetSkill],
   ["calendar/SKILL.md", calendarSkill],
   ["connect-device/SKILL.md", connectDeviceSkill],
-  ["connect-email/SKILL.md", connectEmailSkill],
   ["contacts/SKILL.md", contactsSkill],
   ["event-sources/SKILL.md", eventSourcesSkill],
+  ["forward-mail/SKILL.md", forwardMailSkill],
   ["gsv-manual/SKILL.md", gsvManualSkill],
   ["image-reading/SKILL.md", imageReadingSkill],
   ["memory/SKILL.md", memorySkill],

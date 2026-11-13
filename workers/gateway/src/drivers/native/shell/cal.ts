@@ -442,10 +442,14 @@ function rangeOccurrences(series: Series, timeZone: string, range: TimeRange): C
   }
   const span = eventSpan(event, timeZone);
   const length = span ? span.end - span.start : 0;
-  const occurrences = nextOccurrences(series, rule, timeZone, range.start - length, MAX_RANGE_EVENTS + 1)
-    .filter(({ start }) => (timeAt(start, timeZone) ?? Number.POSITIVE_INFINITY) < range.end);
-  if (occurrences.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
-  return occurrences.map(({ id, start, change }) => change ?? { ...event, start, end: shiftedEnd(event, start, length, timeZone), recurrenceId: id });
+  // A changed date keeps its own length, so it is checked against the range on its own.
+  const regular = nextOccurrences(series, rule, timeZone, range.start - length, MAX_RANGE_EVENTS + 1)
+    .filter(({ start, change }) => !change && (timeAt(start, timeZone) ?? Number.POSITIVE_INFINITY) < range.end);
+  if (regular.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
+  return [
+    ...regular.map(({ id, start }) => ({ ...event, start, end: shiftedEnd(event, start, length, timeZone), recurrenceId: id })),
+    ...series.changes,
+  ];
 }
 
 /** Where an occurrence starting at `start` ends, keeping the series' length; none when the series gives a DURATION. */
@@ -463,11 +467,13 @@ function eventSpan(event: CalendarEvent, timeZone: string): TimeRange | undefine
   const end = event.end ? timeAt(event.end, timeZone) : undefined;
   if (end !== undefined) return { start, end };
   const duration = event.duration ? ISO_DURATION.exec(event.duration.trim()) : null;
-  if (duration) {
-    const [weeks, days, hours, minutes, seconds] = duration.slice(1).map((part) => Number(part ?? 0));
-    return { start, end: start + ((weeks * 7 + days) * DAY_MS) + hours * HOUR_MS + minutes * 60_000 + seconds * 1000 };
+  const [weeks, days, hours, minutes, seconds] = (duration?.slice(1) ?? []).map((part) => Number(part ?? 0));
+  const clock = (hours ?? 0) * HOUR_MS + (minutes ?? 0) * 60_000 + (seconds ?? 0) * 1000;
+  // Whole days end at a local midnight, which a clock change moves away from a multiple of 24 hours.
+  if (event.start.kind === "date") {
+    return { start, end: dayStart(addDays(event.start.date, duration ? (weeks ?? 0) * 7 + (days ?? 0) : 1), timeZone) + clock };
   }
-  return { start, end: event.start.kind === "date" ? start + DAY_MS : start };
+  return { start, end: duration ? start + ((weeks ?? 0) * 7 + (days ?? 0)) * DAY_MS + clock : start };
 }
 
 function timeAt(time: CalendarTime, timeZone: string): number | undefined {

@@ -533,6 +533,43 @@ describe("cal show over a range", () => {
     expect(empty.stdout).toContain("events=0\n");
   });
 
+  it("finds a moved date that runs longer than the series", async () => {
+    const cal = calShell();
+    const path = `${directory()}/workshop.ics`;
+    await cal.fs.writeFile(`${HANK.home}/${path}`, [
+      "BEGIN:VCALENDAR", "VERSION:2.0",
+      "BEGIN:VEVENT", "UID:workshop@example.com", "DTSTAMP:20261101T120000Z",
+      "DTSTART;TZID=Europe/Amsterdam:20261102T100000", "DTEND;TZID=Europe/Amsterdam:20261102T110000",
+      "RRULE:FREQ=WEEKLY", "SUMMARY:Workshop", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:workshop@example.com", "DTSTAMP:20261101T120000Z",
+      "RECURRENCE-ID;TZID=Europe/Amsterdam:20261116T100000",
+      "DTSTART;TZID=Europe/Amsterdam:20261116T100000", "DTEND;TZID=Europe/Amsterdam:20261118T120000",
+      "SUMMARY:Workshop", "END:VEVENT",
+      "END:VCALENDAR", "",
+    ].join("\r\n"));
+
+    const tuesday = await cal.run("show", path, "--from", "2026-11-17");
+
+    expect(titlesAndStarts(tuesday.stdout)).toEqual(["Workshop 2026-11-16T10:00:00+01:00[Europe/Amsterdam]"]);
+  });
+
+  it("ends an all-day event at the next midnight on a day the clocks change", async () => {
+    const cal = calShell();
+    const path = `${directory()}/days.ics`;
+    await cal.fs.writeFile(`${HANK.home}/${path}`, [
+      "BEGIN:VCALENDAR", "VERSION:2.0",
+      "BEGIN:VEVENT", "UID:spring@example.com", "DTSTAMP:20261101T120000Z",
+      "DTSTART;VALUE=DATE:20260329", "SUMMARY:Spring forward", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:autumn@example.com", "DTSTAMP:20261101T120000Z",
+      "DTSTART;VALUE=DATE:20261025", "SUMMARY:Fall back", "END:VEVENT",
+      "END:VCALENDAR", "",
+    ].join("\r\n"));
+
+    expect((await cal.run("show", path, "--from", "2026-03-30")).stdout).toContain("events=0\n");
+    expect(titlesAndStarts((await cal.run("show", path, "--from", "2026-10-25T23:30", "--until", "2026-10-26T00:00")).stdout))
+      .toEqual(["Fall back 2026-10-25"]);
+  });
+
   it("refuses a range that runs backwards or past a year, and --next with a range", async () => {
     const { cal, path } = await published();
 
