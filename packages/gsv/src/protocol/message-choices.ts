@@ -35,8 +35,9 @@ export function messageChoicesText(text: string, choices: readonly string[]): st
  * the choices were written as a list, its number is the same answer.
  */
 export function messageChoiceTaken(reply: string, choices: readonly string[]): number | null {
-  const answer = reply.replace(/\s+/gu, " ").trim().toLowerCase();
-  const worded = choices.findIndex((choice) => choice.toLowerCase() === answer);
+  const plain = (text: string) => text.replace(/\s+/gu, " ").trim().toLowerCase();
+  const answer = plain(reply);
+  const worded = choices.findIndex((choice) => plain(choice) === answer);
   if (worded >= 0) return worded + 1;
   const numbered = /^\d{1,2}$/u.test(answer) ? Number(answer) : 0;
   return numbered >= 1 && numbered <= choices.length ? numbered : null;

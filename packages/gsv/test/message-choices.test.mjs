@@ -13,6 +13,13 @@ describe("message choices", () => {
     assert.equal(messageChoiceTaken("  find the  best deal ", CHOICES), 2);
   });
 
+  it("matches a choice whose own spacing is unusual", () => {
+    // a tap sends the choice word for word, so its spacing reads the same way on both sides
+    assert.equal(messageChoiceTaken("Buy  now", ["Buy  now", "Later"]), 1);
+    assert.equal(messageChoiceTaken("Buy\u00a0now", ["Later", "Buy\u00a0now"]), 2);
+    assert.equal(messageChoiceTaken("buy now", ["Buy  now", "Later"]), 1);
+  });
+
   it("reads a bare number as the position in the written list", () => {
     // a messenger without buttons shows the choices as this numbered list
     assert.equal(messageChoicesText("Where do we start?", CHOICES).split("\n").at(-1), "3. Don't let me forget");
