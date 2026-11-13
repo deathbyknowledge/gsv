@@ -434,3 +434,111 @@ describe("cal repeating events", () => {
     expect(result.stderr).toContain("this event doesn't repeat");
   });
 });
+
+/** A whole calendar as a published link serves it: one-off events, a trip, and a series with a skipped and a moved date. */
+const PUBLISHED_CALENDAR = [
+  "BEGIN:VCALENDAR",
+  "PRODID:-//Google Inc//Google Calendar 70.9054//EN",
+  "VERSION:2.0",
+  "BEGIN:VEVENT",
+  "UID:dentist@example.com",
+  "DTSTAMP:20261101T120000Z",
+  "DTSTART;TZID=Europe/Amsterdam:20261117T100000",
+  "DTEND;TZID=Europe/Amsterdam:20261117T103000",
+  "SUMMARY:Dentist",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:lisbon@example.com",
+  "DTSTAMP:20261101T120000Z",
+  "DTSTART;VALUE=DATE:20261114",
+  "DTEND;VALUE=DATE:20261117",
+  "SUMMARY:Lisbon",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:standup@example.com",
+  "DTSTAMP:20261101T120000Z",
+  "DTSTART;TZID=Europe/Amsterdam:20261102T090000",
+  "DTEND;TZID=Europe/Amsterdam:20261102T093000",
+  "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR",
+  "EXDATE;TZID=Europe/Amsterdam:20261118T090000",
+  "SUMMARY:Standup",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:standup@example.com",
+  "DTSTAMP:20261101T120000Z",
+  "RECURRENCE-ID;TZID=Europe/Amsterdam:20261120T090000",
+  "DTSTART;TZID=Europe/Amsterdam:20261120T110000",
+  "DTEND;TZID=Europe/Amsterdam:20261120T113000",
+  "SUMMARY:Standup",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:october@example.com",
+  "DTSTAMP:20261001T120000Z",
+  "DTSTART:20261001T080000Z",
+  "DTEND:20261001T090000Z",
+  "SUMMARY:Old meeting",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:next-week@example.com",
+  "DTSTAMP:20261101T120000Z",
+  "DTSTART;TZID=Europe/Amsterdam:20261123T100000",
+  "DTEND;TZID=Europe/Amsterdam:20261123T110000",
+  "SUMMARY:Next week",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\r\n");
+
+describe("cal show over a range", () => {
+  async function published() {
+    const cal = calShell();
+    const path = `${directory()}/calendar.ics`;
+    await cal.fs.writeFile(`${HANK.home}/${path}`, PUBLISHED_CALENDAR);
+    return { cal, path };
+  }
+
+  function titlesAndStarts(stdout: string): string[] {
+    return stdout.split("\n\n").slice(1).map((block) => {
+      const field = (name: string) => block.split("\n").find((line) => line.startsWith(`${name}=`))?.slice(name.length + 1);
+      return `${field("title")} ${field("start")}`;
+    });
+  }
+
+  it("lists what falls in the days named, in order, with each date of a series", async () => {
+    const { cal, path } = await published();
+
+    const week = await cal.run("show", path, "--from", "2026-11-16", "--until", "2026-11-22");
+
+    expect(week.stderr).toBe("");
+    expect(week.stdout).toContain("from=2026-11-16T00:00:00+01:00[Europe/Amsterdam]\nuntil=2026-11-23T00:00:00+01:00[Europe/Amsterdam]\nevents=4\n");
+    expect(titlesAndStarts(week.stdout)).toEqual([
+      "Lisbon 2026-11-14",
+      "Standup 2026-11-16T09:00:00+01:00[Europe/Amsterdam]",
+      "Dentist 2026-11-17T10:00:00+01:00[Europe/Amsterdam]",
+      "Standup 2026-11-20T11:00:00+01:00[Europe/Amsterdam]",
+    ]);
+    expect(week.stdout).toContain("occurrence=2026-11-20T09:00:00+01:00[Europe/Amsterdam]");
+  });
+
+  it("shows one day with --from alone, and what is under way at a time", async () => {
+    const { cal, path } = await published();
+
+    const tuesday = await cal.run("show", path, "--from", "2026-11-17");
+    expect(titlesAndStarts(tuesday.stdout)).toEqual(["Dentist 2026-11-17T10:00:00+01:00[Europe/Amsterdam]"]);
+
+    const now = await cal.run("show", path, "--from", "2026-11-17T10:15", "--until", "2026-11-17T12:00");
+    expect(titlesAndStarts(now.stdout)).toEqual(["Dentist 2026-11-17T10:00:00+01:00[Europe/Amsterdam]"]);
+
+    const empty = await cal.run("show", path, "--from", "2026-11-21");
+    expect(empty.stdout).toContain("events=0\n");
+  });
+
+  it("refuses a range that runs backwards or past a year, and --next with a range", async () => {
+    const { cal, path } = await published();
+
+    expect((await cal.run("show", path, "--from", "2026-11-22", "--until", "2026-11-16")).stderr).toContain("--until comes before --from");
+    expect((await cal.run("show", path, "--from", "2026-01-01", "--until", "2027-06-01")).stderr).toContain("at most 366 days");
+    expect((await cal.run("show", path, "--until", "2026-11-22")).stderr).toContain("--until needs --from");
+    expect((await cal.run("show", path, "--from", "2026-11-16", "--next", "3")).stderr).toContain("--next lists a repeating event's next dates");
+  });
+});

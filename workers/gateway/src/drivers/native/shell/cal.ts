@@ -55,6 +55,9 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const NEXT_OCCURRENCES = 5;
 const MAX_NEXT_OCCURRENCES = 100;
+const MAX_RANGE_DAYS = 366;
+const MAX_RANGE_EVENTS = 500;
+const ISO_DURATION = /^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})$/;
 const DAY_NAMES = { MO: "Monday", TU: "Tuesday", WE: "Wednesday", TH: "Thursday", FR: "Friday", SA: "Saturday", SU: "Sunday" };
@@ -65,18 +68,19 @@ const EVENT_FLAGS = ["--title", "--start", "--end", "--duration", "--repeat", "-
 const ADD_FLAGS = [...EVENT_FLAGS, "--out"];
 const UPDATE_FLAGS = [...EVENT_FLAGS, "--occurrence", "--out"];
 const CANCEL_FLAGS = ["--occurrence", "--timezone"];
-const SHOW_FLAGS = ["--timezone", "--next"];
+const SHOW_FLAGS = ["--timezone", "--next", "--from", "--until"];
 
 const CAL_USAGE = `Usage:
   cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
   cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
   cal cancel PATH [--occurrence WHEN]
-  cal show PATH [--timezone ZONE] [--next COUNT]
+  cal show PATH [--timezone ZONE] [--next COUNT | --from WHEN [--until WHEN]]
 
 WHEN is a local time such as 2026-11-27T21:15 in --timezone (default: your time zone),
 or a date such as 2026-11-27 for an all-day event. LENGTH is like 45m, 2h or 1h30m.
 RULE is an RRULE such as FREQ=WEEKLY;BYDAY=MO;UNTIL=2027-06-28, and --occurrence WHEN
-names one date of a repeating event to change or cancel.
+names one date of a repeating event to change or cancel. --from and --until list what
+falls between them, a date standing for its whole day; --from alone shows one day.
 Send an event to its guests with: mail send --invite PATH --subject SUBJECT --message TEXT
 `;
 
@@ -93,6 +97,8 @@ type EventOptions = {
   attendees: string[];
   out?: string;
   next?: number;
+  from?: string;
+  until?: string;
 };
 
 /** Start and end of an event: all-day dates with an exclusive end, or instants. */
@@ -101,6 +107,9 @@ type Span =
   | { kind: "time"; start: number; end: number };
 
 type Organizer = { address: string; name?: string };
+
+/** Instants a `cal show` range covers, end exclusive. */
+type TimeRange = { start: number; end: number };
 
 type Series = CalendarSeries & { event: CalendarEvent };
 
@@ -374,7 +383,99 @@ async function showCalendar(
   if (!path) throw new Error("cal show requires a calendar file");
   const resolved = shellCtx.fs.resolvePath(shellCtx.cwd, path);
   const calendar = parseCalendar(await readCalendarFile(fs, resolved));
-  return completed(describeCalendar(resolved, calendar, eventTimeZone(options, ctx), options.next));
+  const timeZone = eventTimeZone(options, ctx);
+  if (options.from === undefined && options.until === undefined) {
+    return completed(describeCalendar(resolved, calendar, timeZone, options.next));
+  }
+  return completed(describeRange(resolved, calendar, timeZone, showRange(options, timeZone)));
+}
+
+/** The span --from and --until name, end exclusive: a date stands for its whole day, and --from alone for its day. */
+function showRange(options: EventOptions, timeZone: string): TimeRange {
+  if (options.from === undefined) throw new Error("--until needs --from");
+  if (options.next !== undefined) throw new Error("--next lists a repeating event's next dates; leave it out with --from");
+  const from = parseWhen(options.from, timeZone);
+  const start = from.kind === "date" ? dayStart(from.date, timeZone) : from.ms;
+  const until = options.until === undefined ? undefined : parseWhen(options.until, timeZone);
+  const end = until === undefined
+    ? dayStart(addDays(from.kind === "date" ? from.date : localDate(start, timeZone), 1), timeZone)
+    : until.kind === "date" ? dayStart(addDays(until.date, 1), timeZone) : until.ms;
+  if (end <= start) throw new Error("--until comes before --from");
+  if (end - start > MAX_RANGE_DAYS * DAY_MS) throw new Error(`a range covers at most ${MAX_RANGE_DAYS} days`);
+  return { start, end };
+}
+
+/** Each event and date of a series that overlaps the range, in the order they start. */
+function describeRange(path: string, calendar: CalendarComponent, timeZone: string, range: TimeRange): string {
+  const found: { event: CalendarEvent; start: number }[] = [];
+  const consider = (event: CalendarEvent) => {
+    if (event.status === "CANCELLED") return;
+    const span = eventSpan(event, timeZone);
+    if (span && span.start < range.end && (span.end > range.start || (span.end === span.start && span.start >= range.start))) {
+      found.push({ event, start: span.start });
+    }
+  };
+  for (const series of calendarSeries(calendarEvents(calendar))) {
+    const occurrences = series.event ? rangeOccurrences({ ...series, event: series.event }, timeZone, range) : undefined;
+    if (occurrences) occurrences.forEach(consider);
+    else [...(series.event ? [series.event] : []), ...series.changes].forEach(consider);
+    if (found.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
+  }
+  const head = [`path=${path}`, `from=${formatLocalTime(range.start, timeZone)}`, `until=${formatLocalTime(range.end, timeZone)}`, `events=${found.length}`];
+  const blocks = found.sort((a, b) => a.start - b.start).map(({ event }) => describeEvent(event, timeZone, []).join("\n"));
+  return `${[head.join("\n"), ...blocks].join("\n\n")}\n`;
+}
+
+/**
+ * A repeating event's dates from just before the range to its end, each as an event of its own; undefined for
+ * an event that doesn't repeat or a rule cal can't read, which then shows as written.
+ */
+function rangeOccurrences(series: Series, timeZone: string, range: TimeRange): CalendarEvent[] | undefined {
+  const { event } = series;
+  if (!event.recurrence || firstProperty(event.component, "RDATE")) return undefined;
+  let rule: RepeatRule;
+  try {
+    rule = parseRepeatRule(event.recurrence);
+    if (event.start.kind === "local" && event.start.timeZone) normalizeTimezone(event.start.timeZone);
+  } catch {
+    return undefined;
+  }
+  const span = eventSpan(event, timeZone);
+  const length = span ? span.end - span.start : 0;
+  const occurrences = nextOccurrences(series, rule, timeZone, range.start - length, MAX_RANGE_EVENTS + 1)
+    .filter(({ start }) => (timeAt(start, timeZone) ?? Number.POSITIVE_INFINITY) < range.end);
+  if (occurrences.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
+  return occurrences.map(({ id, start, change }) => change ?? { ...event, start, end: shiftedEnd(event, start, length, timeZone), recurrenceId: id });
+}
+
+/** Where an occurrence starting at `start` ends, keeping the series' length; none when the series gives a DURATION. */
+function shiftedEnd(event: CalendarEvent, start: CalendarTime, length: number, timeZone: string): CalendarTime | undefined {
+  if (!event.end) return undefined;
+  if (start.kind === "date") return { kind: "date", date: addDays(start.date, Math.round(length / DAY_MS)) };
+  const ms = calendarInstant(start, timeZone);
+  return ms === undefined ? undefined : { kind: "utc", ms: ms + length };
+}
+
+/** An event's start and end as instants; a date covers its days, and an event with no end or length is a moment. */
+function eventSpan(event: CalendarEvent, timeZone: string): TimeRange | undefined {
+  const start = timeAt(event.start, timeZone);
+  if (start === undefined) return undefined;
+  const end = event.end ? timeAt(event.end, timeZone) : undefined;
+  if (end !== undefined) return { start, end };
+  const duration = event.duration ? ISO_DURATION.exec(event.duration.trim()) : null;
+  if (duration) {
+    const [weeks, days, hours, minutes, seconds] = duration.slice(1).map((part) => Number(part ?? 0));
+    return { start, end: start + ((weeks * 7 + days) * DAY_MS) + hours * HOUR_MS + minutes * 60_000 + seconds * 1000 };
+  }
+  return { start, end: event.start.kind === "date" ? start + DAY_MS : start };
+}
+
+function timeAt(time: CalendarTime, timeZone: string): number | undefined {
+  return time.kind === "date" ? dayStart(time.date, timeZone) : calendarInstant(time, timeZone);
+}
+
+function dayStart(date: string, timeZone: string): number {
+  return resolveLocalTime(`${date}T00:00`, timeZone);
 }
 
 function parseEventOptions(args: string[], allowed: readonly string[]): [string | undefined, EventOptions] {
@@ -401,6 +502,8 @@ function parseEventOptions(args: string[], allowed: readonly string[]): [string 
       case "--location": options.location = value; break;
       case "--description": options.description = value; break;
       case "--out": options.out = value; break;
+      case "--from": options.from = value; break;
+      case "--until": options.until = value; break;
       case "--attendee":
         options.attendees.push(...value.split(",").map((address) => address.trim()).filter(Boolean));
         break;
