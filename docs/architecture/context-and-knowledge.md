@@ -30,6 +30,7 @@ normal conversation text contract, without request-specific metadata.
 | Program context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
 | User context | `<human home>/context.d/` | Compact standing context layered into every agent owned by that human. |
 | Personal wiki | `/src/repos/<human>/personal/` | Human-owned durable, searchable personal memory shared by all owned agents. |
+| Conversation | `message search`, `message history` | Every message exchanged with the human, searchable by Ship from when search was added; helpers can't read it. The record, not the memory. |
 | Other wikis | `/src/repos/<owner>/<wiki>/` | User-controlled markdown collections and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
