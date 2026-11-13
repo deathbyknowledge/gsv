@@ -204,7 +204,7 @@ fn cadence_label(expression: &Value, timezone: &str) -> String {
 }
 
 /// The Ship's time zone, as the web app's routine editor reads it.
-async fn ship_timezone(client: &KernelClient) -> String {
+pub(crate) async fn ship_timezone(client: &KernelClient) -> String {
     let uid = remote::me(client).map(|me| me.uid).unwrap_or_default();
     for key in [
         format!("users/{uid}/locale/timezone"),
@@ -223,7 +223,7 @@ async fn ship_timezone(client: &KernelClient) -> String {
     "UTC".to_string()
 }
 
-async fn schedules(client: &KernelClient) -> Result<Vec<Value>, DynError> {
+pub(crate) async fn schedules(client: &KernelClient) -> Result<Vec<Value>, DynError> {
     let result = call(
         client,
         "sched.list",

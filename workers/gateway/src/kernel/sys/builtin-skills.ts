@@ -1,4 +1,5 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
+import checkInSkill from "../../../../../skills/check-in/SKILL.md";
 import connectDeviceSkill from "../../../../../skills/connect-device/SKILL.md";
 import contactsSkill from "../../../../../skills/contacts/SKILL.md";
 import eventSourcesSkill from "../../../../../skills/event-sources/SKILL.md";
@@ -14,6 +15,7 @@ export const SYSTEM_SKILLS_ROOT = "/sys/skills.d";
 /** Each file of the bundled `skills/` directory, by path relative to /sys/skills.d. */
 const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["browser-target/SKILL.md", browserTargetSkill],
+  ["check-in/SKILL.md", checkInSkill],
   ["connect-device/SKILL.md", connectDeviceSkill],
   ["contacts/SKILL.md", contactsSkill],
   ["event-sources/SKILL.md", eventSourcesSkill],

@@ -260,6 +260,16 @@ process admitted the transport-bound event. A successful `process.spawn` means t
 new process was created and accepted its initial prompt. Child answers remain in
 the child history unless another mechanism consumes them.
 
+### The Ship's clock
+
+Events wake the Ship when they happen. The clock bounds how long it can go
+without looking: an ordinary Ship routine named Clock, a `cron` schedule with a
+`responsibility` target, ticks every hour while the owner is usually awake
+(`gsv clock on`). Each tick asks the built-in `check-in` skill's question: what
+would the owner want done now? Usually nothing, and the run yields silently;
+anything the Ship does is ordinary work. The tick's run is its own record, so
+nothing else is written.
+
 ### Chat delivery contracts
 
 The native shell exposes three distinct schedule forms:

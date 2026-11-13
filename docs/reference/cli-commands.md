@@ -284,6 +284,23 @@ gsv routines add "Pick up the parcel" "Remind me" --at "tomorrow 18:00"
 gsv routines edit 4410 --pause
 ```
 
+### Clock
+
+```bash
+gsv clock
+gsv clock on [--hours FROM-TO]
+gsv clock now
+gsv clock off
+```
+
+`clock on` adds a routine named Clock. Your Ship then checks in every hour
+from 07:00 to 23:00 in your Ship's time zone, or the hours `--hours` gives,
+such as `--hours 8-22`. At each tick it looks at what happened since the last
+one and asks what you would want done now. Usually the answer is nothing, and
+it stays quiet. `clock now` ticks straight away, `clock off` removes the
+routine, and `clock` says whether it is on, when it next ticks and how the last
+tick went. Messages, mail and events still wake your Ship either way.
+
 ### Memory
 
 ```bash
