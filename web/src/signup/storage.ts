@@ -2,13 +2,18 @@ import { z } from "zod";
 import type { WelcomeSnapshot, WelcomeState, WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { t } from "../app/i18n/locale";
 
-const snapshotSchema = z.object({
+/** The stored signup state as the page reloads it; what this does not name does not survive a reload. */
+export const welcomeSnapshotSchema = z.object({
   revision: z.string().min(1),
   value: z.object({
     origin: z.string(), flow: z.enum(["open", "create"]), sessionSecret: z.string().nullable(),
     challenge: z.object({ id: z.string(), email: z.string(), browserSecret: z.string() }).nullable(),
     operationId: z.string().nullable().default(null), handle: z.string().nullable(),
     contactInvite: z.string().nullable().optional(),
+    // Every field the flow keeps must be named here: a saved value is parsed on reload, and an unnamed one is dropped.
+    attribution: z.object({
+      placement: z.string().optional(), example: z.string().optional(), utmSource: z.string().optional(), utmCampaign: z.string().optional(),
+    }).nullable().optional(),
   }).nullable(),
 });
 
@@ -43,7 +48,7 @@ export class BrowserWelcomeStorage implements WelcomeStorage {
         };
         read.onsuccess = () => {
           try {
-            result = read.result === undefined ? { revision: "initial", value: null } : snapshotSchema.parse(read.result);
+            result = read.result === undefined ? { revision: "initial", value: null } : welcomeSnapshotSchema.parse(read.result);
             if ((result.value && result.value.origin !== this.origin) || (change?.value && change.value.origin !== this.origin)) {
               throw new Error(t("signup.storage.otherOrigin"));
             }

@@ -375,6 +375,30 @@ const onboardingWelcomeDeliveredSchema = z.strictObject({
   }),
 });
 
+// Where a signup came from, as closed classes of the website's Try Ship links,
+// never a visitor identity. The signup link carries free-form slugs; only these
+// allowlist values leave the classifier, and anything else becomes "other".
+export const attributionSlugSchema = z.string().check(z.regex(/^[a-z0-9-]{1,32}$/));
+export const attributionPlacementSchema = z.enum(["hero", "final-call", "example", "other"]);
+// Extend this list when the website adds an example; unknown ids classify as "other".
+export const attributionExampleSchema = z.enum([
+  "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
+]);
+
+// Campaign tags are the operator's own names for an ad or a post, bounded to the
+// same slug shape; the visitor's click id and anything else on the link stay out.
+const installationAttributedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("installation.attributed"),
+  properties: z.strictObject({
+    origin: z.enum(["website", "campaign", "direct"]),
+    placement: z.optional(attributionPlacementSchema),
+    example: z.optional(attributionExampleSchema),
+    utmSource: z.optional(attributionSlugSchema),
+    utmCampaign: z.optional(attributionSlugSchema),
+  }),
+});
+
 const targetConnectedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("target.connected"),
@@ -537,6 +561,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceRequestFinishedSchema,
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
+  installationAttributedSchema,
   shipMessageCommittedSchema,
   shipMessageReceivedSchema,
   conversationReplyFailedSchema,
@@ -572,6 +597,7 @@ export const telemetryEventComponents = {
   "inference.request.finished": ["inference"],
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
+  "installation.attributed": ["accounts"],
   "ship.message.committed": ["gateway"],
   "ship.message.received": ["gateway"],
   "conversation.reply.failed": ["gateway"],
@@ -606,6 +632,50 @@ export type InferenceFailureStage = z.infer<
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
+export type AttributionPlacement = z.infer<typeof attributionPlacementSchema>;
+export type AttributionExample = z.infer<typeof attributionExampleSchema>;
+/** The slugs a signup link carried, already bounded to the slug shape by whoever read the link. */
+export type SignupLinkSlugs = { placement?: string; example?: string; utmSource?: string; utmCampaign?: string };
+/** A signup's origin after classification: only allowlist values and bounded campaign tags, reported as such. */
+export type SignupAttribution = {
+  placement?: AttributionPlacement; example?: AttributionExample; utmSource?: string; utmCampaign?: string;
+};
+export type InstallationAttributedProperties = z.infer<typeof installationAttributedSchema>["properties"];
+
+/**
+ * Classify the slugs a signup link carried into the closed attribution
+ * allowlists. The website names its hero and final-call sections and its
+ * example panels (`details-<id>`); anything else is "other", and the raw slugs
+ * never enter a record. Campaign tags pass through only in the slug shape.
+ */
+export function signupAttributionFromSlugs(slugs: SignupLinkSlugs): SignupAttribution {
+  const classified: SignupAttribution = {};
+  if (slugs.placement !== undefined) {
+    const place = slugs.placement.trim().toLowerCase();
+    classified.placement = place === "hero" || place === "hero-heading"
+      ? "hero"
+      : place === "final-call" || place === "early-access"
+        ? "final-call"
+        : place === "example" || place.startsWith("details-")
+          ? "example"
+          : "other";
+  }
+  if (slugs.example !== undefined) {
+    const parsed = attributionExampleSchema.safeParse(slugs.example.trim().toLowerCase());
+    classified.example = parsed.success ? parsed.data : "other";
+  }
+  for (const key of ["utmSource", "utmCampaign"] as const) {
+    const parsed = attributionSlugSchema.safeParse(slugs[key]);
+    if (parsed.success) classified[key] = parsed.data;
+  }
+  return classified;
+}
+
+/** The record for one signup: the website's placement wins, then a campaign tag, otherwise the signup was direct. */
+export function installationAttributedProperties(attribution?: SignupAttribution): InstallationAttributedProperties {
+  const origin = attribution?.placement ? "website" : attribution?.utmSource || attribution?.utmCampaign ? "campaign" : "direct";
+  return { origin, ...attribution };
+}
 export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<

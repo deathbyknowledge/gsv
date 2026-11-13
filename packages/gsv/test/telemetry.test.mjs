@@ -12,6 +12,8 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
+  installationAttributedProperties,
+  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -436,6 +438,50 @@ describe("ship.message.committed", () => {
       assert.equal(shipPlatformSchema.safeParse(value).success, true);
       assert.equal(value, "other");
     }
+  });
+});
+
+describe("installation.attributed", () => {
+  const record = (component, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name: "installation.attributed", properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch (error) {
+      return { success: false, error };
+    }
+  };
+
+  it("accepts only the closed placement and example classes and slug-shaped campaign tags", () => {
+    assert.equal(record("accounts", { origin: "direct" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "tickets" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "example", example: "other" }).success, true);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "facebook", utmCampaign: "launch-nov" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero-heading" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "Face Book" }).success, false);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "facebook", utmContent: "photo" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
+    assert.equal(record("gateway", { origin: "direct" }).success, false);
+  });
+
+  it("classifies the website's link slugs into the allowlist and keeps only slug-shaped campaign tags", () => {
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "hero-heading" }), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "early-access" }), { placement: "final-call" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "details-tickets", example: "tickets" }), { placement: "example", example: "tickets" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "sidebar-promo", example: "plan-a-trip" }), { placement: "other", example: "other" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: " HERO " }), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs({ utmSource: "facebook", utmCampaign: "launch" }), { utmSource: "facebook", utmCampaign: "launch" });
+    assert.deepEqual(signupAttributionFromSlugs({ utmSource: "Face Book", utmCampaign: "x".repeat(33) }), {});
+  });
+
+  it("names the origin by what the link carried: placement first, then a campaign, otherwise direct", () => {
+    assert.deepEqual(installationAttributedProperties(undefined), { origin: "direct" });
+    assert.deepEqual(installationAttributedProperties({}), { origin: "direct" });
+    assert.deepEqual(installationAttributedProperties({ utmCampaign: "launch" }), { origin: "campaign", utmCampaign: "launch" });
+    assert.deepEqual(installationAttributedProperties({ placement: "hero", utmSource: "facebook" }), { origin: "website", placement: "hero", utmSource: "facebook" });
   });
 });
 

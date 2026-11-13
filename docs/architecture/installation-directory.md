@@ -160,6 +160,15 @@ the operation before transmission; concurrent retries return the same installati
 Accounts atomically limits self-service creation to one non-deleted, non-cancelled
 Space per owner, without limiting operator-created or already-owned Spaces.
 The owner session lists unfinished setups independently of browser storage.
+The request may also carry an optional attribution: the placement and example
+slugs the website put in the signup link's fragment and the campaign tags
+(`utm_source`, `utm_campaign`) an ad put in its query. The signup page reads
+them in the browser and keeps them in its own signup state; Accounts bounds
+their shape, classifies the placement and example into a closed allowlist
+(unknown values become `other`) and reports them once, as
+`installation.attributed`, from the request that first creates the reservation
+(see the telemetry architecture). Nothing is stored with the reservation, a
+replayed request reports nothing, and they never identify a visitor.
 
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward
