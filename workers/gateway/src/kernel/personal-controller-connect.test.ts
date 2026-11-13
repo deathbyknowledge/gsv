@@ -188,7 +188,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       defer: (promise: Promise<unknown>) => deferred.push(promise),
     };
     kernel.installationId = "inst_country";
-    kernel.bindings = { GSV_TELEMETRY_ENABLED: "1" };
+    kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
     kernel.connections = new Map();
     kernel.buildContext = () => ctx;
     kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();

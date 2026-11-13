@@ -154,7 +154,7 @@ producer switch and tail consumer; schema support alone does not export anything
 `GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
 without granting those adapters ownership of another component's application events.
 
-`ship.owner.connected` reports Cloudflare's country code after a personal human
+When deployment telemetry is enabled, `ship.owner.connected` reports Cloudflare's country code after a personal human
 successfully authenticates over WebSocket and passes the final credential-epoch
 check. The code comes only from `request.cf.country`, never from headers, the
 sign-in frame or an adapter's server address. Unknown and Tor country values are

@@ -3,7 +3,7 @@ import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, telemetryEnabled } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -943,7 +943,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const initial: ConnectionState = { step: "pending" };
       const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
       if (source) initial.source = source;
-      const country = connectionCountry(request);
+      const country = telemetryEnabled(this.bindings) ? connectionCountry(request) : undefined;
       if (country) initial.country = country;
       const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
