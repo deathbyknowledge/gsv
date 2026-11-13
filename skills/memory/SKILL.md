@@ -5,10 +5,11 @@ description: Retrieve and maintain the memory. Use when you need to remember som
 
 # Manage Personal Memory
 
-Memory belongs to the human, not to an individual agent. Every agent working for the same user reads and writes the same two layers:
+Memory belongs to the human, not to an individual agent. Every agent working for the same user shares the same three layers:
 
-- The `personal` wiki contains durable information that is searched and loaded when relevant.
 - The owner's `context.d/10-personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It appears under the editable `<user>` context root in the prompt; do not confuse it with the current agent's `~/context.d/`.
+- The `personal` wiki contains durable information that is searched and loaded when relevant.
+- The conversation keeps every message exchanged with the owner. It is searchable, but it is the record, not the memory: write what will matter again to the wiki.
 
 The Kernel responsibility ledger is working state, not personal memory. Do not copy unresolved responsibilities into the wiki merely because they exist. Record an outcome later only when it is useful history.
 
@@ -40,9 +41,20 @@ Append a journal entry for a meaningful event or outcome whose chronology may ma
 pages/journal/YYYY/MM/YYYY-MM-DD.md
 ```
 
+## Find Something Said Earlier
+
+When the owner refers to something from an earlier exchange that the wiki does not hold, search the conversation before asking them to repeat it:
+
+```bash
+message search "words" --json
+message history --before SEQUENCE --limit 10
+```
+
+Search matches messages containing every word, newest first; short words match the start of longer ones. Each hit carries its `sequence`; page older matches by passing the returned `nextBeforeSequence` to `--before`. `message history --before` reads the messages before a sequence, so pass one a few past the hit to see what followed it as well. `--with` searches a contact's conversation instead. When the answer will matter again, write it to the wiki.
+
 ## Recover Missing Memory from Process History
 
-Process history is lossless recovery evidence, not the primary memory system. Search the Personal wiki first. If relevant memory is missing and earlier Process work likely contains the answer, inspect that history and then repair the wiki with the durable facts you recover.
+Process history is lossless recovery evidence, not the primary memory system. Search the Personal wiki and the conversation first. If relevant memory is still missing and earlier Process work likely contains the answer, such as a tool result that never reached a message, inspect that history and then repair the wiki with the durable facts you recover.
 
 For compacted history belonging to a visible Process, prefer the structured Process interface:
 
