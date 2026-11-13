@@ -214,8 +214,8 @@ describe("mock gateway", () => {
     const { say, offered } = await startersWalk();
 
     const opener = await say("/starters");
-    expect(opener.text).toEqual(["Hi, I'm Ship.", expect.stringMatching(/Where do we start\? Or just tell me what's on your mind\.$/)]);
-    expect(opener.choices).toEqual(["Plan my weekend", "Find the best deal", "Don't let me forget"]);
+    expect(opener.text).toEqual(["Hi, I'm Ship.", expect.stringMatching(/Anything you've been putting off\? Or just tell me what's on your mind today\.$/)]);
+    expect(opener.choices).toEqual(["Plan my weekend", "Don't let me forget", "Get to know me first"]);
     expect(opener.runs).toBe(1);
 
     const where = await say("Plan my weekend");
@@ -239,7 +239,8 @@ describe("mock gateway", () => {
 
     const more = await say("WhatsApp");
     expect(more.text).toEqual(["Done. You'll hear from me on WhatsApp.\n\nWant me to take something else?"]);
-    expect(more.choices).toEqual(["Find the best deal", "Don't let me forget", "That's all for now"]);
+    // getting to know them comes first among what they skipped, and never more than two offers
+    expect(more.choices).toEqual(["Get to know me first", "Find the best deal", "That's all for now"]);
 
     expect(await say("That's all for now")).toMatchObject({ text: ["All set. I'm here when you need me."], choices: undefined });
     // the sketch is over: the next message gets the mock's ordinary reply
@@ -258,7 +259,7 @@ describe("mock gateway", () => {
     expect((await say("Next week")).text).toEqual(["Got it. I'll bring it up next week and keep asking until it's done. Where should I tell you?"]);
     const afterReminder = await say("Keep it here");
     expect(afterReminder.text[0]).toMatch(/^Done\. You'll hear from me here\./);
-    expect(afterReminder.choices).toEqual(["Plan my weekend", "Find the best deal", "That's all for now"]);
+    expect(afterReminder.choices).toEqual(["Get to know me first", "Find the best deal", "That's all for now"]);
 
     expect(await say("Find the best deal")).toMatchObject({ text: ["What are you looking to buy?"], choices: undefined });
     const picks = await say("running shoes");
@@ -268,16 +269,49 @@ describe("mock gateway", () => {
     expect((await say("Watch the price")).text).toEqual(["I'll check every morning and tell you the moment it drops. Where should I tell you?"]);
     const afterDeal = await say("Telegram");
     expect(afterDeal.text[0]).toMatch(/^Done\. You'll hear from me on Telegram\./);
-    expect(afterDeal.choices).toEqual(["Plan my weekend", "That's all for now"]);
+    expect(afterDeal.choices).toEqual(["Get to know me first", "Plan my weekend", "That's all for now"]);
 
     // a typed city is as good as the offered one, and a typed wish about the result still gets a next step
     await say("Plan my weekend");
     expect((await say("Porto")).text[1]).toMatch(/^Three for Saturday in Porto:/);
     const booked = await say("the second one, but later in the day");
     expect(booked.text[0]).toMatch(/Where should I tell you\?$/);
-    // with all three taken there is nothing left to offer, and the sketch ends
+    expect((await say("Keep it here")).choices).toEqual(["Get to know me first", "That's all for now"]);
+
+    // days described in their own words get a question of their own, and tasks that suit anyone
+    expect(await say("Get to know me first")).toMatchObject({ text: ["Gladly. What fills most of your days?"], choices: ["Work", "Studies", "Family & home"] });
+    expect(await say("Between jobs")).toMatchObject({ text: ["Got it. What does a normal week look like?"], choices: undefined });
+    expect((await say("Applications and the gym")).choices).toEqual(["Plan my week", "Keep me on track", "Find it for me"]);
+    expect((await say("help me with my CV")).text[0]).toMatch(/Where should I tell you\?$/);
+    // with everything taken there is nothing left to offer, and the sketch ends
     expect(await say("Keep it here")).toMatchObject({ text: [expect.stringMatching(/^Done\. You'll hear from me here\./)], choices: undefined });
     expect((await say("thanks")).text).toEqual(["Noted. I will take care of it and let you know when it is done."]);
+
+    expect(offered.every((choices) => choices.length <= 3 && choices.every((choice) => choice.length <= 20))).toBe(true);
+  });
+
+  it("gets to know them in two questions, the second following from the first, then offers tasks made for them", async () => {
+    const { say, offered } = await startersWalk();
+    await say("/starters");
+
+    expect(await say("Get to know me first")).toMatchObject({ text: ["Gladly. What fills most of your days?"], choices: ["Work", "Studies", "Family & home"], runs: 1 });
+    // the follow-up is the obvious one and only they know the answer, so there is nothing to tap
+    expect(await say("Studies")).toMatchObject({ text: ["Studies it is. What are you studying?"], choices: undefined });
+    const tasks = await say("Nursing, second year");
+    expect(tasks.text).toEqual(["Nursing, second year: that I can work with.\n\nWhere do we start?"]);
+    expect(tasks.choices).toEqual(["Plan my exam weeks", "Deadline reminders", "Find practice exams"]);
+
+    const result = await say("Find practice exams");
+    expect(result.text).toEqual([expect.stringMatching(/^Three sets to practise on:[\s\S]*What next\?$/)]);
+    expect(result.choices).toEqual(["Daily 10 questions", "Something else"]);
+    // changing their mind brings the same three back
+    expect(await say("Something else")).toMatchObject({ text: ["Sure. Which one instead?"], choices: tasks.choices });
+    expect((await say("Plan my exam weeks")).choices).toEqual(["Keep me on track", "Something else"]);
+    const kept = await say("Keep me on track");
+    expect(kept.text).toEqual(["Every evening I'll ask what you covered and move the plan when a day slips. Where should I tell you?"]);
+    expect(kept.choices).toEqual(["WhatsApp", "Telegram", "Keep it here"]);
+    // the tasks they skipped at the start are still on offer afterwards
+    expect((await say("Telegram")).choices).toEqual(["Find the best deal", "Plan my weekend", "That's all for now"]);
 
     expect(offered.every((choices) => choices.length <= 3 && choices.every((choice) => choice.length <= 20))).toBe(true);
   });
@@ -295,8 +329,8 @@ describe("mock gateway", () => {
     await vi.runAllTimersAsync();
 
     const ship = signals.filter(([signal]) => signal === "message.committed").map(([, payload]) => offeredSchema.parse(payload).message);
-    expect(ship.map((message) => message.text)).toEqual(["Hi, I'm Ship.", expect.stringMatching(/Where do we start\? Or just tell me what's on your mind\.$/)]);
-    expect(ship[1].choices).toEqual(["Plan my weekend", "Find the best deal", "Don't let me forget"]);
+    expect(ship.map((message) => message.text)).toEqual(["Hi, I'm Ship.", expect.stringMatching(/Anything you've been putting off\? Or just tell me what's on your mind today\.$/)]);
+    expect(ship[1].choices).toEqual(["Plan my weekend", "Don't let me forget", "Get to know me first"]);
     // the brief's waiting step runs after the question, in the same run: work, not a message
     const order = signals.map(([signal]) => signal);
     expect(order.indexOf("proc.run.tool.started")).toBeGreaterThan(order.lastIndexOf("message.committed"));

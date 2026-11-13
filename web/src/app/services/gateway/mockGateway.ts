@@ -186,15 +186,18 @@ const SHORT_REPLY = "Done. The action items are in your notes under Mara, and th
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
 
 /*
- * The starters sketch: the welcome offers three things Ship can start right now, and every step after
- * that is a tap until a result is on screen. Each result ends in what Ship can do next, one of which is
- * always keeping at it, and that is when it asks where to tell them. Ship would write these lines itself;
- * its brief would set only the shape. The places, products and prices are made up.
+ * The starters sketch: the welcome offers two things Ship can start right now and a way to get to know
+ * the person first. A task is taps until a result is on screen; getting to know them is one tapped answer
+ * and one written one, then three tasks made from both. Each result ends in what Ship can do next, one of
+ * which is always keeping at it, and that is when it asks where to tell them. Ship would write these lines
+ * itself; its brief would set only the shape. The places, products and prices are made up.
  */
-const STARTERS = ["Plan my weekend", "Find the best deal", "Don't let me forget"];
+const STARTERS = ["Plan my weekend", "Don't let me forget", "Get to know me first"];
+/** One more starter, offered once a first task is done. */
+const STARTERS_LATER = "Find the best deal";
 const STARTERS_GREETING = "Hi, I'm Ship.";
-const STARTERS_FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. The brief says to greet them, offer three things I can start right now, then mark the welcome waiting and yield.";
-const STARTERS_OFFER = "I take things off your plate and keep at them until they're done.\n\nWhere do we start? Or just tell me what's on your mind.";
+const STARTERS_FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. The brief says to greet them, offer two things I can start right now and a way to get to know them first, then mark the welcome waiting and yield.";
+const STARTERS_OFFER = "I take things off your plate and actually get them done.\n\nAnything you've been putting off? Or just tell me what's on your mind today.";
 const STARTERS_DONE = "That's all for now";
 const STARTERS_MESSENGERS = ["WhatsApp", "Telegram", "Keep it here"];
 const STARTERS_WHEN = ["Tomorrow morning", "This weekend", "Next week"];
@@ -213,10 +216,41 @@ const STARTERS_DEALS: StartersOption[][] = [
   [["Kestrel Two", "€119"], ["Marlow Go", "€79"], ["Pico Mini", "€49"]],
 ];
 const STARTERS_DEAL_RANKS = ["Best overall", "Best value", "Cheapest that's still good"];
+const STARTERS_DAYS = ["Work", "Studies", "Family & home"];
+const STARTERS_OTHER_TASK = "Something else";
+/** A task made for the person: its first result, the reply that keeps Ship at it, and what Ship then keeps doing. */
+type StartersTask = [label: string, result: string, keep: string, kept: string];
+/** What anyone would ask after hearing how their days go, and the three tasks Ship offers once it knows. */
+type StartersFit = { follow: string; tasks: StartersTask[] };
+const STARTERS_WEEK: StartersTask = ["Plan my week", "A first cut of your week:\n\n1. The two things that matter most, first\n2. One evening with nothing booked\n3. What can wait, parked for next week", "Plan it each Monday", "Every Monday at 8:00 I'll send you the week, with what slipped from the last one."];
+/** One for each of STARTERS_DAYS, in that order. */
+const STARTERS_FITS: StartersFit[] = [
+  { follow: "What do you do?", tasks: [
+    STARTERS_WEEK,
+    ["Follow-up reminders", "Three follow-ups people lose track of:\n\n1. Quotes sent and never answered\n2. Invoices past their date\n3. Introductions you promised\n\nGive me yours and I'll hold them.", "Chase them weekly", "Every Thursday I'll tell you who still owes you an answer."],
+    ["Find new clients", "Three places to look this week:\n\n1. **Northside Makers Fair** · stalls open until Friday\n2. **Harbour Business Breakfast** · Tuesday 8:00\n3. **Tile Quarter directory** · free listing", "Watch for more", "I'll look every week and tell you when something new fits."],
+  ] },
+  { follow: "What are you studying?", tasks: [
+    ["Plan my exam weeks", "A first plan, working back from the exams:\n\n1. **Three weeks out**: one pass through every topic\n2. **Two weeks out**: past papers, timed\n3. **Last week**: only what you got wrong", "Keep me on track", "Every evening I'll ask what you covered and move the plan when a day slips."],
+    ["Deadline reminders", "Give me the dates and I'll hold them. Three I'd set for each:\n\n1. A week before it's due\n2. The evening before\n3. The morning itself, until it's handed in", "Set all three", "I'll remind you a week ahead and the evening before, and keep asking until it's handed in."],
+    ["Find practice exams", "Three sets to practise on:\n\n1. **Open Course Bank** · 240 questions with answers\n2. **Past Papers Library** · five years, timed\n3. **Study Circle drills** · 20 a day", "Daily 10 questions", "Every day at 18:00 I'll send you ten, weighted to what you get wrong."],
+  ] },
+  { follow: "Who's at home?", tasks: [
+    ["Plan a family Sunday", "Three for Sunday that work with children:\n\n1. **Puppet morning at the old tram depot** · 11:00 · €6\n2. **Kite field on North Beach** · all day · free\n3. **Pancake workshop at Casa Nube** · 16:00 · €12", "Plan every weekend", "Every Thursday I'll send you three ideas for the weekend."],
+    ["Meal plan this week", "Five dinners from one shop:\n\n1. **Mon** tomato rice · **Tue** oven fish\n2. **Wed** lentil soup · **Thu** omelette night\n3. **Fri** homemade pizza", "Plan it every week", "Every Saturday morning I'll send next week's dinners and the shopping list."],
+    ["Birthday reminders", "Give me the names and dates and I'll hold them. For each one:\n\n1. Two weeks before, with gift ideas\n2. Three days before, in case nothing is bought\n3. On the morning itself", "Set them up", "I'll remind you two weeks before each one, with ideas, and again on the day."],
+  ] },
+];
+/** When they describe their days in their own words. */
+const STARTERS_FIT_OTHER: StartersFit = { follow: "What does a normal week look like?", tasks: [
+  STARTERS_WEEK,
+  ["Keep me on track", "Tell me the one thing you want done this month and I'll break it down:\n\n1. This week's step\n2. What could get in the way\n3. When I check in", "Check in weekly", "Every Sunday evening I'll ask how it went and set the next step."],
+  ["Find it for me", "Tell me what you've been meaning to look up. Three things people hand me:\n\n1. The best option under a budget\n2. What's on nearby\n3. Who to call for a repair", "Keep looking", "I'll keep looking and tell you when something better turns up."],
+] };
 
-type StartersStep = "opener" | "weekend-where" | "weekend-city" | "weekend-result" | "deal-what" | "deal-result" | "remember-what" | "remember-when" | "messenger" | "more";
-/** Where the sketch stands: the question on offer, the starters already taken, what the current one is about, and which set of results is showing. */
-type StartersState = { step: StartersStep; used: readonly string[]; subject: string; round: number };
+type StartersStep = "opener" | "weekend-where" | "weekend-city" | "weekend-result" | "deal-what" | "deal-result" | "remember-what" | "remember-when" | "know-days" | "know-more" | "know-tasks" | "know-result" | "messenger" | "more";
+/** Where the sketch stands: the question on offer, the starters already taken, what the current one is about, which set of results (or which fitted task) is showing, and the tasks made for the person. */
+type StartersState = { step: StartersStep; used: readonly string[]; subject: string; round: number; fit?: StartersFit };
 /** What Ship sends next: an optional progress line first, in the same run, then the message and its replies. */
 type StartersTurn = { progress?: string; text: string; choices?: string[] };
 type StartersMove = { turn: StartersTurn; next: StartersState | null };
@@ -248,15 +282,38 @@ function startersMove(state: StartersState, answer: string): StartersMove {
     const next: StartersState = { ...state, step: "weekend-result", subject: city };
     return { turn: { progress: `Looking at what's on in ${city} this weekend…`, ...startersWeekend(next) }, next };
   };
+  const fit = state.fit ?? STARTERS_FIT_OTHER;
+  const fitted = fit.tasks.map(([label]) => label);
   switch (state.step) {
     case "opener":
     case "more":
       if (state.step === "more" && picked(STARTERS_DONE)) return { turn: { text: "All set. I'm here when you need me." }, next: null };
       if (picked(STARTERS[0])) return { turn: { text: "Where will you be?", choices: [startersCity(), "Somewhere else"] }, next: begin(STARTERS[0], "weekend-where") };
-      if (picked(STARTERS[1])) return { turn: { text: "What are you looking to buy?" }, next: begin(STARTERS[1], "deal-what") };
-      if (picked(STARTERS[2])) return { turn: { text: "What's the thing?" }, next: begin(STARTERS[2], "remember-what") };
+      if (picked(STARTERS[1])) return { turn: { text: "What's the thing?" }, next: begin(STARTERS[1], "remember-what") };
+      if (picked(STARTERS[2])) return { turn: { text: "Gladly. What fills most of your days?", choices: STARTERS_DAYS }, next: begin(STARTERS[2], "know-days") };
+      if (picked(STARTERS_LATER)) return { turn: { text: "What are you looking to buy?" }, next: begin(STARTERS_LATER, "deal-what") };
       /* anything else they write is the thing itself, and Ship keeps hold of it */
-      return { turn: { text: "When should I bring it up?", choices: STARTERS_WHEN }, next: begin(STARTERS[2], "remember-when", said) };
+      return { turn: { text: "When should I bring it up?", choices: STARTERS_WHEN }, next: begin(STARTERS[1], "remember-when", said) };
+    case "know-days": {
+      /* the next question follows from their answer, and only they know the answer to it */
+      const day = STARTERS_DAYS.findIndex(picked);
+      const next = day < 0 ? STARTERS_FIT_OTHER : STARTERS_FITS[day];
+      return { turn: { text: `${day < 0 ? "Got it." : `${STARTERS_DAYS[day]} it is.`} ${next.follow}` }, next: { ...state, step: "know-more", fit: next } };
+    }
+    case "know-more":
+      return { turn: { text: `${said}: that I can work with.\n\nWhere do we start?`, choices: fitted }, next: { ...state, step: "know-tasks", subject: said } };
+    case "know-tasks": {
+      const task = fit.tasks.findIndex(([label]) => picked(label));
+      if (task < 0) return askWhere("Noted. I'll work that in and come back with it sorted.");
+      const [, result, keep] = fit.tasks[task];
+      return { turn: { text: `${result}\n\nWhat next?`, choices: [keep, STARTERS_OTHER_TASK] }, next: { ...state, step: "know-result", round: task } };
+    }
+    case "know-result": {
+      const [, , keep, kept] = fit.tasks[state.round];
+      if (picked(keep)) return askWhere(kept);
+      if (picked(STARTERS_OTHER_TASK)) return { turn: { text: "Sure. Which one instead?", choices: fitted }, next: { ...state, step: "know-tasks" } };
+      return askWhere("Noted. I'll work that in and come back with it sorted.");
+    }
     case "weekend-where":
       return picked("Somewhere else") ? { turn: { text: "Which city?" }, next: { ...state, step: "weekend-city" } } : weekendIn(said);
     case "weekend-city":
@@ -293,7 +350,8 @@ function startersMove(state: StartersState, answer: string): StartersMove {
     }
     case "messenger": {
       const where = picked("WhatsApp") ? "on WhatsApp" : picked("Telegram") ? "on Telegram" : "here";
-      const remaining = STARTERS.filter((starter) => !state.used.includes(starter));
+      /* two more at most, so the replies still fit a messenger's buttons; getting to know them comes first when they skipped it */
+      const remaining = [STARTERS[2], STARTERS_LATER, STARTERS[0], STARTERS[1]].filter((starter) => !state.used.includes(starter)).slice(0, 2);
       if (remaining.length === 0) return { turn: { text: `Done. You'll hear from me ${where}.\n\nTell me anything else whenever you like.` }, next: null };
       return {
         turn: { text: `Done. You'll hear from me ${where}.\n\nWant me to take something else?`, choices: [...remaining, STARTERS_DONE] },
