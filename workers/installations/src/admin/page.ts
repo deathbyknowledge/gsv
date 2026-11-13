@@ -1,8 +1,10 @@
 import { noStoreFormHeaders } from "../http";
 import type { IssuedAdminInstallation } from "./service";
 import type { OperatorAuditEvent } from "./insight";
+import { ADMIN_UI_SCRIPT } from "./ui-script";
 
 export type AdminNavigationItem = { section: string; href: string; label: string };
+export type AdminPageLink = { href: string; label: string };
 
 export function adminPageResponse(input: {
   title: string;
@@ -20,11 +22,13 @@ export function adminPageResponse(input: {
     <title>${escapeHtml(input.title)} · GSV registry</title>
     <link rel="stylesheet" href="/admin/styles.css">
     <script src="/admin/time.js" defer></script>
+    <script src="/admin/ui.js" defer></script>
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="/admin/installations"><strong>Ship</strong><span>administration</span></a>
       <nav aria-label="Operator navigation">
+        ${navLink("/admin/overview", "Overview", input.section === "overview")}
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
         ${navLink("/admin/reports", "Reports", input.section === "reports")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
@@ -74,6 +78,15 @@ export function adminTimeScript(head: boolean): Response {
   });
 }
 
+export function adminUiScript(head: boolean): Response {
+  return new Response(head ? null : ADMIN_UI_SCRIPT, { headers: adminHeaders("text/javascript; charset=utf-8") });
+}
+
+export function copyEmailButton(email: string): string {
+  const value = escapeHtml(email);
+  return `<button class="copy-email" type="button" data-copy-email="${value}" aria-label="Copy email address ${value}" title="Copy email address"><span data-email-text>${value}</span><span class="copy-feedback" data-copy-feedback aria-live="polite">Copy</span></button>`;
+}
+
 export function onboardingNotice(issued: IssuedAdminInstallation): string {
   const url = escapeHtml(issued.onboarding.onboardingUrl);
   const resetCopy = issued.reset
@@ -100,11 +113,10 @@ export function formatDate(timestamp: number | null): string {
   if (timestamp === null) return "Not yet";
   const date = new Date(timestamp);
   const fallback = escapeHtml(new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
     timeZone: "UTC",
-  }).format(date)) + " UTC";
-  return `<time datetime="${date.toISOString()}" data-local-time="date">${fallback}</time>`;
+  }).format(date));
+  return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="date">${fallback}</time>`;
 }
 
 export function formatTime(timestamp: number): string {
@@ -114,11 +126,15 @@ export function formatTime(timestamp: number): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hourCycle: "h23",
     timeZone: "UTC",
-  }).format(date)) + " UTC";
+  }).format(date));
   return `<time datetime="${date.toISOString()}" data-local-time="time">${fallback}</time>`;
+}
+
+export function formatDateOnly(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="day">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
 }
 
 /** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
@@ -188,14 +204,13 @@ function adminHeaders(contentType: string): Headers {
 
 const ADMIN_TIME_SCRIPT = `
 (() => {
-  const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  const timeFormatter = new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  });
-  const timezone = dateFormatter.resolvedOptions().timeZone;
+  const compact = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  const exact = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' });
   for (const time of document.querySelectorAll('time[data-local-time]')) {
-    const formatter = time.dataset.localTime === 'time' ? timeFormatter : dateFormatter;
-    time.textContent = formatter.format(new Date(time.dateTime)) + ' ' + timezone;
+    const date = new Date(time.dateTime);
+    time.title = exact.format(date);
+    time.textContent = (time.dataset.localTime === 'day' ? day : compact).format(date);
   }
 })();
 `;
@@ -213,11 +228,11 @@ a { color: #b9b6ff; }
 .topbar nav a { display: flex; align-items: center; padding: 0 14px; color: #9d9daa; text-decoration: none; border-bottom: 2px solid transparent; }
 .topbar nav a[aria-current="page"] { color: #fff; border-bottom-color: #8f8aff; }
 .topbar small { margin-left: auto; text-transform: uppercase; }
-main { width: min(1180px, 100%); margin: auto; padding: 48px 28px 80px; }
+main { width: min(1280px, 100%); margin: auto; padding: 48px 28px 80px; }
 .narrow { width: min(760px, 100%); margin-inline: auto; }
-.stack { display: grid; gap: 24px; }
+.stack { display: grid; gap: 24px; min-width: 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
-.page-heading .actions { display: flex; align-items: center; gap: 10px; }
+.page-heading .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 h1 { margin: 7px 0 0; font: 500 34px system-ui, sans-serif; } h2 { margin: 7px 0 10px; font: 500 18px system-ui, sans-serif; }
 p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
 .eyebrow { margin: 0; color: #8f8aff; font: 11px/1.3 ui-monospace, monospace; letter-spacing: .08em; }
@@ -229,10 +244,18 @@ label { display: grid; gap: 8px; color: #c4c4ce; font-size: 12px; }
 input, select, textarea { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
 button, .button { display: inline-block; border: 1px solid #716bea; padding: 10px 14px; color: #fff; background: #34306f; font: inherit; line-height: normal; text-align: center; text-decoration: none; cursor: pointer; }
 button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e; } button.danger, .button.danger { border-color: #743b42; background: #481f25; }
-.table-wrap { overflow-x: auto; border: 1px solid #292932; }
+.table-wrap { min-width: 0; overflow-x: auto; border: 1px solid #292932; }
 table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 15px 16px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; } th { color: #858593; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 td strong, td small { display: block; } td small { margin-top: 6px; color: #858593; } td a { color: #ecebff; }
+.installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
+.copy-email { display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 0; border: 0; color: #a7a7b2; background: transparent; text-align: left; overflow-wrap: anywhere; }
+.copy-email:hover, .copy-email:focus-visible { color: #ecebff; } .copy-email:hover [data-email-text] { text-decoration: underline; }
+.copy-feedback { flex: none; color: #8f8aff; font-size: 10px; } .clipboard-copy-target { position: fixed; left: -10000px; top: 0; }
+.column-picker { position: relative; } .column-picker > summary::after { content: ' ▾'; }
+.column-picker-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 10; width: min(350px, calc(100vw - 32px)); padding: 18px; border: 1px solid #3d3d49; background: #111118; box-shadow: 0 12px 32px #0008; }
+.column-picker fieldset { display: grid; gap: 12px; margin: 0 0 18px; padding: 0; border: 0; } .column-picker legend { margin-bottom: 16px; font-size: 12px; }
+.column-picker label { display: flex; align-items: center; gap: 10px; } .column-picker input { width: auto; margin: 0; accent-color: #8f8aff; } .column-picker .muted { display: block; margin-top: 12px; }
 .badge { display: inline-block; border: 1px solid #4b485e; padding: 4px 7px; color: #d8d6ef; background: #181720; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .badge-active, .badge-enabled { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-restricted, .badge-failed, .badge-past-due, .badge-disabled, .badge-paused { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .empty { border: 1px solid #292932; padding: 50px 20px; color: #858593; text-align: center; }
@@ -260,5 +283,8 @@ details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
 .reported-message { white-space: pre-wrap; overflow-wrap: anywhere; color: #e8e8ef; }
 .steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
 .steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
+.muted { color: #858593; font-size: 11px; }
+.plan-details > summary { display: flex; align-items: center; gap: 16px; cursor: pointer; } .plan-details > summary::before { content: '▸'; color: #8f8aff; }
+.plan-details[open] > summary::before { content: '▾'; } .plan-details > summary strong { font: 500 18px system-ui, sans-serif; } .plan-details > div { margin-top: 24px; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }
 `;

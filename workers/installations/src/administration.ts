@@ -28,6 +28,7 @@ export type AdminInstallationSummary = {
   state: InstallationState;
   operationState: AdminOperationState;
   createdAt: number;
+  ownerEmail?: string | null;
 };
 
 export type AdminInstallationListQuery = {
@@ -79,7 +80,13 @@ type AdminInstallationSummaryRow = Pick<
   | "state"
   | "operation_state"
   | "created_at"
->;
+> & { owner_email: string | null };
+
+// Match the Ship detail page: the active owner wins; an unfinished signup uses its verified owner.
+const OWNER_JOIN = `LEFT JOIN principals owner ON owner.id = COALESCE((
+  SELECT m.principal_id FROM memberships m
+  WHERE m.installation_id = i.id AND m.role = 'owner' AND m.state = 'active'
+  ORDER BY m.created_at LIMIT 1), CASE WHEN i.owner_setup = 1 THEN i.owner_principal_id END)`;
 
 export class InstallationAdminStore {
   constructor(private readonly db: D1Database) {}
@@ -108,8 +115,8 @@ export class InstallationAdminStore {
     ];
     const bindings: Array<string | number> = [];
     if (query) {
-      predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0)");
-      bindings.push(query, query);
+      predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0 OR instr(lower(COALESCE(owner.primary_email, '')), ?) > 0)");
+      bindings.push(query, query, query);
     }
     if (input.state !== null) {
       predicates.push("i.state = ?");
@@ -123,6 +130,7 @@ export class InstallationAdminStore {
       this.db.prepare(
         `SELECT COUNT(*) AS total
          FROM installations i
+         ${OWNER_JOIN}
          WHERE ${where}`,
       ).bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
@@ -135,8 +143,9 @@ export class InstallationAdminStore {
              ORDER BY p.updated_at DESC
              LIMIT 1
            ) AS operation_state,
-           i.created_at
+           i.created_at, owner.primary_email AS owner_email
          FROM installations i
+         ${OWNER_JOIN}
          WHERE ${where}
          ORDER BY i.created_at DESC, i.id DESC
          LIMIT ? OFFSET ?`,
@@ -217,6 +226,7 @@ function adminInstallationSummaryFromRow(
     state: row.state,
     operationState: row.operation_state,
     createdAt: row.created_at,
+    ownerEmail: row.owner_email,
   };
 }
 
