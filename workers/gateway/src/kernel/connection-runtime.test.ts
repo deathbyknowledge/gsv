@@ -96,7 +96,8 @@ describe("ConnectionRuntime.rehydrateConnections", () => {
   it("retains trusted country through pending connection setup and hibernation", () => {
     const pending = fakeSocket({ step: "pending", country: "CH" });
     const { runtime, host } = runtimeWith([pending]);
-    const connection = new KernelConnection(pending as never, "pending", "https://gsv.test/ws", { step: "pending", country: "CH" } as KernelConnectionState);
+    // SAFETY: pending setup and hibernation use only this socket's attachment methods.
+    const connection = new KernelConnection<KernelConnectionState>(pending as never, "pending", "https://gsv.test/ws", { step: "pending", country: "CH" });
     runtime.onConnect(connection);
     expect(connection.state.country).toBe("CH");
     runtime.rehydrateConnections();
