@@ -990,11 +990,12 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [onFleet],
   );
 
-  /* the ship's latest message keeps its replies on offer until anyone writes again */
+  /* the ship's latest message keeps its replies on offer until anyone writes again; work it does afterwards is not writing */
   const offered = useMemo(() => {
     for (let index = moments.length - 1; index >= 0; index -= 1) {
       const moment = moments[index];
       if (moment.role === "note") continue;
+      if (moment.role === "ship" && !moment.text && !moment.media?.length && !moment.streaming) continue;
       return moment.role === "ship" && !moment.streaming && moment.choices?.length ? moment.id : null;
     }
     return null;

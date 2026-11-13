@@ -703,6 +703,29 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("keeps a Ship message's replies on offer while Ship works on after sending it", async () => {
+    const runId = "welcome-run";
+    const envelope = (id: number) => ({ id, messageId: id, index: 0, generation: 1, runId, createdAt: id, source: "typed" as const });
+    const question = "Where do we start?";
+    messages = [{ ...message("process", question, 1), origin: { kind: "process", pid: shipPid, runId },
+      processId: shipPid, runId, choices: ["Plan my weekend", "Find the best deal"] }];
+    processRecords = [
+      { ...envelope(1), kind: "message", payload: { direction: "out", text: question, media: [], origin: {}, conversationMessageId: "process-1" } },
+      { ...envelope(2), kind: "call", payload: { callId: "wait", tool: "Shell", syscall: "shell.exec", target: "gsv",
+        args: { input: "r12y update 1 --json '{\"state\":\"waiting\"}'" }, runId } },
+      { ...envelope(3), kind: "result", payload: { callId: "wait", tool: "Shell", outcome: "completed", output: "updated", media: [], resources: [] } },
+    ];
+    const zen = await mountedZen();
+    const offered = () => zen.nodes().filter((node) => node.type === "button" && node.props.class === "zen-choice");
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ZenText && node.props.text === question)).toBe(true));
+      // the welcome marks itself waiting after asking: that step shows as its own textless work moment
+      await vi.waitFor(() => expect(zen.nodes().some((node) => String(node.props.class).split(" ").includes("is-work"))).toBe(true));
+      // the work after the question is not writing, so the question keeps its replies
+      await vi.waitFor(() => expect(offered().map((node) => collectText(node))).toEqual(["Plan my weekend", "Find the best deal"]));
+    } finally { await zen.unmount(); }
+  });
+
   it("keeps the composer available without inventing a welcome or activity", async () => {
     const zen = await mountedZen();
     try {
