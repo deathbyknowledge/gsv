@@ -443,8 +443,8 @@ function rangeOccurrences(series: Series, timeZone: string, range: TimeRange): C
   const span = eventSpan(event, timeZone);
   const length = span ? span.end - span.start : 0;
   // A changed date keeps its own length, so it is checked against the range on its own.
-  // A day of slack covers a length a clock change alters; the overlap check is exact.
-  const regular = nextOccurrences(series, rule, timeZone, range.start - length - DAY_MS, MAX_RANGE_EVENTS + 1, range.end)
+  // The bounds only stop expansion, so a day of slack on each side never drops an event; the overlap check is exact.
+  const regular = nextOccurrences(series, rule, timeZone, range.start - length - DAY_MS, MAX_RANGE_EVENTS + 1, range.end + DAY_MS)
     .filter(({ change }) => !change);
   if (regular.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
   return [

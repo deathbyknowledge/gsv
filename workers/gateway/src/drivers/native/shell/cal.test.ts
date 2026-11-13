@@ -585,6 +585,19 @@ describe("cal show over a range", () => {
       .toEqual(["Visit 2026-03-28T12:00:00+01:00[Europe/Amsterdam]"]);
   });
 
+  it("keeps a repeating all-day event when the range ends partway through its day", async () => {
+    const cal = calShell();
+    const path = `${directory()}/birthday.ics`;
+    await cal.fs.writeFile(`${HANK.home}/${path}`, [
+      "BEGIN:VCALENDAR", "VERSION:2.0",
+      "BEGIN:VEVENT", "UID:birthday@example.com", "DTSTAMP:20261101T120000Z",
+      "DTSTART;VALUE=DATE:20201119", "RRULE:FREQ=YEARLY", "SUMMARY:Birthday", "END:VEVENT",
+      "END:VCALENDAR", "",
+    ].join("\r\n"));
+
+    expect((await cal.run("show", path, "--from", "2026-11-19T10:00", "--until", "2026-11-19T12:00")).stdout).toContain("events=1\n");
+  });
+
   it("refuses a range that runs backwards or past a year, and --next with a range", async () => {
     const { cal, path } = await published();
 
