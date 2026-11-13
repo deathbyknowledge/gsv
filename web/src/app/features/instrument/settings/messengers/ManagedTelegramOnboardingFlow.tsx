@@ -50,11 +50,9 @@ const defaultDependencies: ManagedTelegramDependencies = {
   useConfirmConsoleAdapterPairing: () => useConfirmConsoleAdapterPairing(),
 };
 
-const STEP_MESSAGE = 0;
-const STEP_CODE = 1;
-const STEP_CONFIRM = 2;
-const STEP_DONE = 3;
-const fieldStyle = { maxWidth: "520px" };
+const STEP_CONNECT = 0;
+const STEP_CONFIRM = 1;
+const STEP_DONE = 2;
 
 export function ManagedTelegramOnboardingFlow({
   onBack,
@@ -117,6 +115,8 @@ export function whatsAppReachForDevice(codes: readonly string[], languages: read
   return codes.filter((code) => regions.has(WHATSAPP_CALLING_CODE_REGIONS.get(code) ?? ""));
 }
 
+const WHATSAPP_CALLING_CODE_FLAGS = new Map([["55", "🇧🇷"], ["62", "🇮🇩"]]);
+
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
 export function whatsAppCountryList(codes: readonly string[], t: Translate): string {
   const sorted = [...codes].sort();
@@ -151,12 +151,14 @@ function ManagedMessengerOnboardingFlow({
   const info = dependencies.useConsoleAdapterPairingInfo(adapterId);
   const inspect = dependencies.useInspectConsoleAdapterPairing();
   const confirm = dependencies.useConfirmConsoleAdapterPairing();
-  const [step, setStep] = useState(STEP_MESSAGE);
+  const [step, setStep] = useState(STEP_CONNECT);
   const [code, setCode] = useState("");
+  // Step 2 lights up once the message is sent or a code is typed; both steps stay on screen.
+  const [launched, setLaunched] = useState(false);
   const [candidate, setCandidate] = useState<ConsoleAdapterPairingCandidate | null>(null);
   const [formError, setFormError] = useState("");
   const paired = step === STEP_DONE;
-  dependencies.useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
+  dependencies.useUnsavedGuard(() => !paired && (step > STEP_CONNECT || code.trim().length > 0));
 
   const isSlack = adapterId === "slack";
   const isDiscord = adapterId === "discord";
@@ -189,8 +191,8 @@ function ManagedMessengerOnboardingFlow({
   const launchLabel = installsApp
     ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
     : isWhatsApp
-      ? info.data?.installUrl ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
-      : botUsername ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "TELEGRAM" });
+      ? info.data?.installUrl ? t("settings.pairing.sendMessage") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+      : botUsername ? t("settings.pairing.sendMessage") : t("settings.pairing.viewSetup", { platform: "TELEGRAM" });
   // Opening the messenger is the step, so the launch control leads whenever the link is real.
   const launchLeads = installsApp || isWhatsApp ? Boolean(info.data?.installUrl) : Boolean(botUsername);
 
@@ -240,87 +242,86 @@ function ManagedMessengerOnboardingFlow({
         tone: paired ? "online" : "idle",
         render: () => (
           <>
-            <Alert
-              variant="attention"
-              title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
-              text={firstStepText}
-            />
-            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
-            {!installsApp && !isWhatsApp && botUsername ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.telegramManual", { bot: `@${botUsername}` })}</p> : null}
-            {info.isError ? (
-              <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
-            ) : !info.data?.configured ? (
-              <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform })} />
-            ) : unreachable.length ? (
-              <Alert
-                variant="warning"
-                text={t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}
-              />
-            ) : null}
-            <div class="gsv-cf-footer">
-              <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
-              <span class="gsv-cf-footer-spacer" />
-              {launchLeads
-                ? <Button variant="primary" href={launchUrl} label={launchLabel} disabled={disabled} />
-                : <Link href={launchUrl}>{launchLabel}</Link>}
-              <Button
-                variant={launchLeads ? "secondary" : "primary"}
-                label={t("settings.pairing.haveCode")}
-                disabled={!info.data?.configured}
-                onClick={() => setStep(STEP_CODE)}
-              />
-            </div>
-          </>
-        ),
-      },
-      {
-        key: "code",
-        label: t("settings.pairing.codeLabel"),
-        title: t("settings.pairing.codeTitle", { platform }),
-        meta: t("settings.pairing.inShip"),
-        status: t(paired ? "settings.pairing.connected" : "settings.pairing.pairing"),
-        tone: paired ? "online" : "idle",
-        render: () => (
-          <>
-            <p class="gsv-cf-desc">{t("settings.pairing.codeHint", { platform })}</p>
-            {/* activating a code moves the number's route, so the warning sits where the code is submitted */}
-            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
-            <div style={fieldStyle}>
-              <TextInput
-                label={t("settings.pairing.codeField")}
-                size="large"
-                requirement="required"
-                value={code}
-                placeholder="ABCD-EFGH-JKLM"
-                clearable
-                status={formError ? "error" : "none"}
-                message={formError}
-                onChange={(value) => {
-                  setCode(value.toUpperCase());
-                  if (formError) setFormError("");
-                }}
-                inputProps={{
-                  autoComplete: "one-time-code",
-                  name: `managed${platform}PairingCode`,
-                  onKeyDown: (event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void inspectCode();
-                    }
-                  },
-                }}
-              />
-            </div>
-            <div class="gsv-cf-footer">
-              <Button variant="secondary" label={t("settings.pairing.back")} onClick={() => setStep(STEP_MESSAGE)} />
-              <span class="gsv-cf-footer-spacer" />
-              <Button
-                variant="primary"
-                label={t(inspect.isPending ? "settings.pairing.checking" : "settings.pairing.check")}
-                disabled={!code.trim() || inspect.isPending}
-                onClick={() => void inspectCode()}
-              />
-            </div>
+            <ol class="gsv-cf-rail" aria-label={t("ui.stepper.label")}>
+              <li class="gsv-cf-rail-step is-alert" aria-current={launched ? undefined : "step"}>
+                <span class="gsv-cf-rail-mark" aria-hidden="true">
+                  <span class={`gsv-sp-dot is-${launched ? "done" : "cur"}`}>1</span>
+                  <span class={`gsv-cf-rail-line is-${launched ? "done" : "next"}`} />
+                </span>
+                <div class="gsv-cf-rail-body">
+                  <Alert
+                    variant="attention"
+                    title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
+                    text={firstStepText}
+                  />
+                  <div class="gsv-cf-launch">
+                    {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
+                    {!installsApp && !isWhatsApp && botUsername ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.telegramManual", { bot: `@${botUsername}` })}</p> : null}
+                    <span class="gsv-cf-footer-spacer" />
+                    {launchLeads
+                      ? <Button variant="secondary" href={launchUrl} label={launchLabel} disabled={disabled} onClick={() => setLaunched(true)} />
+                      : <Link href={launchUrl}>{launchLabel}</Link>}
+                  </div>
+                  {info.isError ? (
+                    <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
+                  ) : !info.data?.configured ? (
+                    <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform })} />
+                  ) : null}
+                  {info.data?.configured && unreachable.length ? (
+                    <details class="gsv-cf-aside gsv-prose">
+                      <summary>
+                        {`${unreachable.map((callingCode) => WHATSAPP_CALLING_CODE_FLAGS.get(callingCode)).join(" ")} ${t(unreachable.length > 1
+                          ? "settings.pairing.whatsappReach.both"
+                          : unreachable[0] === "55" ? "settings.pairing.whatsappReach.brazil" : "settings.pairing.whatsappReach.indonesia")}`}
+                      </summary>
+                      <p>{t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}</p>
+                    </details>
+                  ) : null}
+                </div>
+              </li>
+              {/* the field stays beside the launch step, so a code that already arrived goes straight in */}
+              <li class="gsv-cf-rail-step is-field" aria-current={launched ? "step" : undefined}>
+                <span class="gsv-cf-rail-mark" aria-hidden="true">
+                  <span class={`gsv-sp-dot is-${launched ? "cur" : "next"}`}>2</span>
+                </span>
+                <div class="gsv-cf-rail-body">
+                  <div class="gsv-cf-code">
+                    <TextInput
+                      label={t("settings.pairing.codeField", { platform: platform.toUpperCase() })}
+                      value={code}
+                      placeholder="ABCD-EFGH-JKLM"
+                      clearable
+                      disabled={!info.data?.configured}
+                      status={formError ? "error" : "none"}
+                      message={formError}
+                      onChange={(value) => {
+                        setCode(value.toUpperCase());
+                        if (value.trim()) setLaunched(true);
+                        if (formError) setFormError("");
+                      }}
+                      inputProps={{
+                        autoComplete: "one-time-code",
+                        name: `managed${platform}PairingCode`,
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void inspectCode();
+                          }
+                        },
+                      }}
+                    />
+                    <Button
+                      variant="primary"
+                      label={t(inspect.isPending ? "settings.pairing.connecting" : "settings.pairing.connect")}
+                      disabled={!info.data?.configured || !code.trim() || inspect.isPending}
+                      onClick={() => void inspectCode()}
+                    />
+                  </div>
+                  {/* activating a code moves the number's route, so the warning sits where the code is submitted */}
+                  {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
+                </div>
+              </li>
+            </ol>
           </>
         ),
       },
@@ -349,7 +350,7 @@ function ManagedMessengerOnboardingFlow({
             </div>
             {formError ? <Alert variant="error" text={formError} /> : null}
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label={t("settings.pairing.back")} onClick={() => setStep(STEP_CODE)} />
+              <Button variant="secondary" label={t("settings.pairing.back")} onClick={() => setStep(STEP_CONNECT)} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"

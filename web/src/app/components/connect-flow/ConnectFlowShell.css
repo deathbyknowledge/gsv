@@ -90,6 +90,129 @@
   margin-top: -8px;
 }
 
+/* The launch row under an alert: the manual note on the left, the action that
+   opens the messenger on the right; it wraps under the note on narrow widths. */
+.gsv-cf-launch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+}
+.gsv-cf-launch .gsv-cf-note {
+  flex: 1 1 260px;
+}
+.gsv-alert + .gsv-cf-launch {
+  margin-top: -6px;
+}
+
+/* Numbered steps shown together, down a rail: the Stepper's dots in a column
+   joined by a line, each centred on its step's first line of text. */
+.gsv-cf-rail {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gsv-cf-rail-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 18px;
+}
+.gsv-cf-rail-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: var(--gsv-font-mono);
+}
+.gsv-cf-rail-mark > .gsv-sp-dot {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+/* centre on the alert title (13px padding + half its line) */
+.gsv-cf-rail-step.is-alert > .gsv-cf-rail-mark {
+  padding-top: 10px;
+}
+/* centre on the field label */
+.gsv-cf-rail-step.is-field > .gsv-cf-rail-mark {
+  margin-top: -5px;
+}
+.gsv-cf-rail-line {
+  flex: 1;
+  width: 2px;
+  margin: 8px 0 13px;
+  background: var(--border);
+}
+.gsv-cf-rail-line.is-done {
+  background: var(--primary-hi);
+}
+.gsv-cf-rail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.gsv-cf-rail-step:not(:last-child) > .gsv-cf-rail-body {
+  padding-bottom: 32px;
+}
+.gsv-cf-rail-body > .gsv-cf-code {
+  margin-top: 0;
+}
+
+/* A quiet disclosure for a caveat that concerns only some people: one dim line
+   that opens to the explanation. */
+.gsv-cf-aside {
+  margin: -6px 0 0;
+  color: var(--prose-dim);
+}
+.gsv-cf-aside > summary {
+  width: fit-content;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.gsv-cf-aside > p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* A field with its submit action beside it: the label spans the row, the
+   button stretches to the field box and the field's own status goes below. */
+.gsv-cf-code {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) auto;
+  justify-content: start;
+  column-gap: 12px;
+  margin-top: 10px;
+}
+.gsv-cf-code > .gsv-ti {
+  display: contents;
+}
+.gsv-cf-code .gsv-fld-lab {
+  grid-column: 1 / -1;
+}
+.gsv-cf-code > .gsv-btn {
+  grid-column: 2;
+  grid-row: 2;
+}
+.gsv-cf-code .gsv-fld-stat {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+/* Phone widths: a full code needs the whole row, so the button drops below. */
+@media (max-width: 520px) {
+  .gsv-cf-code {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+  .gsv-cf-code > .gsv-btn {
+    grid-column: 1;
+    grid-row: 4;
+  }
+  .gsv-cf-code .gsv-fld-stat {
+    margin-top: -4px;
+  }
+}
+
 /* Shared step building blocks ----------------------------------------------- */
 
 /* Footer button row at the bottom of a step (BACK / CONTINUE etc). */

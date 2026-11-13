@@ -113,25 +113,24 @@ describe("ManagedTelegramOnboardingFlow", () => {
       .not.toContain("BotFather");
     expect(nodes().some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
     expect(collectText(nodes())).toContain("To message Ship manually, find @official_gsv_bot in Telegram.");
-    const connect = nodeWithLabel(nodes(), "CONNECT");
-    expect(connect.props.href).toBe("https://t.me/official_gsv_bot");
-    expect(connect.props.variant).toBe("primary");
-    expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
+    const send = nodeWithLabel(nodes(), "SEND MESSAGE");
+    expect(send.props.href).toBe("https://t.me/official_gsv_bot");
+    expect(send.props.variant).toBe("secondary");
+    expect(nodeWithLabel(nodes(), "TELEGRAM CODE").props.disabled).toBe(false);
+    expect(nodeWithLabel(nodes(), "CONNECT").props.disabled).toBe(true);
   });
 
   it("reveals the Telegram identity before linking it to Personal", async () => {
-    await click("I HAVE A CODE");
-    expect(mocks.currentStep).toBe(1);
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "TELEGRAM CODE").props.onChange?.("abcd-efgh-jklm");
     });
-    await click("CHECK CODE");
+    await click("CONNECT");
 
     expect(mocks.inspect).toHaveBeenCalledWith({
       adapter: "telegram",
       code: "ABCD-EFGH-JKLM",
     });
-    expect(mocks.currentStep).toBe(2);
+    expect(mocks.currentStep).toBe(1);
     expect(nodeWithLabel(nodes(), "@hank").props.sub).toBe("Telegram ID 12345");
 
     await click("YES, CONNECT THIS ACCOUNT");
@@ -139,10 +138,24 @@ describe("ManagedTelegramOnboardingFlow", () => {
       adapter: "telegram",
       code: "ABCD-EFGH-JKLM",
     });
-    expect(mocks.currentStep).toBe(3);
+    expect(mocks.currentStep).toBe(2);
     const success = nodes().find((node) =>
       node.props.text?.includes("now reaches your Ship")
     );
     expect(success).toBeTruthy();
+  });
+
+  it("reports a rejected code as the code field's own error", async () => {
+    mocks.inspect.mockRejectedValueOnce(new Error("That code has expired."));
+    await act(() => {
+      nodeWithLabel(nodes(), "TELEGRAM CODE").props.onChange?.("abcd-efgh-jklm");
+    });
+    await click("CONNECT");
+
+    expect(mocks.currentStep).toBe(0);
+    const field = nodeWithLabel(nodes(), "TELEGRAM CODE");
+    expect(field.props.status).toBe("error");
+    expect(field.props.message).toBe("That code has expired.");
+    expect(nodes().some((node) => node.props.variant === "error")).toBe(false);
   });
 });
