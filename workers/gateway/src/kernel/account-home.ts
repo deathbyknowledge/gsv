@@ -6,14 +6,10 @@ import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   RETIRED_STYLE_CONTEXT,
 } from "../prompts/agent-home";
-import {
-  shipContextFiles,
-  RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
-} from "../prompts/personal-intelligence";
-import { isRetiredGeneratedContext } from "../prompts/retired-context";
+import { RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT } from "../prompts/personal-intelligence";
+import { isRetiredMemoryContext } from "../prompts/retired-context";
 import type { KernelContext } from "./context";
 
-const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 const homeReconciliations = new WeakMap<KernelContext["auth"], Map<string, Promise<void>>>();
 
@@ -52,7 +48,7 @@ export function reconcileHomeOnce(
 
 async function retiredMemoryContextOps(client: RipgitClient, repo: RipgitRepoRef): Promise<RipgitApplyOp[]> {
   const existing = await client.readPath(repo, "context.d/15-memory.md");
-  return existing.kind === "file" && await isRetiredGeneratedContext("memory", existing.bytes)
+  return existing.kind === "file" && await isRetiredMemoryContext(existing.bytes)
     ? [{ type: "delete", path: "context.d/15-memory.md" }]
     : [];
 }
@@ -103,7 +99,6 @@ async function homeLayoutOps(
   repo: RipgitRepoRef,
   options: NonNullable<Parameters<typeof ensureAccountHomeLayout>[2]>,
 ): Promise<RipgitApplyOp[]> {
-  const defaults = options.seedPromptContext && options.personalAgent ? shipContextFiles() : [];
   const [
     contextDir,
     bootContext,
@@ -111,7 +106,6 @@ async function homeLayoutOps(
     commitmentsContext,
     memoryOps,
     skillsDir,
-    existingDefaults,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
@@ -119,7 +113,6 @@ async function homeLayoutOps(
     client.readPath(repo, "context.d/10-commitments.md"),
     retiredMemoryContextOps(client, repo),
     client.readPath(repo, "skills.d"),
-    Promise.all(defaults.map(({ name }) => client.readPath(repo, `context.d/${name}`))),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -151,12 +144,6 @@ async function homeLayoutOps(
       if (retiringGeneratedBootContext) {
         options.beforeRetiringGeneratedBootContext?.();
       }
-      for (const [index, { name, text }] of defaults.entries()) {
-        const existing = existingDefaults[index]!;
-        maybePutTextFile(ops, `context.d/${name}`, existing, text,
-          name === "00-role.md" && existing.kind === "file"
-            && await isRetiredGeneratedContext("ship", existing.bytes));
-      }
       maybeDeleteGeneratedTextFile(
         ops,
         "context.d/10-commitments.md",
@@ -186,23 +173,6 @@ async function homeLayoutOps(
     });
   }
   return ops;
-}
-
-function maybePutTextFile(
-  ops: RipgitApplyOp[],
-  path: string,
-  existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
-  content: string,
-  replaceGenerated = false,
-): void {
-  if (existing.kind !== "missing" && !replaceGenerated) {
-    return;
-  }
-  ops.push({
-    type: "put",
-    path,
-    contentBytes: Array.from(TEXT_ENCODER.encode(content)),
-  });
 }
 
 function maybeDeleteGeneratedTextFile(

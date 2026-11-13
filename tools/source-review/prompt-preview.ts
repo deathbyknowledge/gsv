@@ -5,7 +5,6 @@ import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config"
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
 import { BUILTIN_SKILL_NAMES, SYSTEM_SKILLS_ROOT, readSystemSkillPath } from "../../workers/gateway/src/kernel/sys/builtin-skills";
 import { contextFiles } from "../../workers/gateway/src/prompts/context";
-import { shipContextFiles } from "../../workers/gateway/src/prompts/personal-intelligence";
 import { PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
@@ -22,11 +21,15 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
   const catalog = PROMPT_SOURCES;
-  const program = account === "ship" ? shipContextFiles("crew") : contextFiles("crew");
-  const files = new Map<string, string>([
-    ...program.map(({ name, text }) => [`home/${account}/context.d/${name}`, text] as const),
-    ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
-  ]);
+  const roleContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
+    .filter(([key]) => key.startsWith(`config/ai/${account}/context.d/`))
+    .map(([key, text]) => ({
+      name: key.slice(`config/ai/${account}/context.d/`.length),
+      text: text.replaceAll("{{crew.username}}", "crew"),
+    }));
+  const files = new Map<string, string>(
+    contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
+  );
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
   });
@@ -40,6 +43,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       contextWindowTokens: 128000, contextWindowSource: "model",
       maxContextBytes: Number(SYSTEM_CONFIG_DEFAULTS["config/ai/max_context_bytes"]),
       systemContextFiles,
+      roleContext: { role: account, files: roleContextFiles },
     },
     skills: {
       mode: "summary",
@@ -79,7 +83,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       const collected = await provider.collect(assemblyInput);
       for (const section of collected) {
         const root = section.contextRoot?.key;
-        const sourceScope = root === "program" ? account : root === "user" ? "user" : "system";
+        const sourceScope = root === "ship" || root === "crew" || root === "user" ? root : "system";
         const path = `${sourceScope}/context.d/${section.name}`;
         const paths = catalog.some((source) => source.path === path) ? [path] : [];
         sections.push({ ...section, paths, provider: provider.name });

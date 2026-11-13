@@ -94,16 +94,20 @@ at once:
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
 - `ai.context` returns what the prompt is built from: reachable targets, ready
-  MCP servers, system context files, the skill index, the Ship's address, and
+  MCP servers, system context files, the Ship or Crew context, the skill index, the Ship's address, and
   the managed mailbox. Every later tick asks for it again.
 
 The process then assembles a system prompt from explicit context providers in
 this order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
+2. **Ship or Crew context** from `config/ai/{ship,crew}/context.d/*.md`, for a
+   process running as the personal agent or its Crew account.
+3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
-3. **Available skills** from the built-in `/sys/skills.d` and layered home
+4. **Owner context** from the human owner's `~/context.d/*.md`, for a process
+   running as an owned agent account.
+5. **Available skills** from the built-in `/sys/skills.d` and layered home
    `skills.d` directories. This is a compact command-oriented index only; full
    `SKILL.md` bodies are read explicitly with `skills show <skill>`.
 

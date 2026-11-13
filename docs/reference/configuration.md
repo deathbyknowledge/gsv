@@ -160,6 +160,19 @@ snapshot at the start of each context epoch: `{{current.date}}` and
 installation has no mailbox. Later changes to those facts reach the agent as
 context events rather than a rewritten prompt.
 
+## Ship and Crew Context
+
+```text
+config/ai/ship/context.d/*.md
+config/ai/crew/context.d/*.md
+```
+
+The release's read-only standing context for the personal agent and its Crew
+account. Processes running as those accounts read it after system context,
+with the same ordering and templates; `{{crew.username}}` names the owner's
+Crew account. Setting a key replaces that file for every Ship or Crew on the
+installation. See [Context Files](./context-files.md#ship-and-crew-context).
+
 ## Tool Approval Policy
 
 The approval policy decides whether an agent's tool call runs, asks the person

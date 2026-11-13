@@ -21,7 +21,7 @@ Run every command in this guide through `Shell` on target `gsv`. Keep CodeMode f
 
 Name the work so the user can recognize its subject and purpose without opening the process. Use ordinary words and spaces.
 
-Ship selects the Crew account named in `~/context.d/10-delegation.md` for general delegated work. Replace `ACCOUNT` with that name or another owned account suited to the task:
+Ship selects the Crew account its standing context names in `10-delegation.md` for general delegated work. Replace `ACCOUNT` with that name or another owned account suited to the task:
 
 ```bash
 proc delegate --as ACCOUNT --label 'Compare backup options' --check-after 10m 'Compare backup options and recommend one.'

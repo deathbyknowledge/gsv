@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assembleSystemPrompt, assembleSystemPromptSnapshot } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
-import { createSystemContextProvider } from "./providers/system";
+import { createRoleContextProvider, createSystemContextProvider } from "./providers/system";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult, ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -364,11 +364,48 @@ describe("createSystemContextProvider", () => {
   });
 });
 
+describe("createRoleContextProvider", () => {
+  it("renders the role's shipped files read-only between system and home context", async () => {
+    const input = makeInput({
+      identity: { ...OWNER_IDENTITY, uid: 1001, gid: 1001, username: "ship", home: "/home/ship", cwd: "/home/ship" },
+      ownerIdentity: OWNER_IDENTITY,
+    });
+    input.config = {
+      ...input.config,
+      systemContextFiles: [{ name: "00-runtime.md", text: "Runtime." }],
+      roleContext: { role: "ship", files: [{ name: "05-voice.md", text: "Save preferences in {{owner.home}}/context.d." }] },
+    };
+    const snapshot = await assembleSystemPromptSnapshot(input, [createSystemContextProvider(), createRoleContextProvider()]);
+    expect(snapshot.prompt).toBe([
+      '<system path="/sys/config/ai/context.d/">',
+      "<00-runtime.md>",
+      "Runtime.",
+      "</00-runtime.md>",
+      "</system>",
+      "",
+      '<ship path="/sys/config/ai/ship/context.d/">',
+      "<05-voice.md>",
+      "Save preferences in /home/hank/context.d.",
+      "</05-voice.md>",
+      "</ship>",
+    ].join("\n"));
+    expect(snapshot.sources[1]).toMatchObject({
+      provider: "role.context",
+      contextRoot: { key: "ship", access: "read-only", location: "/sys/config/ai/ship/context.d" },
+    });
+  });
+
+  it("adds nothing for an account without a role", async () => {
+    expect(await createRoleContextProvider().collect(makeInput())).toEqual([]);
+  });
+});
+
 describe("selection", () => {
   it("includes context providers in the default task plan", () => {
     const providers = resolvePromptProviders();
     expect(providers.map((provider) => provider.name)).toEqual([
       "system.context",
+      "role.context",
       "home.context",
       "owner.context",
       "available.skills",

@@ -829,6 +829,8 @@ export function renderManualPage(topic: string): string | null {
         "  or services and expose only the operations they coherently implement and the caller may use.",
         "",
         "STANDING CONTEXT",
+        "  /sys/config/ai/context.d/*.md and /sys/config/ai/{ship,crew}/context.d/*.md",
+        "      Read-only context every process, or every Ship or Crew, receives.",
         "  ~/context.d/*.md",
         "      Small curated notes that are always loaded into prompt context.",
         "  /sys/skills.d/* and ~/skills.d/*",

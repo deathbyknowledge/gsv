@@ -37,15 +37,12 @@ import {
   normalizeAccountName,
   type CreateAccountInput,
   prepareAccountHome,
-  seedContextFile,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePersonalMemory } from "./personal-memory";
 import { reconcileOperatorUpdates } from "./operator-updates";
 import { ensurePublishedProfile } from "./profiles";
-import { shipContextFiles } from "../prompts/personal-intelligence";
-import { contextFiles } from "../prompts/context";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -200,7 +197,7 @@ export async function ensurePersonalAgent(
           ctx.welcome.prepare(human.uid);
         },
       });
-      await ensureCrewAccount(ctx, human, identity);
+      await ensureCrewAccount(ctx, human);
       return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
@@ -217,23 +214,21 @@ export async function ensurePersonalAgent(
     crossMemberOwner: true,
     personalAgentOf: human.uid,
   });
-  await ensureCrewAccount(ctx, human, provision.identity);
+  await ensureCrewAccount(ctx, human);
   return provision;
 }
 
 async function ensureCrewAccount(
   ctx: KernelContext,
   human: ProcessIdentity,
-  ship: ProcessIdentity,
 ): Promise<void> {
   const input: CreateAccountInput = {
     kind: "agent",
     username: "crew",
     gecos: "Crew",
     ownerUid: human.uid,
-    contextFiles: contextFiles("crew"),
   };
-  const key = `config/accounts/crew/${human.uid}`;
+  const key = crewAccountKey(human.uid);
   const savedUid = ctx.config.get(key);
   const existing = savedUid === null ? null : ctx.auth.getPasswdByUid(Number(savedUid));
   let crew: ProcessIdentity;
@@ -253,10 +248,11 @@ async function ensureCrewAccount(
     ctx.config.set(key, String(crew.uid));
   }
   await prepareAccountHome(ctx.env, { ...input, username: crew.username }, crew);
-  const seeded = new Set(shipContextFiles().map(({ name }) => name));
-  for (const file of shipContextFiles(crew.username)) {
-    if (!seeded.has(file.name)) await seedContextFile(ctx.env, ship, file.name, file.text);
-  }
+}
+
+/** The config key that records the uid of an owner's Crew account. */
+export function crewAccountKey(ownerUid: number): string {
+  return `config/accounts/crew/${ownerUid}`;
 }
 
 /**
