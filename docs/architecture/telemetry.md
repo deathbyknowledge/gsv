@@ -17,6 +17,8 @@ allowlist. Each event has a closed property schema; there is no arbitrary
 metadata field. Records may contain:
 
 - event names, bounded categories, timings, outcomes, and aggregate counts;
+- the trusted edge's coarse, two-letter IP country code after an owner's
+  successful sign-in, without the address or location coordinates;
 - content-free inference failure categories, lifecycle stages, retryability,
   HTTP status codes, and workload classes;
 - bounded, redacted exception names, messages, stacks, immediate causes, provider
@@ -151,6 +153,18 @@ producer switch and tail consumer; schema support alone does not export anything
 `GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted.
 `GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
 without granting those adapters ownership of another component's application events.
+
+When deployment telemetry is enabled, `ship.owner.connected` reports Cloudflare's country code after a personal human
+successfully authenticates over WebSocket and passes the final credential-epoch
+check. The code comes only from `request.cf.country`, never from headers, the
+sign-in frame or an adapter's server address. Unknown and Tor country values are
+omitted. The pending WebSocket attachment carries the code across hibernation;
+the connected attachment drops it. Root, machine and service sign-ins do not
+report an owner's country. Reconnects can update the observed country, which is
+an IP-based estimate and may reflect a VPN rather than residence or signup
+location. No database, migration or historical country backfill is involved.
+Device timezone is not part of this event. Deployment consumers must use this
+explicit country rather than geolocating their own export request.
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.

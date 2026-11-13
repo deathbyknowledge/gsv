@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ConnectedPeer } from "@humansandmachines/gsv/protocol";
+import { ipCountrySchema } from "@humansandmachines/gsv/telemetry";
 import { connectedPeerSchema } from "../protocol/peer-schemas";
 
 export type KernelWebSocketMessage = string | ArrayBuffer;
@@ -16,6 +17,8 @@ export type KernelConnectionState = {
   observedProcessIds?: string[];
   /** The keyed hash of the client's address, which paces its sign-in attempts. */
   source?: string;
+  /** Trusted edge country, retained only until the pending sign-in completes. */
+  country?: string;
 };
 
 const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
@@ -28,7 +31,13 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   credentialEpoch: z.number().int().nonnegative().optional(),
   observedProcessIds: z.array(z.string()).optional(),
   source: z.string().optional(),
+  country: z.optional(ipCountrySchema),
 }) satisfies z.ZodType<KernelConnectionState>;
+
+export function connectionCountry(request: Pick<Request, "cf">): string | undefined {
+  const country = ipCountrySchema.safeParse(request.cf?.country);
+  return country.success ? country.data : undefined;
+}
 
 type ConnectionAttachment<State> = {
   version: 1;
