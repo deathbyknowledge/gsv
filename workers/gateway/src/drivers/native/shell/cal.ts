@@ -443,8 +443,9 @@ function rangeOccurrences(series: Series, timeZone: string, range: TimeRange): C
   const span = eventSpan(event, timeZone);
   const length = span ? span.end - span.start : 0;
   // A changed date keeps its own length, so it is checked against the range on its own.
-  const regular = nextOccurrences(series, rule, timeZone, range.start - length, MAX_RANGE_EVENTS + 1)
-    .filter(({ start, change }) => !change && (timeAt(start, timeZone) ?? Number.POSITIVE_INFINITY) < range.end);
+  // A day of slack covers a length a clock change alters; the overlap check is exact.
+  const regular = nextOccurrences(series, rule, timeZone, range.start - length - DAY_MS, MAX_RANGE_EVENTS + 1, range.end)
+    .filter(({ change }) => !change);
   if (regular.length > MAX_RANGE_EVENTS) throw new Error(`more than ${MAX_RANGE_EVENTS} events fall in that range; give a shorter one`);
   return [
     ...regular.map(({ id, start }) => ({ ...event, start, end: shiftedEnd(event, start, length, timeZone), recurrenceId: id })),
@@ -473,7 +474,13 @@ function eventSpan(event: CalendarEvent, timeZone: string): TimeRange | undefine
   if (event.start.kind === "date") {
     return { start, end: dayStart(addDays(event.start.date, duration ? (weeks ?? 0) * 7 + (days ?? 0) : 1), timeZone) + clock };
   }
-  return { start, end: duration ? start + ((weeks ?? 0) * 7 + (days ?? 0)) * DAY_MS + clock : start };
+  if (!duration) return { start, end: start };
+  // Days and weeks are calendar days in the event's zone, so they keep its clock time across a change.
+  const zone = event.start.kind === "local" ? event.start.timeZone ?? timeZone : "UTC";
+  const wall = formatLocalTime(start, zone);
+  const dayCount = (weeks ?? 0) * 7 + (days ?? 0);
+  const afterDays = dayCount ? resolveLocalTime(`${addDays(wall.slice(0, 10), dayCount)}T${wall.slice(11, 19)}`, zone) : start;
+  return { start, end: afterDays + clock };
 }
 
 function timeAt(time: CalendarTime, timeZone: string): number | undefined {

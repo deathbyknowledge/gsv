@@ -277,9 +277,12 @@ export function nextOccurrences(
   timeZone: string,
   after: number,
   limit: number,
+  /** Stops expanding the rule at its first date not before this instant. */
+  before?: number,
 ): Occurrence[] {
   const { event, changes } = series;
   const upcoming = notBefore(after, timeZone);
+  const pastEnd = before === undefined ? undefined : notBefore(before, timeZone);
   const exceptions = [...event.skipped, ...changes.map((change) => change.recurrenceId)];
   const byDate = timesByDate(event.start, exceptions, timeZone);
   const excepted = (id: CalendarTime) => (byDate.get(wallClock(id).date) ?? [])
@@ -287,7 +290,7 @@ export function nextOccurrences(
   const found: Occurrence[] = [];
   let regular = 0;
   for (const id of repeatStarts(event.start, rule, timeZone)) {
-    if (regular >= limit) break;
+    if (regular >= limit || pastEnd?.(id)) break;
     if (!upcoming(id) || excepted(id)) continue;
     found.push({ id, start: id });
     regular += 1;

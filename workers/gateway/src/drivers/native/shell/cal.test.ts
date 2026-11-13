@@ -570,6 +570,21 @@ describe("cal show over a range", () => {
       .toEqual(["Fall back 2026-10-25"]);
   });
 
+  it("counts a timed event's days on the calendar across a clock change", async () => {
+    const cal = calShell();
+    const path = `${directory()}/visit.ics`;
+    await cal.fs.writeFile(`${HANK.home}/${path}`, [
+      "BEGIN:VCALENDAR", "VERSION:2.0",
+      "BEGIN:VEVENT", "UID:visit@example.com", "DTSTAMP:20261101T120000Z",
+      "DTSTART;TZID=Europe/Amsterdam:20260328T120000", "DURATION:P1D", "SUMMARY:Visit", "END:VEVENT",
+      "END:VCALENDAR", "",
+    ].join("\r\n"));
+
+    expect((await cal.run("show", path, "--from", "2026-03-29T12:30", "--until", "2026-03-29T13:00")).stdout).toContain("events=0\n");
+    expect(titlesAndStarts((await cal.run("show", path, "--from", "2026-03-29T11:30", "--until", "2026-03-29T12:00")).stdout))
+      .toEqual(["Visit 2026-03-28T12:00:00+01:00[Europe/Amsterdam]"]);
+  });
+
   it("refuses a range that runs backwards or past a year, and --next with a range", async () => {
     const { cal, path } = await published();
 
