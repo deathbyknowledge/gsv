@@ -1,6 +1,6 @@
 ---
-name: forward-mail
-description: Connect the owner's own inbox to Ship by forwarding (Gmail, Outlook, iCloud) and agree what Ship does with their mail. Use when they want their inbox forwarded, watched, sorted, summarized or unsubscribed.
+name: connect-email
+description: Connect the owner's own email to Ship by forwarding, and agree what Ship does with it. Use when they ask to connect, forward, watch, sort, summarize or unsubscribe from their Gmail, Outlook or other mail.
 ---
 
 # Connect the Owner's Email
