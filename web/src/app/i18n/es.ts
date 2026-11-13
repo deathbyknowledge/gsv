@@ -2204,6 +2204,7 @@ export const es = {
   "chat.composer.choose": "Elegir archivos adjuntos",
   "chat.composer.placeholder": "Escribe a tu Ship",
   "chat.composer.placeholderApproval": "sí o no, o escribe una respuesta",
+  "chat.composer.placeholderChoices": "Elige una o escribe la tuya",
   "chat.composer.offline": "{place} está sin conexión · ver conexión",
   "chat.composer.add": "Añadir al chat",
   "chat.composer.drop": "suelta para adjuntar",

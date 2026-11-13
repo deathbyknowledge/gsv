@@ -166,7 +166,8 @@ delivery and run completion are separate operations:
   characters. They are stored with the canonical Message, so every client and messenger sees the
   same ones. Instrument shows them as buttons under Ship's latest message only; once anyone writes again,
   they are gone. Work Ship does after sending the message, such as a command it runs before it ends
-  its turn, is not writing and leaves them in place. Tapping one sends its text as an ordinary message
+  its turn, is not writing and leaves them in place. While they are on offer the composer's hint says the
+  person can write their own answer instead. Tapping one sends its text as an ordinary message
   from the person, exactly as if they had typed it. Only a Process message with text can offer choices.
   A reply takes a choice when it is the choice's own words, however they are cased or spaced, or its
   number where a messenger wrote the choices as a list. The Conversation tells the Kernel which

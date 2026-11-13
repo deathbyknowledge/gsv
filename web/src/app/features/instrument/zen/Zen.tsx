@@ -1256,7 +1256,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={t(pendingHil ? "chat.composer.placeholderApproval" : "chat.composer.placeholder")}
+              placeholder={t(pendingHil ? "chat.composer.placeholderApproval"
+                : offered && !settling.has(offered) ? "chat.composer.placeholderChoices" : "chat.composer.placeholder")}
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}

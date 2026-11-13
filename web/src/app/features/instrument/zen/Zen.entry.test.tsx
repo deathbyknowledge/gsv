@@ -726,6 +726,17 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("says in the composer that they can write their own answer while replies are on offer", async () => {
+    messages = [{ ...message("process", "What fills most of your days?", 1), origin: { kind: "process", pid: shipPid, runId: "ask" },
+      processId: shipPid, runId: "ask", choices: ["Work", "Studies", "Family & home"] }];
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === "button" && node.props.class === "zen-choice")).toHaveLength(3));
+      // the replies are shortcuts, not the only way to answer
+      expect(zen.props(PromptLine).placeholder).toBe("Pick one, or write your own");
+    } finally { await zen.unmount(); }
+  });
+
   it("keeps the composer available without inventing a welcome or activity", async () => {
     const zen = await mountedZen();
     try {
