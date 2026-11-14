@@ -7,8 +7,11 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Prompt context is collected in provider order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Program context** from the run-as agent's `~/context.d/*.md`.
-3. **User context** from the human owner's `~/context.d/*.md` when the
+2. **Ship or Crew context** from `config/ai/ship/context.d/*.md` or
+   `config/ai/crew/context.d/*.md`, when the process runs as the personal
+   agent or its Crew account.
+3. **Program context** from the run-as agent's `~/context.d/*.md`.
+4. **User context** from the human owner's `~/context.d/*.md` when the
    process runs as an owned agent account.
 
 GSV can also assemble a compact skill index from layered `skills.d`
@@ -23,10 +26,43 @@ matching command, skill, target, or connected integration.
 Context files are loaded lexically within each layer, include only non-empty
 `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
+## Ship and Crew Context
+
+The Ship's role, voice, rules for speaking for the owner and the name of its
+Crew account, and the Crew's role, ship with each release. The gateway serves
+them from `config/ai/ship/context.d` and `config/ai/crew/context.d` and they
+appear in the prompt under read-only `<ship>` and `<crew>` roots, readable at
+`/sys/config/ai/ship/context.d` and `/sys/config/ai/crew/context.d`. They
+change only with a deployment, or when an operator sets those keys, and a
+change reaches every Ship at its next context epoch.
+
+```text
+config/ai/ship/context.d/00-role.md
+config/ai/ship/context.d/05-voice.md
+config/ai/ship/context.d/06-speaking-for-the-owner.md
+config/ai/ship/context.d/10-delegation.md
+config/ai/crew/context.d/00-role.md
+```
+
+`10-delegation.md` names the owner's Crew account, so the gateway fills it in
+for each Ship and leaves it out until the Crew account exists.
+
+How one person wants their Ship to communicate belongs in the Ship's own
+`~/context.d/20-voice.md`, which only the Ship loads and which overrides the
+shipped voice. Facts about the person belong in their own `~/context.d`,
+usually `10-personal.md`, which the Ship and every agent working for them load.
+
+Ship and Crew homes used to receive copies of these files. The first time a
+process loads its prompt after an upgrade, the gateway clears the copies from
+its home in one commit: a copy that matches a shipped revision is deleted, and
+an edited copy moves to `~/context.d/retired/`, where it stays readable but no
+longer loads.
+
 ## Program and User Context
 
-An agent's own `~/context.d/*.md` is program context: its role, voice, and
-compact role-local working state. The human owner's context is shared user
+An agent's own `~/context.d/*.md` is program context: the role and voice of an
+agent created with `account.create`, the Ship's voice preferences in
+`20-voice.md`, and any compact role-local working state an account keeps. The human owner's context is shared user
 context for every agent owned by that person. In an owned agent's assembled
 prompt, it appears under the editable `<user>` root even though `~` continues
 to refer to the agent's own home.
@@ -34,10 +70,8 @@ to refer to the agent's own home.
 Conventional files include:
 
 ```text
-<agent home>/context.d/00-role.md
-<agent home>/context.d/05-voice.md
-<personal agent home>/context.d/06-speaking-for-the-owner.md
-<personal agent home>/context.d/10-delegation.md
+<agent home>/context.d/05-persona.md
+<ship home>/context.d/20-voice.md
 <human home>/context.d/10-personal.md
 ```
 
@@ -51,10 +85,11 @@ responsibilities context tells the Ship to put it first while it is unresolved.
 
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work
-(`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
-execution guidance; memory instructions are shared system context; Ship's conversation instructions and voice stay
-in Ship's home. Both receive the human owner's context and access to personal
-memory through the existing account permissions.
+(`crew2`, `crew3`, etc. when names are occupied). The Crew context contains
+execution guidance; memory instructions are shared system context; Ship's
+conversation instructions and voice are Ship context. Both receive the human
+owner's context and access to personal memory through the existing account
+permissions.
 
 Ship sends its acknowledgment before detailed planning or bookkeeping, makes the
 appropriate responsibility updates, then works directly or delegates. It keeps
@@ -62,17 +97,14 @@ the user informed throughout. Its `10-delegation.md` names the
 Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
 outcomes belong in `r12y` before delegation or yielding.
 
-These are editable account defaults. Existing account names and customized context files
-are preserved. Revised defaults seed missing files; home scaffolding can also
-replace recognized, untouched Ship role seeds and retire generated local memory
-instructions now supplied by system context. Existing run-as and owner accounts
-also receive the memory cleanup before a Process requests context. Owner-edited
-files remain unchanged.
-To replace customized instructions, edit that account's context files deliberately.
-Seeding checks the repository revision before committing, preserving owner
-edits made while defaults are being prepared.
-Home scaffolding removes only exact generated versions of `00-style.md`;
-customized styles remain in place.
+The human owner's `10-personal.md` is an editable default, seeded once and then
+theirs. Home scaffolding retires generated local memory instructions now
+supplied by system context; existing run-as and owner accounts also receive
+the memory cleanup before a Process requests context. Owner-edited files remain
+unchanged. Seeding checks the repository revision before committing, preserving
+owner edits made while defaults are being prepared. Home scaffolding removes
+only exact generated versions of `00-style.md`; customized styles remain in
+place.
 
 ## Skills: `skills.d/`
 
@@ -151,7 +183,8 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use agent `~/context.d/` for concise role-local context, the human owner's
+Use the shipped Ship and Crew context for what every Ship shares, agent
+`~/context.d/` for concise role-local context, the human owner's
 `context.d/10-personal.md` for shared standing personal context, `skills.d/`
 for reusable procedures, and the human-owned `personal` wiki for durable,
 searchable personal memory.

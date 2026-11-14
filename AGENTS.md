@@ -79,7 +79,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
 
-Ship's default delegation uses an ordinary owned Crew account through `proc delegate --as`. Account homes separate conversation and execution instructions; the human owner's context and memory remain shared. Account identity selects prompt context, and children follow ordinary spawn rules.
+Ship's default delegation uses an ordinary owned Crew account through `proc delegate --as`. Read-only Ship and Crew context from each release separates conversation and execution instructions; the Ship's own home holds one person's voice preferences, and the human owner's context and memory remain shared. Account identity selects prompt context, and children follow ordinary spawn rules.
 
 Newly archived Ship slices may enqueue ordinary memory-review responsibilities. Process retains sources until the Kernel durably accepts them and transfers any remainder before teardown. Kernel owns their ordered queue independently of the replaceable pid, deduplicating and serializing admissions per owner under the configurable `memory.review` source. Ship delegates bounded review through the existing Crew and responsibility workflow. Review instructions merge evidence into current standing memory and the personal wiki; compaction never waits for that work, and worker compactions do not recursively create reviews.
 
@@ -199,7 +199,7 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 
 ### Protected prompt and context content
 
-- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `workers/gateway/src/prompts/**`.
+- Keep production prompt text, the defaults for system, Ship and Crew context (`config/ai/context.d/*`, `config/ai/{ship,crew}/context.d/*`), and seeds for account `~/context.d/*` in `workers/gateway/src/prompts/**`.
 - Write active standing defaults and standalone task prompts as Markdown files imported by TypeScript. Use `npm run review:prompts` to edit and preview them; keep runtime selection and structured event formatting in code.
 - Each standing source in `prompts/{system,ship,crew,user}/context.d/` is one complete entry. Its path defines scope and filename; keep shared instructions, including memory guidance, in system context.
 - Treat `workers/gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.

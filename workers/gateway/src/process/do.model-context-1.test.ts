@@ -511,6 +511,46 @@ describe("model context", () => {
     });
   });
 
+  it("starts a new epoch when the shipped role context changes", async () => {
+    const pid = "mech-role-context-epoch";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const result = await runInProcess(stub, async (process) => {
+      process.kernel.kernelRpc = vi.fn(async (call: string) => {
+        const responsibilityResult = responsibilityKernelResult(call);
+        if (responsibilityResult) return responsibilityResult;
+        throw new Error(`unexpected kernel call: ${call}`);
+      });
+      const configA = {
+        ...terminalTestConfig(pid),
+        roleContext: { role: "ship" as const, files: [{ name: "05-voice.md", text: "voice alpha" }] },
+      };
+      const runA = {
+        runId: "run-role-a",
+        config: configA,
+        tools: [],
+        targets: [],
+        mcpServers: [],
+        approvalPolicy: { default: "auto", rules: [] },
+      };
+      process.runs.active = runA;
+      const epochA = await process.history.ensureContextEpoch(runA.runId, runA, configA);
+      const configB = {
+        ...configA,
+        roleContext: { role: "ship" as const, files: [{ name: "05-voice.md", text: "voice beta" }] },
+      };
+      const runB = { ...runA, runId: "run-role-b", config: configB, systemPrompt: undefined };
+      process.runs.active = runB;
+      const epochB = await process.history.ensureContextEpoch(runB.runId, runB, configB);
+      return { epochA, epochB, epochs: process.store.epochs.listContextEpochs() };
+    });
+
+    expect(result.epochA.systemPrompt).toContain('<ship path="/sys/config/ai/ship/context.d/">');
+    expect(result.epochA.systemPrompt).toContain("voice alpha");
+    expect(result.epochB.systemPrompt).toContain("voice beta");
+    expect(result.epochs[0]).toMatchObject({ id: result.epochA.id, state: "closed", closeReason: "context.changed" });
+  });
+
   it("closes and archives the exact epoch when standing context changes", async () => {
     const pid = "mech-context-epoch-rotation";
     const stub = await initProcess(pid, ROOT_IDENTITY);

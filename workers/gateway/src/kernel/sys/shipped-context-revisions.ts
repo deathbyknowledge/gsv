@@ -1,0 +1,60 @@
+/**
+ * SHA-256 of every revision of the Ship and Crew context files that homes
+ * received as copies, oldest first, with the commit that shipped it. The copy
+ * of `10-delegation.md` named the Crew account, so its revisions are hashed
+ * with the default name `crew`. The cleanup deletes a copy that still matches
+ * one of these; it is cleanup input only, and can be deleted once the cleanup
+ * has run for a release or two.
+ */
+export const SHIPPED_CONTEXT_SHA256S = {
+  "ship/00-role.md": [
+    "f77709808aaa01ee2493d81c20d51b57eb6982fb839edb997a113ca2ea19b985", // 55ada9d5b
+    "dac8e2dd1bb8342d0db8007b9841f19a4c805675c464253fc00c2886bd53f706", // 8c44f5e96^
+    "07b4820049395e4a4a4e6acdb43979e8f7ac387a34572458c345469324338e3e", // 16bf5fb32
+    "1cd8dce1d75520bafca256c539b3ed4e7c20a468a9802a10ddaa305407e88438", // bac986605
+    "bcb10b4faee2843f785e26fe8d13e8b1e03d3e3580ba6334e12867bfdb9bb71f", // 0151bbcfe
+    "2bf441d79a54a9b87423c32e254bd7da95484a655ae55e95628c06fa63d962f3", // 309063f1c
+    "c80caab1459150d56c0b76b9467ab4cccedd2c5c2b84e86150f6fbe447f0ec6a", // 383632989
+    "0bc87b265122c0f1f93790fd6927879a0b902cb701242db09e4710ff89ce4b8d", // 3c0841567
+    "47a8838330830b709a4f35acedcac9dfd785f368e701895630b23a93c09a4e62", // 17916847b
+    "ea9aa89e0e8fc6bed2f8969537fc1bd0d3d0c9d57ec55feba46b4dbecbc74901", // 77a8e21be
+    "99356c685e832edb65f73d499a92bb731fd57fd6e5b9b39b04d66d88d59d59f4", // ac59bcfbc
+    "47d83547f2003c237037acb200670cada3ec4dd19ecc94969b2ddaed3c1921d5", // 8781543d7
+  ],
+  "ship/05-voice.md": [
+    "f6f7bd1deecbba3a642428d4adfb0a933780a3f6331a602e4e2e91e25041f1d2", // be54f553d
+    "be00610b5fceedf8a9d3030f81849909f758e7ee94c8d9bd012e6faf5b4377ad", // bac986605
+    "f2bbf867653b6284b7680599e4f4ce170929bcf833ac020765c3a58f265fe7da", // 7c1da552e
+    "5b89ba6afb672c171dece1fd3f0427d18622e557600baa8682d06b1deed538c3", // 309063f1c
+    "a3779bb71a9193b5b9b75723095c4873e995636893db1653f608ce183e743f30", // 89dcef8ba
+    "89ee397c403cf92fb6901b4a9d80593528696c7cb9cabcc02811e687f5c998c1", // 758d3f433
+    "1b4b999a19d5ac58f53abe9a57c8629f3c4de73310e462fad0afa946fd5941b4", // 7e4f817b0
+    "a961050410f5546e219650b196309a0b67993314363826ee7d60f6c379e1ed28", // 922070ee0
+    "4383202b9c7ac666b86a982b51c55ca99f990dc4d89221913686725cbae2beb6", // fc2aaa385
+    "4cf0288012f65866f75702ed59894eaa0d4c8fde2b2aea8edd1d81b9d04b4054", // 579f9ecc9
+    "54810b5b8cd260563bd85eb1e52376e4b09bfa6bd041b818619d4b5ba97b9eb0", // 9ae0b7fab
+    "55ece5a6c8a0d4990c454dab9650e8017c21da26bfb228d8eaa848272df163d9", // d2fde86bb
+    "0062671271a1f48839f516dd31aa903b43f008870cccfa615574c354841d8749", // ce0fac2d4
+    "75f30073daf491d77ab684c930a350b34dbcdb1426ef256f600a0b7efa4e7430", // 81db4f07b
+    "ea4ca82870336585ea2f99507e2da788edaabb4ed79de194d4185bf2f519d27b", // df98e9edc
+    "6f989aece47fc12ac75eea634e051faf99675c39299a7e5761ffb764fdffc7e8", // 17916847b
+    "ae46bcb3d9643d57c333f6cec1ed34b19b9bc16349716765f04a842672ce4973", // 20a37074d
+    "d11bd52482860b1b95d3ae5f6a2603eee6e3b67235e1211ed0fb56e75374dc45", // 8dab8e484
+    "702dca33bd46a867995054d73e1eb0635468c68f2aaa78431d918658a01c1e10", // 8781543d7
+    "734e32d2dd6d427af5462fd5bb9cf886158f579125af7bb99118b4e73f83d7a9", // fddc97d4a
+  ],
+  "ship/06-speaking-for-the-owner.md": [
+    "fc63d05420a4a79168f20c615c210927fedfb6ec8cdadc730fd5a2f53b1726eb", // fddc97d4a
+  ],
+  "ship/10-delegation.md": [
+    "49d414c1d401a580194f68ce640a63da2d1757daa93eb48e0c8bf46ffd3e5fe8", // be54f553d
+    "e65a15ba2c4fcbe4bba195205d5e3aebef38b50ee1a4092e80e6d229e43c593a", // bac986605
+  ],
+  "crew/00-role.md": [
+    "d6945257d3892c76a0510e55f26581032748020101ba260a386af27880466220", // be54f553d
+    "97901ac7e73f3d77eb2247b6cfc19fe15bb71d3353146091343e15dbaf68e6fe", // bac986605
+    "eeb9e17c546bf7cdfcd8f4b1b8ac4c3e5ba3da47f443d9993634f94f798a0e91", // 5b45677b9
+    "f50c7fb8f5362be3d976edcd9866ff7cfa6cb653fc3c3543c963201fc2125495", // 0151bbcfe
+    "4aa31ca4dbd851b5cb824f333bc75f4da4cac4cf498e6a0739961abab76235fe", // ac59bcfbc
+  ],
+} satisfies Record<string, readonly string[]>;

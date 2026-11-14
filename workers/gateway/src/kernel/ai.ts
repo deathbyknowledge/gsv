@@ -54,6 +54,7 @@ import type {
   AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
+  AiRoleContext,
   ContextFile,
 } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
@@ -96,6 +97,7 @@ import { createMediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { collectPromptSkillIndex } from "./skills";
 import { retireSeededSkills } from "./sys/seeded-skills";
+import { retireSeededRoleContext, shippedRoleContext } from "./sys/shipped-context";
 import { readOwnerApprovalPolicy } from "./approval-policy";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { ensureSharedMemoryContext } from "./account-home";
@@ -198,12 +200,14 @@ export async function handleAiContext(
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
+  const roleContext = resolveRoleContext(ctx);
   if (ctx.processId) {
     const account = requirePrincipal(ctx).account;
     await Promise.all([
       ensureSharedMemoryContext(ctx, account),
       ...(owner && owner.uid !== account.uid ? [ensureSharedMemoryContext(ctx, owner)] : []),
       retireSeededSkillsForPrompt(ctx, owner),
+      ...(roleContext ? [retireSeededRoleContextForPrompt(ctx, account, roleContext)] : []),
     ]);
   }
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
@@ -233,9 +237,28 @@ export async function handleAiContext(
     ship: shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain),
     mailbox: resolveContextMailbox(ctx),
   };
+  if (roleContext) result.roleContext = roleContext;
   if (targetDiscovery.complete) result.targets = targetDiscovery.targets.map(targetToAiTarget);
   if (skillIndex !== undefined) result.skillIndex = skillIndex;
   return result;
+}
+
+/** The shipped context for a caller running as a Ship or Crew account. */
+function resolveRoleContext(ctx: KernelContext): AiRoleContext | undefined {
+  const account = principalOf(ctx)?.account;
+  return account ? shippedRoleContext(ctx, account, resolveCallerOwnerUid(ctx)) : undefined;
+}
+
+async function retireSeededRoleContextForPrompt(
+  ctx: KernelContext,
+  account: ProcessIdentity,
+  roleContext: AiRoleContext,
+): Promise<void> {
+  try {
+    await retireSeededRoleContext(ctx, account, roleContext);
+  } catch (error) {
+    console.warn("[Prompt] failed to retire copied role context:", exceptionDiagnostics(error));
+  }
 }
 
 function resolveContextMailbox(ctx: KernelContext): AiContextResult["mailbox"] {
@@ -268,7 +291,8 @@ export async function handleAiConfig(
 
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
-  // Persona and context come from the run-as account's home (the home.context
+  // A Ship or Crew account also receives its role's shipped context; persona
+  // and other additions come from the run-as account's home (the home.context
   // provider reads /home/<account>/context.d). Tool approval is the human
   // owner's one policy, so the Ship, Crew and every child decide alike.
   const accountApprovalPolicy = readOwnerApprovalPolicy(config, principalOf(ctx) ? resolveCallerOwnerUid(ctx) : uid);
@@ -307,6 +331,8 @@ export async function handleAiConfig(
     generationStreaming: primary.generationStreaming,
     media,
   };
+  const roleContext = resolveRoleContext(ctx);
+  if (roleContext) result.roleContext = roleContext;
   if (primary.baseUrl) result.baseUrl = primary.baseUrl;
   if (textModels.missingModelId) result.missingModelId = textModels.missingModelId;
   if (primary.openAiCodex) result.openAiCodex = primary.openAiCodex;

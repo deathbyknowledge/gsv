@@ -2130,6 +2130,11 @@ export class ProcessHistory {
     } else {
       delete promptConfig.systemContextFiles;
     }
+    if (contextSnapshot.roleContext !== undefined) {
+      promptConfig.roleContext = contextSnapshot.roleContext;
+    } else {
+      delete promptConfig.roleContext;
+    }
     const baselineCopies = promptConfig.systemContextFiles?.reduce(
       (count, file) => count + countResponsibilityTemplates(file.text), 0,
     ) ?? 0;

@@ -6,7 +6,31 @@ export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
     async collect(input) {
-      return renderContextFiles(input.config.systemContextFiles, input);
+      return renderContextFiles(input.config.systemContextFiles, input, SYSTEM_ROOT);
+    },
+  };
+}
+
+const SYSTEM_ROOT: NonNullable<PromptSection["contextRoot"]> = {
+  key: "system",
+  label: "SYSTEM",
+  access: "read-only",
+  location: "/sys/config/ai/context.d",
+};
+
+/** The read-only context a release ships for the Ship or Crew role the process runs as. */
+export function createRoleContextProvider(): PromptContextProvider {
+  return {
+    name: "role.context",
+    async collect(input) {
+      const role = input.config.roleContext;
+      if (!role) return [];
+      return renderContextFiles(role.files, input, {
+        key: role.role,
+        label: role.role.toUpperCase(),
+        access: "read-only",
+        location: `/sys/config/ai/${role.role}/context.d`,
+      });
     },
   };
 }
@@ -14,6 +38,7 @@ export function createSystemContextProvider(): PromptContextProvider {
 function renderContextFiles(
   files: Array<{ name: string; text: string }> | undefined,
   input: Parameters<typeof renderContextTemplate>[1],
+  contextRoot: NonNullable<PromptSection["contextRoot"]>,
 ): PromptSection[] {
   return [...(files ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -25,12 +50,7 @@ function renderContextFiles(
       const section: PromptSection = {
         name: file.name,
         text,
-        contextRoot: {
-          key: "system",
-          label: "SYSTEM",
-          access: "read-only",
-          location: "/sys/config/ai/context.d",
-        },
+        contextRoot,
       };
       if (countResponsibilityTemplates(file.text) > 0) section.responsibilityBaseline = true;
       return section;

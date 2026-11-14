@@ -593,6 +593,82 @@ describe("handleAiConfig", () => {
     }
   });
 
+  it("serves a Ship its shipped context and clears the copies from its home once", async () => {
+    const shipped = SYSTEM_CONFIG_DEFAULTS["config/ai/ship/context.d/00-role.md"]!;
+    const files = new Map([
+      ["friday/context.d/00-role.md", shipped],
+      ["friday/context.d/05-voice.md", "# Voice\n\nAlways answer in Dutch.\n"],
+      ["friday/context.d/20-projects.md", "Ship's own notes."],
+    ]);
+    const applied: RipgitApplyOp[] = [];
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const owner = url.pathname.split("/")[3]!;
+      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "existing" }, tags: {} });
+      if (url.pathname.endsWith("/read")) {
+        const path = `${owner}/${url.searchParams.get("path")}`;
+        if (url.searchParams.get("path") === "context.d") {
+          // A directory lists its direct children; a nested file shows as its tree.
+          const entries = new Map([...files.keys()].filter((key) => key.startsWith(`${path}/`))
+            .map((key) => key.slice(path.length + 1).split("/"))
+            .map(([name, ...rest]) => [name!, rest.length > 0 ? "tree" : "blob"] as const));
+          return Response.json([...entries].map(([name, type]) => ({ name, type, mode: "100644", hash: "test" })));
+        }
+        const text = files.get(path);
+        return text === undefined ? new Response("missing", { status: 404 }) : new Response(text);
+      }
+      if (url.pathname.endsWith("/apply")) {
+        const body: { ops: RipgitApplyOp[] } = JSON.parse(String(init?.body));
+        for (const op of body.ops) {
+          applied.push(op);
+          if (op.type === "delete") files.delete(`${owner}/${op.path}`);
+          if (op.type === "move") {
+            files.set(`${owner}/${op.to}`, files.get(`${owner}/${op.from}`)!);
+            files.delete(`${owner}/${op.from}`);
+          }
+        }
+        return Response.json({ ok: true, head: "existing" });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    const shipDefaults = Object.fromEntries(Object.entries(SYSTEM_CONFIG_DEFAULTS)
+      .filter(([key]) => key.startsWith("config/ai/ship/context.d/")));
+    // SAFETY: this fixture implements the binding fetch used by RipgitClient.
+    const ripgit = { fetch } as Fetcher;
+    const ctx = makeAiConfigContext(
+      { "config/ai/skills/index_mode": "off", ...shipDefaults },
+      { uid: 2000, ownerUid: 1000, processId: "ship-process", ripgit },
+    );
+    vi.mocked(ctx.auth.isPersonalAgentUid).mockImplementation((uid: number) => uid === 2000);
+
+    const snapshot = await handleAiContext({}, ctx);
+    expect(snapshot.roleContext?.role).toBe("ship");
+    expect(applied).toEqual([
+      { type: "delete", path: "context.d/00-role.md" },
+      { type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice.md" },
+    ]);
+    applied.length = 0;
+    await handleAiContext({}, ctx);
+    expect(applied).toEqual([]);
+
+    const config = await handleAiConfig({}, ctx);
+    const rendered = await assembleSystemPromptSnapshot({
+      config: { ...config, systemContextFiles: snapshot.systemContextFiles, roleContext: snapshot.roleContext },
+      identity: principalOf(ctx)!.account,
+      ownerIdentity: config.owner!,
+      targets: [], mcpServers: [], skills: { mode: "off", entries: [] },
+      runtime: { date: "2026-11-13", timezone: "UTC" }, r12y: "",
+      ripgit: new RipgitClient(ripgit),
+      storage: { get: vi.fn(), list: vi.fn() },
+    });
+    expect(rendered.sources.filter((source) => source.contextRoot?.key !== "system").map((source) => `${source.contextRoot?.key}:${source.name}`))
+      .toEqual([
+        "ship:00-role.md", "ship:05-voice.md", "ship:06-speaking-for-the-owner.md",
+        "program:20-projects.md",
+      ]);
+    expect(rendered.prompt).not.toContain("Always answer in Dutch.");
+  });
+
   it("retries account memory reconciliation after a failed read", async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => new URL(String(input)).pathname.endsWith("/refs")
       ? Response.json({ heads: { main: "existing" }, tags: {} })
