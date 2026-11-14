@@ -279,7 +279,10 @@ System-owned producers use the same ledger contract:
   such as one from a linked messenger, activates it before Process admission;
   wake recovery is scheduled afterwards, including if admission fails. Root actions
   and messages to other work do not activate onboarding. Ship sends its welcome in
-  the owner's language and waits for a reply.
+  the owner's language and waits for a reply. The brief has Ship mark the record waiting
+  once the introduction is out and leave it waiting while the conversation continues, so
+  a reply needs no ledger update before Ship answers; Ship closes the record when
+  onboarding ends.
   The responsibility is present in Ship's first context epoch, rendered with its
   details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
