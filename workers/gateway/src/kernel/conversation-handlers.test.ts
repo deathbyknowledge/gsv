@@ -449,4 +449,29 @@ describe("conversation.send telemetry", () => {
     });
     expect(JSON.stringify(received[0])).not.toContain("hello");
   });
+
+  it("reports the offered choice a message took by its position, never its words", async () => {
+    const answers = [{ choicesOffered: 3, choiceTaken: 2 }, { choicesOffered: 3 }];
+    const append = vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input), answered: answers.shift() }));
+    getConversationByIdMock.mockReturnValue({ append });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+      type: "res", id: frame.id, ok: true, data: { ok: true, status: "started", runId: `run:${frame.args.interaction.messageId}` },
+    }));
+    const ctx = context();
+    // SAFETY: the send handler reads only the telemetry switch from its environment.
+    ctx.env = { GSV_TELEMETRY_ENABLED: "1" } as KernelContext["env"];
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    try {
+      await handleConversationSend({ conversationId: SHIP.id, text: "Find the best deal", idempotencyKey: "desktop:tap" }, ctx);
+      await handleConversationSend({ conversationId: SHIP.id, text: "Can you book me a dentist?", idempotencyKey: "desktop:typed" }, ctx);
+    } finally {
+      log.mockRestore();
+    }
+    // SAFETY: the filter keeps only records whose event name matched, so the event is present.
+    const received = emitted.filter((record: any) => record?.event?.name === "ship.message.received").map((record: any) => record.event.properties);
+    const base = { source: "client", platform: "cli", hasText: true, hasMedia: false };
+    expect(received).toEqual([{ ...base, choicesOffered: 3, choiceTaken: 2 }, { ...base, choicesOffered: 3 }]);
+    expect(JSON.stringify(emitted)).not.toContain("best deal");
+  });
 });

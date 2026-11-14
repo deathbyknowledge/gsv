@@ -473,6 +473,7 @@ async commitProcessMessage(
       };
       // A bad value would invalidate the whole record; keep the commit event and drop the timing instead.
       if (Number.isSafeInteger(args.replyMs) && args.replyMs! >= 0) properties.replyMs = args.replyMs;
+      if (message.choices?.length) properties.choicesOffered = message.choices.length;
       emitTelemetry(this.host.bindings, {
         installationId: this.host.installationId,
         component: "gateway",

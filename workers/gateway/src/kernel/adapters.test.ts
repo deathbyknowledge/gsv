@@ -1999,6 +1999,41 @@ describe("adapter lifecycle handlers", () => {
     expect(JSON.stringify(received[0])).not.toContain("remind");
   });
 
+  it("reports the offered choice a messenger reply took by its position, never its words", async () => {
+    const ctx = makeContext({ GSV_TELEMETRY_ENABLED: "1", CHANNEL_TELEGRAM: { adapterSetActivity: vi.fn(async () => ({ ok: true as const })) } }, { upsert: vi.fn() });
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => ({
+      type: "res", id: frame.id, ok: true,
+      data: frame.call === "proc.history" ? { pendingHil: null } : { ok: true, status: "started", runId: frame.args.runId, queued: false },
+    }));
+    const conversation = getConversationByIdMock.getMockImplementation()!;
+    getConversationByIdMock.mockImplementation((installationId: string, conversationId: string) => {
+      const stub = conversation(installationId, conversationId);
+      // SAFETY: the shared Conversation fixture gains only what it says this message answered.
+      return {
+        ...stub,
+        append: async (input: any) => ({ ...await stub.append(input), answered: { choicesOffered: 3, choiceTaken: 1 } }),
+      } as ReturnType<typeof sharedUtils.getConversationById>;
+    });
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    try {
+      await handleAdapterInbound({
+        adapter: "telegram", accountId: "bot",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        message: { messageId: "provider-message-choice", surface: { kind: "dm" as const, id: "chat-7" }, actor: { id: "telegram:user:7" }, text: "Plan my weekend" },
+      }, ctx);
+    } finally {
+      log.mockRestore();
+    }
+    const received = emitted.filter((record: any) => record?.event?.name === "ship.message.received");
+    expect(received).toHaveLength(1);
+    // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+    expect((received[0] as any).event.properties).toEqual({
+      source: "adapter", platform: "telegram", hasText: true, hasMedia: false, choicesOffered: 3, choiceTaken: 1,
+    });
+    expect(JSON.stringify(received[0])).not.toContain("weekend");
+  });
+
   describe("quoted replies", () => {
     const WHATSAPP_DM = { kind: "dm" as const, id: "34600000000" };
     const inbound = (message: { replyToId?: string; text?: string }) => ({

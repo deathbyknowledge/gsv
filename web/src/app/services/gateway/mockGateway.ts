@@ -7,7 +7,7 @@
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
  * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
  * Kernel does, a quiet beat, a long think, then the welcome landing whole.
- * `?fresh=calibrate` is a fresh space whose welcome is the Calibration sketch (see /calibrate below).
+ * `?fresh=starters` is a fresh space whose welcome is the starters sketch (see /starters below).
  * `?fresh=0` returns to the seeded conversation.
  * Of the config, this browser keeps only the Language preference, so Settings can switch the
  * interface language; other settings refuse to save.
@@ -28,8 +28,8 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
- *   /calibrate a sketch of a Calibration welcome: each Ship message offers replies to tap, and any
- *              answer, tapped or typed, moves it to the next step
+ *   /starters  a sketch of a welcome that opens with three things Ship can start right now: each Ship
+ *              message offers replies to tap, and any answer, tapped or typed, moves it to the next step
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
@@ -99,16 +99,16 @@ export function mockGatewayRequested(): boolean {
 }
 
 /** A fresh space sticks to the tab like the mock itself, and so does the welcome it was asked for. */
-function freshRequested(): "welcome" | "calibrate" | null {
+function freshRequested(): "welcome" | "starters" | null {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1" || asked === "calibrate") {
+    if (asked === "1" || asked === "starters") {
       window.sessionStorage.setItem(FRESH_FLAG, asked);
       window.localStorage.removeItem(FIRST_RUN_SEEN);
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     const kept = window.sessionStorage.getItem(FRESH_FLAG);
-    return kept === "calibrate" ? "calibrate" : kept === "1" ? "welcome" : null;
+    return kept === "starters" ? "starters" : kept === "1" ? "welcome" : null;
   } catch {
     return null;
   }
@@ -186,68 +186,182 @@ const SHORT_REPLY = "Done. The action items are in your notes under Mara, and th
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
 
 /*
- * The Calibration sketch: every Ship message offers replies to tap, and each answer, tapped or typed,
- * shapes the next question. Ship would write these lines itself; its brief would set only the shape.
+ * The starters sketch: the welcome offers two things Ship can start right now and a way to get to know
+ * the person first. A task is taps until a result is on screen; getting to know them is one tapped answer
+ * and one written one, then three tasks made from both. Each result ends in what Ship can do next, one of
+ * which is always keeping at it, and that is when it asks where to tell them. Ship would write these lines
+ * itself; its brief would set only the shape. The places, products and prices are made up.
  */
-type CalibrationTurn = { text: string; choices?: string[] };
+const STARTERS = ["Plan my weekend", "Don't let me forget", "Get to know me first"];
+/** One more starter, offered once a first task is done. */
+const STARTERS_LATER = "Find the best deal";
+const STARTERS_GREETING = "Hi, I'm Ship.";
+const STARTERS_FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. The brief says to greet them, offer two things I can start right now and a way to get to know them first, then mark the welcome waiting and yield.";
+const STARTERS_OFFER = "I take things off your plate and actually get them done.\n\nAnything you've been putting off? Or just tell me what's on your mind today.";
+const STARTERS_DONE = "That's all for now";
+const STARTERS_MESSENGERS = ["WhatsApp", "Telegram", "Keep it here"];
+const STARTERS_WHEN = ["Tomorrow morning", "This weekend", "Next week"];
 /** The city the browser's clock is set to, the one thing Ship knows before the first answer. */
-const CALIBRATION_CITY = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replaceAll("_", " ") ?? "Lisbon";
-/** What an answer to "what eats your week" lets Ship guess and offer; only a named answer carries a trait. */
-type CalibrationWeek = { trait?: string; guess: [text: string, trait: string]; missions: string[] };
-const CALIBRATION_WEEK = new Map<string, CalibrationWeek>([
-  ["Email", { trait: "drowning in email", guess: ["you have more than a thousand unread emails", "a thousand unread"], missions: ["A 9 am digest of what matters", "Clear out the newsletters", "Drafts for the replies I owe"] }],
-  ["Work admin", { trait: "buried in admin", guess: ["there's a form you've been putting off for weeks", "one form behind"], missions: ["Chase my open follow-ups", "Friday: next week's deadlines", "Turn my notes into to-dos"] }],
-  ["Family logistics", { trait: "runs the family logistics", guess: ["you're the one who remembers everyone's birthdays", "remembers every birthday"], missions: ["Sunday 8 pm: the week in 3 lines", "School and activity reminders", "A weekend plan for the kids"] }],
-  ["Money", { trait: "keeps the money straight", guess: ["you pay for a subscription you forgot about", "one forgotten subscription"], missions: ["Bills due this month", "Subscriptions I forgot", "A Sunday spending check"] }],
-  ["Travel", { trait: "always planning a trip", guess: ["you already have the next trip in mind", "next trip in mind"], missions: ["Watch prices for my next trip", "Plan a long weekend", "Everything I need before I fly"] }],
-]);
-const CALIBRATION_ANY_WEEK: CalibrationWeek = { guess: ["there's something you've meant to sort out for weeks", "one thing put off for weeks"], missions: ["A 9 am brief of my day", "Sunday 8 pm: the week in 3 lines", "Remind me what I promise people"] };
-const CALIBRATION_REACTIONS = new Map<string, string>([
-  ["What can you do?", "Errands, plans, reminders, inbox, research. Easier to show than tell, so let's start."],
-  ["Morning person", "Early start. I'll have things ready before you are."],
-  ["Night owl", "Noted. Nothing from me before 9 unless it's urgent."],
-  ["Depends on coffee", "Fair. I'll read the room."],
-  ["Email", "I can get your inbox down to what matters."],
-  ["Work admin", "Forms and follow-ups. That's my kind of work."],
-  ["Family logistics", "The invisible job. I can carry a lot of that."],
-  ["Money", "Bills, renewals, small leaks. I'll keep an eye on them."],
-  ["Travel", "Trips and everything around them. Easy to hand over."],
-  ["Something else", "Tell me in a word or two whenever you like."],
-  ["Yes", `${CALIBRATION_CITY} it is.`],
-  ["Somewhere else", "Tell me the city when it matters."],
-  ["Guilty", "Knew it."],
-  ["Not even close", "Noted. I'll stop guessing."],
-  ["Spot on", "Good."],
-  ["Fix something", "Tell me what's off in your own words, any time."],
-]);
-/** What Ship asks after `answers`, the replies so far in order. */
-function calibrationTurn(answers: readonly string[]): CalibrationTurn {
-  const week = CALIBRATION_WEEK.get(answers[2] ?? "") ?? CALIBRATION_ANY_WEEK;
-  switch (answers.length) {
-    case 0: return { text: "Hi, I'm Ship. Before I start working for you, let me calibrate: five quick taps, about a minute.", choices: ["Let's go", "What can you do?"] };
-    case 1: return { text: "**1 / 5** · Mornings or nights?", choices: ["Morning person", "Night owl", "Depends on coffee"] };
-    case 2: return { text: "**2 / 5** · What eats most of your week?", choices: ["Email", "Work admin", "Family logistics", "Money", "Travel", "Something else"] };
-    case 3: return { text: `**3 / 5** · Your clock says ${CALIBRATION_CITY}. Is that home?`, choices: ["Yes", "Somewhere else"] };
-    case 4: return { text: `**4 / 5** · A guess: ${week.guess[0]}.`, choices: ["Guilty", "Not even close"] };
-    case 5: return { text: "**5 / 5** · Pick one for me to take off your plate this week.", choices: week.missions };
-    case 6: {
-      const traits = [
-        { "Morning person": "morning person", "Night owl": "night owl", "Depends on coffee": "runs on coffee" }[answers[1]],
-        week.trait,
-        answers[3] === "Yes" ? CALIBRATION_CITY : undefined,
-        answers[4] === "Guilty" ? week.guess[1] : undefined,
-      ].filter((trait) => trait !== undefined);
-      return { text: `Good pick. Here's what I've got so far:\n\n> ${traits.length ? traits.join(" · ") : "not much yet, which is fine"}\n\nDid I get you right?`, choices: ["Spot on", "Fix something"] };
+function startersCity(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replaceAll("_", " ") ?? "Lisbon";
+}
+/** Two sets each, so asking for others shows something different once. */
+type StartersOption = [name: string, detail: string];
+const STARTERS_WEEKEND: StartersOption[][] = [
+  [["Rooftop pasta class at Casa Nube", "13:30 · €28"], ["Paper Lantern Market at the old tram depot", "11:00 · free"], ["Sunset concert on the Harbour Steps", "19:00 · €12"]],
+  [["Tasting walk through the Tile Quarter", "12:00 · €18"], ["Kite morning on North Beach", "10:00 · free"], ["Open-air cinema in the Botanic Garden", "21:00 · €9"]],
+];
+const STARTERS_DEALS: StartersOption[][] = [
+  [["Northwind One", "€129"], ["Halden Lite", "€89"], ["Brio Basic", "€54"]],
+  [["Kestrel Two", "€119"], ["Marlow Go", "€79"], ["Pico Mini", "€49"]],
+];
+const STARTERS_DEAL_RANKS = ["Best overall", "Best value", "Cheapest that's still good"];
+const STARTERS_DAYS = ["Work", "Studies", "Family & home"];
+const STARTERS_OTHER_TASK = "Something else";
+/** A task made for the person: its first result, the reply that keeps Ship at it, and what Ship then keeps doing. */
+type StartersTask = [label: string, result: string, keep: string, kept: string];
+/** What anyone would ask after hearing how their days go, and the three tasks Ship offers once it knows. */
+type StartersFit = { follow: string; tasks: StartersTask[] };
+const STARTERS_WEEK: StartersTask = ["Plan my week", "A first cut of your week:\n\n1. The two things that matter most, first\n2. One evening with nothing booked\n3. What can wait, parked for next week", "Plan it each Monday", "Every Monday at 8:00 I'll send you the week, with what slipped from the last one."];
+/** One for each of STARTERS_DAYS, in that order. */
+const STARTERS_FITS: StartersFit[] = [
+  { follow: "What do you do?", tasks: [
+    STARTERS_WEEK,
+    ["Follow-up reminders", "Three follow-ups people lose track of:\n\n1. Quotes sent and never answered\n2. Invoices past their date\n3. Introductions you promised\n\nGive me yours and I'll hold them.", "Chase them weekly", "Every Thursday I'll tell you who still owes you an answer."],
+    ["Find new clients", "Three places to look this week:\n\n1. **Northside Makers Fair** · stalls open until Friday\n2. **Harbour Business Breakfast** · Tuesday 8:00\n3. **Tile Quarter directory** · free listing", "Watch for more", "I'll look every week and tell you when something new fits."],
+  ] },
+  { follow: "What are you studying?", tasks: [
+    ["Plan my exam weeks", "A first plan, working back from the exams:\n\n1. **Three weeks out**: one pass through every topic\n2. **Two weeks out**: past papers, timed\n3. **Last week**: only what you got wrong", "Keep me on track", "Every evening I'll ask what you covered and move the plan when a day slips."],
+    ["Deadline reminders", "Give me the dates and I'll hold them. Three I'd set for each:\n\n1. A week before it's due\n2. The evening before\n3. The morning itself, until it's handed in", "Set all three", "I'll remind you a week ahead and the evening before, and keep asking until it's handed in."],
+    ["Find practice exams", "Three sets to practise on:\n\n1. **Open Course Bank** · 240 questions with answers\n2. **Past Papers Library** · five years, timed\n3. **Study Circle drills** · 20 a day", "Daily 10 questions", "Every day at 18:00 I'll send you ten, weighted to what you get wrong."],
+  ] },
+  { follow: "Who's at home?", tasks: [
+    ["Plan a family Sunday", "Three for Sunday that work with children:\n\n1. **Puppet morning at the old tram depot** · 11:00 · €6\n2. **Kite field on North Beach** · all day · free\n3. **Pancake workshop at Casa Nube** · 16:00 · €12", "Plan every weekend", "Every Thursday I'll send you three ideas for the weekend."],
+    ["Meal plan this week", "Five dinners from one shop:\n\n1. **Mon** tomato rice · **Tue** oven fish\n2. **Wed** lentil soup · **Thu** omelette night\n3. **Fri** homemade pizza", "Plan it every week", "Every Saturday morning I'll send next week's dinners and the shopping list."],
+    ["Birthday reminders", "Give me the names and dates and I'll hold them. For each one:\n\n1. Two weeks before, with gift ideas\n2. Three days before, in case nothing is bought\n3. On the morning itself", "Set them up", "I'll remind you two weeks before each one, with ideas, and again on the day."],
+  ] },
+];
+/** When they describe their days in their own words. */
+const STARTERS_FIT_OTHER: StartersFit = { follow: "What does a normal week look like?", tasks: [
+  STARTERS_WEEK,
+  ["Keep me on track", "Tell me the one thing you want done this month and I'll break it down:\n\n1. This week's step\n2. What could get in the way\n3. When I check in", "Check in weekly", "Every Sunday evening I'll ask how it went and set the next step."],
+  ["Find it for me", "Tell me what you've been meaning to look up. Three things people hand me:\n\n1. The best option under a budget\n2. What's on nearby\n3. Who to call for a repair", "Keep looking", "I'll keep looking and tell you when something better turns up."],
+] };
+
+type StartersStep = "opener" | "weekend-where" | "weekend-city" | "weekend-result" | "deal-what" | "deal-result" | "remember-what" | "remember-when" | "know-days" | "know-more" | "know-tasks" | "know-result" | "messenger" | "more";
+/** Where the sketch stands: the question on offer, the starters already taken, what the current one is about, which set of results (or which fitted task) is showing, and the tasks made for the person. */
+type StartersState = { step: StartersStep; used: readonly string[]; subject: string; round: number; fit?: StartersFit };
+/** What Ship sends next: an optional progress line first, in the same run, then the message and its replies. */
+type StartersTurn = { progress?: string; text: string; choices?: string[] };
+type StartersMove = { turn: StartersTurn; next: StartersState | null };
+const STARTERS_OPENER: StartersState = { step: "opener", used: [], subject: "", round: 0 };
+
+function startersWeekend(state: StartersState): StartersTurn {
+  const options = STARTERS_WEEKEND[state.round % STARTERS_WEEKEND.length];
+  const lines = options.map(([name, detail], index) => `${index + 1}. **${name}** · ${detail}`);
+  return { text: `Three for Saturday in ${state.subject}:\n\n${lines.join("\n")}\n\nWhat next?`, choices: ["Book the first", "Remind me Friday", "Other ideas"] };
+}
+
+function startersDeals(state: StartersState): StartersTurn {
+  const options = STARTERS_DEALS[state.round % STARTERS_DEALS.length];
+  const lines = options.map(([name, detail], index) => `${index + 1}. **${STARTERS_DEAL_RANKS[index]}**: ${name} · ${detail}`);
+  return { text: `Three picks for ${state.subject}:\n\n${lines.join("\n")}\n\nWhat next?`, choices: ["Watch the price", "Buy the first", "Other options"] };
+}
+
+/** What Ship does with `answer`, tapped or typed, at the step `state` is on. */
+function startersMove(state: StartersState, answer: string): StartersMove {
+  const said = answer.trim();
+  const picked = (choice: string) => said.toLowerCase() === choice.toLowerCase();
+  /* every first task ends in something Ship keeps doing, so it ends by asking where to report */
+  const askWhere = (line: string): StartersMove => ({
+    turn: { text: `${line} Where should I tell you?`, choices: STARTERS_MESSENGERS },
+    next: { ...state, step: "messenger" },
+  });
+  const begin = (starter: string, step: StartersStep, subject = ""): StartersState => ({ step, used: [...state.used, starter], subject, round: 0 });
+  const weekendIn = (city: string): StartersMove => {
+    const next: StartersState = { ...state, step: "weekend-result", subject: city };
+    return { turn: { progress: `Looking at what's on in ${city} this weekend…`, ...startersWeekend(next) }, next };
+  };
+  const fit = state.fit ?? STARTERS_FIT_OTHER;
+  const fitted = fit.tasks.map(([label]) => label);
+  switch (state.step) {
+    case "opener":
+    case "more":
+      if (state.step === "more" && picked(STARTERS_DONE)) return { turn: { text: "All set. I'm here when you need me." }, next: null };
+      if (picked(STARTERS[0])) return { turn: { text: "Where will you be?", choices: [startersCity(), "Somewhere else"] }, next: begin(STARTERS[0], "weekend-where") };
+      if (picked(STARTERS[1])) return { turn: { text: "What's the thing?" }, next: begin(STARTERS[1], "remember-what") };
+      if (picked(STARTERS[2])) return { turn: { text: "Gladly. What fills most of your days?", choices: STARTERS_DAYS }, next: begin(STARTERS[2], "know-days") };
+      if (picked(STARTERS_LATER)) return { turn: { text: "What are you looking to buy?" }, next: begin(STARTERS_LATER, "deal-what") };
+      /* anything else they write is the thing itself, and Ship keeps hold of it */
+      return { turn: { text: "When should I bring it up?", choices: STARTERS_WHEN }, next: begin(STARTERS[1], "remember-when", said) };
+    case "know-days": {
+      /* the next question follows from their answer, and only they know the answer to it */
+      const day = STARTERS_DAYS.findIndex(picked);
+      const next = day < 0 ? STARTERS_FIT_OTHER : STARTERS_FITS[day];
+      return { turn: { text: `${day < 0 ? "Got it." : `${STARTERS_DAYS[day]} it is.`} ${next.follow}` }, next: { ...state, step: "know-more", fit: next } };
     }
-    case 7: return { text: "Last one. Where should I reach you?", choices: ["WhatsApp", "Telegram", "Right here"] };
-    default: {
-      const there = answers[7] === "WhatsApp" || answers[7] === "Telegram" ? `on ${answers[7]}` : "here";
-      return { text: `Calibrated. First up: **${answers[5]}**. I'll send it ${there}, and you can change anything just by telling me.` };
+    case "know-more":
+      return { turn: { text: `${said}: that I can work with.\n\nWhere do we start?`, choices: fitted }, next: { ...state, step: "know-tasks", subject: said } };
+    case "know-tasks": {
+      const task = fit.tasks.findIndex(([label]) => picked(label));
+      if (task < 0) return askWhere("Noted. I'll work that in and come back with it sorted.");
+      const [, result, keep] = fit.tasks[task];
+      return { turn: { text: `${result}\n\nWhat next?`, choices: [keep, STARTERS_OTHER_TASK] }, next: { ...state, step: "know-result", round: task } };
+    }
+    case "know-result": {
+      const [, , keep, kept] = fit.tasks[state.round];
+      if (picked(keep)) return askWhere(kept);
+      if (picked(STARTERS_OTHER_TASK)) return { turn: { text: "Sure. Which one instead?", choices: fitted }, next: { ...state, step: "know-tasks" } };
+      return askWhere("Noted. I'll work that in and come back with it sorted.");
+    }
+    case "weekend-where":
+      return picked("Somewhere else") ? { turn: { text: "Which city?" }, next: { ...state, step: "weekend-city" } } : weekendIn(said);
+    case "weekend-city":
+      return weekendIn(said);
+    case "weekend-result": {
+      if (picked("Other ideas")) {
+        const next: StartersState = { ...state, round: state.round + 1 };
+        return { turn: startersWeekend(next), next };
+      }
+      if (picked("Remind me Friday")) return askWhere("Friday at 18:00 I'll send you the plan, and I'll check the forecast first.");
+      const [first] = STARTERS_WEEKEND[state.round % STARTERS_WEEKEND.length][0];
+      if (picked("Book the first")) return askWhere(`I'll get the booking for **${first}** ready and hand you the last step to confirm.`);
+      return askWhere("Noted. I'll work that in and come back with it sorted.");
+    }
+    case "deal-what": {
+      const next: StartersState = { ...state, step: "deal-result", subject: said };
+      return { turn: { progress: `Comparing prices and reviews for ${said}…`, ...startersDeals(next) }, next };
+    }
+    case "deal-result": {
+      if (picked("Other options")) {
+        const next: StartersState = { ...state, round: state.round + 1 };
+        return { turn: startersDeals(next), next };
+      }
+      if (picked("Watch the price")) return askWhere("I'll check every morning and tell you the moment it drops.");
+      const [first] = STARTERS_DEALS[state.round % STARTERS_DEALS.length][0];
+      if (picked("Buy the first")) return askWhere(`I'll get the order for the **${first}** ready and hand you the payment to confirm.`);
+      return askWhere("Noted. I'll work that in and come back with it sorted.");
+    }
+    case "remember-what":
+      return { turn: { text: "When should I bring it up?", choices: STARTERS_WHEN }, next: { ...state, step: "remember-when", subject: said } };
+    case "remember-when": {
+      const when = STARTERS_WHEN.find(picked)?.toLowerCase() ?? said;
+      return askWhere(`Got it. I'll bring it up ${when} and keep asking until it's done.`);
+    }
+    case "messenger": {
+      const where = picked("WhatsApp") ? "on WhatsApp" : picked("Telegram") ? "on Telegram" : "here";
+      /* two more at most, so the replies still fit a messenger's buttons; getting to know them comes first when they skipped it */
+      const remaining = [STARTERS[2], STARTERS_LATER, STARTERS[0], STARTERS[1]].filter((starter) => !state.used.includes(starter)).slice(0, 2);
+      if (remaining.length === 0) return { turn: { text: `Done. You'll hear from me ${where}.\n\nTell me anything else whenever you like.` }, next: null };
+      return {
+        turn: { text: `Done. You'll hear from me ${where}.\n\nWant me to take something else?`, choices: [...remaining, STARTERS_DONE] },
+        next: { ...state, step: "more" },
+      };
     }
   }
 }
-/** The replies to the mock Calibration so far, or null when none is running. */
-let calibration: string[] | null = null;
+/** Where the mock starters sketch stands, or null when none is running. */
+let starters: StartersState | null = null;
 const LONG_REPLY = [
   "Here is where things stand with the studio backup.",
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
@@ -981,15 +1095,31 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     if (live(run)) await send(run, long ? RUN_LONG_REPLY : RUN_REPLY, true);
     return;
   }
-  if (trigger === "/calibrate" || calibration !== null) {
-    const answer = question(run);
-    const answers = trigger === "/calibrate" || !calibration ? [] : [...calibration, answer];
-    const next = calibrationTurn(answers);
-    calibration = next.choices ? answers : null;
+  if (trigger === "/starters") {
+    starters = null;
     await wait(jitter(900));
     if (!live(run)) return;
-    const reaction = answers.length > 0 && next.choices ? CALIBRATION_REACTIONS.get(answer) : undefined;
-    await send(run, reaction ? `${reaction}\n\n${next.text}` : next.text, true, true, next.choices);
+    await send(run, STARTERS_GREETING, false, false);
+    await wait(jitter(1500));
+    if (!live(run)) return;
+    await send(run, STARTERS_OFFER, true, true, STARTERS);
+    // an interrupted opener offered nothing, so there is nothing to answer yet
+    if (!run.superseded) starters = STARTERS_OPENER;
+    return;
+  }
+  if (starters !== null) {
+    const move = startersMove(starters, question(run));
+    await wait(jitter(900));
+    if (!live(run)) return;
+    if (move.turn.progress) {
+      // Ship says what it is doing and keeps working: the result lands in the same run
+      await send(run, move.turn.progress, true, false);
+      await wait(jitter(2000));
+      if (!live(run)) return;
+    }
+    await send(run, move.turn.text, true, true, move.turn.choices);
+    // the sketch moves on only once its message landed; an interrupted turn is answered again
+    if (!run.superseded) starters = move.next;
     return;
   }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
@@ -1000,6 +1130,16 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
 /** What the person answered in the message that opened this run, as they wrote or tapped it. */
 function question(run: OpenRun): string {
   return run.question?.text.trim() ?? "";
+}
+
+/** After its opener the welcome marks itself waiting: work that follows the question without being a message, so its replies stay on offer. */
+function startersWaiting(): Step {
+  const command = "r12y update 1 --json '{\"state\":\"waiting\",\"blocker\":\"Waiting for the user to reply\"}'";
+  return {
+    think: "", thought: "They have not written yet. Mark the welcome waiting for their reply, then yield.",
+    purpose: "note that the welcome is waiting for your reply", place: "gsv", tool: "Shell", syscall: "shell.exec",
+    args: { input: command }, ms: 500, output: shell(command, "{\"revision\":3}"),
+  };
 }
 
 /**
@@ -1018,24 +1158,39 @@ async function wake(): Promise<void> {
   changed(["context"], { context: contextState(run) });
   await wait(jitter(2500));
   if (!live(run)) return;
+  const thought = fresh === "starters" ? STARTERS_FIRST_THOUGHT : FIRST_THOUGHT;
   const content: AssistantContent[] = [{ type: "thinking", thinking: "" }];
   stream(run, { type: "thinking_start", contentIndex: 0, partial: partial(content) });
-  for (const piece of FIRST_THOUGHT.split(/(?<=[,.;] )/)) {
+  for (const piece of thought.split(/(?<=[,.;] )/)) {
     await wait(jitter(700));
     if (!live(run)) return;
     content[0] = { type: "thinking", thinking: `${thinkingBlock.parse(content[0]).thinking}${piece}` };
     stream(run, { type: "thinking_delta", contentIndex: 0, delta: piece, partial: partial(content) });
   }
-  stream(run, { type: "thinking_end", contentIndex: 0, content: FIRST_THOUGHT, partial: partial(content) });
+  stream(run, { type: "thinking_end", contentIndex: 0, content: thought, partial: partial(content) });
   await wait(jitter(800));
   if (!live(run)) return;
-  // No routed client, so nothing streams: the welcome lands whole, a plain first message with no receipt under it.
-  const welcome: CalibrationTurn = fresh === "calibrate" ? calibrationTurn([]) : { text: WELCOME };
-  if (welcome.choices) calibration = [];
-  const message = record("ship", welcome.text, Date.now(), run.runId, welcome.choices);
-  broadcast("message.committed", { message, directed: false });
-  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: welcome.text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
-  finishRun(run, welcome.text);
+  // No routed client, so nothing streams: a welcome message lands whole, with no receipt under it.
+  const land = (text: string, choices?: string[]): void => {
+    const message = record("ship", text, Date.now(), run.runId, choices);
+    broadcast("message.committed", { message, directed: false });
+    appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}-${message.sequence}` } }]);
+  };
+  if (fresh !== "starters") {
+    land(WELCOME);
+    finishRun(run, WELCOME);
+    return;
+  }
+  // The starters welcome is two messages in the one run, then the step the brief asks for after them.
+  land(STARTERS_GREETING);
+  changed(["messages"], { runId: run.runId, messageId: world.messageId });
+  await wait(jitter(1500));
+  if (!live(run)) return;
+  land(STARTERS_OFFER, STARTERS);
+  starters = STARTERS_OPENER;
+  changed(["messages"], { runId: run.runId, messageId: world.messageId });
+  await play(run, startersWaiting());
+  if (live(run)) finishRun(run, null);
 }
 
 /** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */

@@ -480,8 +480,38 @@ describe("onboarding funnel events", () => {
     assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
   });
 
+  it("counts the choices a Ship message offers, never their words", () => {
+    const committed = { delivery: "client", hasMedia: false, platform: "web" };
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 3 }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 10 }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 0 }).success, false);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 11 }).success, false);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choices: ["Plan my weekend"] }).success, false);
+  });
+
+  it("reports which offered choice a person's message took by position only", () => {
+    const received = { source: "client", platform: "phone", hasText: true, hasMedia: false };
+    // answered a message offering three choices with the second one
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 2 }).success, true);
+    // answered it by writing something else
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3 }).success, true);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 0 }).success, false);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 11 }).success, false);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: "Plan my weekend" }).success, false);
+  });
+
+  it("reports how the welcome ended from a closed list, with the time it took", () => {
+    for (const outcome of ["connected", "messenger_declined", "declined", "cancelled", "other"]) {
+      assert.equal(record("gateway", "onboarding.welcome.finished", { outcome, durationMs: 420_000 }).success, true);
+    }
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "booked a table", durationMs: 1 }).success, false);
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "connected" }).success, false);
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "connected", durationMs: 1, resolution: { outcome: "connected" } }).success, false);
+  });
+
   it("keeps each funnel event with its owning component", () => {
     assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
     assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);
+    assert.equal(record("accounts", "onboarding.welcome.finished", { outcome: "connected", durationMs: 1 }).success, false);
   });
 });

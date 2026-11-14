@@ -574,7 +574,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid, updated) => {
+      this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed");
+      // However the welcome's record ends, it is reported once. Tracked even with telemetry off, like its delivery.
+      const finished = updated ? this.welcome.markWelcomeFinished(updated) : null;
+      if (finished) {
+        emitTelemetry(this.bindings, {
+          installationId: this.installationId, component: "gateway",
+          event: { stream: "product", name: "onboarding.welcome.finished", properties: finished },
+        });
+      }
+    });
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.

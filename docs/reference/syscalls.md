@@ -934,7 +934,11 @@ type ConversationMessage = {
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
-  /** Replies a Process message offers; tapping one sends its text as the person's next message. */
+  /**
+   * Replies a Process message offers; tapping one sends its text as the person's next message.
+   * `messageChoiceTaken` in the protocol package tells which one a reply takes, counted from 1:
+   * the choice's own words, or its number where a messenger wrote the choices as a list.
+   */
   choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;

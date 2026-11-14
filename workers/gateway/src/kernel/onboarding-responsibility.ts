@@ -1,4 +1,5 @@
 import type { JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import type { OnboardingWelcomeOutcome } from "@humansandmachines/gsv/telemetry";
 
 import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityStore } from "./responsibility-store";
@@ -12,6 +13,8 @@ type OnboardingState = {
   activatedAtMs?: number;
   /** When the first Ship message after that activation was accepted. */
   welcomedAtMs?: number;
+  /** When the welcome responsibility was first resolved or cancelled. */
+  finishedAtMs?: number;
 };
 
 export const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
@@ -132,6 +135,27 @@ export class InitialOnboarding {
     if (state?.activatedAtMs === undefined || state.welcomedAtMs !== undefined) return null;
     this.storage.kv.put(key, { ...state, welcomedAtMs: now });
     return Math.max(0, now - state.activatedAtMs);
+  }
+
+  /**
+   * Record the welcome reaching its end and return how it ended with the time since it opened, once
+   * per owner. Any other record, a welcome still in progress, a later ending after it was reopened,
+   * and an owner whose welcome predates this record return null.
+   */
+  markWelcomeFinished(record: ResponsibilityRecord): { outcome: OnboardingWelcomeOutcome; durationMs: number } | null {
+    if (record.dedupeKey !== INITIAL_ONBOARDING_DEDUPE_KEY || record.resolvedAtMs === undefined) return null;
+    const key = `initial-onboarding:${record.ownerUid}`;
+    const state = this.storage.kv.get<OnboardingState>(key);
+    if (state?.activatedAtMs === undefined || state.finishedAtMs !== undefined) return null;
+    this.storage.kv.put(key, { ...state, finishedAtMs: record.resolvedAtMs });
+    // Only the outcomes the welcome names are reported; whatever else Ship wrote stays in the ledger.
+    const named = record.resolution?.outcome;
+    const outcome: OnboardingWelcomeOutcome = record.state === "cancelled"
+      ? "cancelled"
+      : named === "connected" || named === "declined"
+        ? named
+        : named === "messenger-declined" ? "messenger_declined" : "other";
+    return { outcome, durationMs: Math.max(0, record.resolvedAtMs - state.activatedAtMs) };
   }
 }
 
