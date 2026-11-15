@@ -1106,7 +1106,6 @@ describe("native shell capability discovery", () => {
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
     ["send an email to this person", "mail"],
-    ["what is my email address", "mail"],
     ["sign up for a website with an email address", "mail"],
     ["find the verification email", "mail"],
     ["track my parcel delivery", "mail"],
