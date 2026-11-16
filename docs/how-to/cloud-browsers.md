@@ -97,7 +97,8 @@ If the browser fails before one of those saves, changes since the last save are
 lost. Each save reads only the sites that had a page open since the previous
 save, and every other site keeps its saved data, so saving takes as long as the
 sites you used rather than every site the browser remembers. Closing a website
-tab does not forget its saved data. Restore completes
+tab does not forget its saved data. Saves and restores visit several sites at
+once, and a restore skips sites with nothing stored. Restore completes
 before the next browser becomes ready. If restore fails, that start fails
 visibly rather than opening an empty replacement.
 

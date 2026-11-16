@@ -7,6 +7,11 @@ type StorageSummarySource = {
   indexedDB?: { name: string; stores: { records: JsonValue[] }[] }[];
 };
 
+/** Whether a saved site holds anything a restore must write. */
+export function hasBrowserStorage(site: StorageSummarySource): boolean {
+  return site.localStorage.length > 0 || (site.indexedDB?.length ?? 0) > 0;
+}
+
 /** Bounds the entire metadata value independently of the saved state allowance. */
 export function boundBrowserStorageUsage(usage: BrowserStorageUsage): BrowserStorageUsage {
   const size = (value: JsonValue) => new TextEncoder().encode(JSON.stringify(value)).byteLength;

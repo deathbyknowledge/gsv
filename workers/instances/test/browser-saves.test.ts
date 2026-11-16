@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import type { Browser, BrowserContext, CDPSession, Frame, Page } from "@cloudflare/playwright";
 import { expect, it } from "vitest";
 import { CloudBrowser } from "../src/browser";
+import { exportBrowserStorage, restoreBrowserStorage } from "../src/browser-storage";
 import { InstanceStore } from "../src/store";
 
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 1000, maxInstanceSeconds: 600, savedProfiles: 2, profileStorageBytes: 5242880 };
@@ -20,19 +21,28 @@ it("reads only sites with a page open since the last save, and rereads them afte
     let navigated: ((value: Frame) => void) | undefined;
     const navigate = (next: string) => { url = next; navigated!(frame(next)); };
     const read: string[] = [];
-    const site = () => ({ origin: read.at(-1), bytes: 2, localStorageBytes: 2, indexedDBBytes: 2, localStorageEntries: 0, databases: 0, records: 0 });
+    const site = (origin: string) => ({ origin, bytes: 2, localStorageBytes: 2, indexedDBBytes: 2, localStorageEntries: 0, databases: 0, records: 0 });
     // SAFETY: Saving needs only the open tab's frame URLs and navigation events.
     const tab = { isClosed: () => false, frames: () => [frame(url)], on: (event: string, listener: (value: Frame) => void) => { if (event === "framenavigated") navigated = listener; } } as Page;
-    // SAFETY: Export needs only navigation, evaluation and closing from its private page.
-    const exporter = { route: async () => {}, goto: async (origin: string) => { read.push(origin); return null; }, evaluate: async () => ({ summary: site(), json: JSON.stringify({ origin: read.at(-1), localStorage: [] }) }), isClosed: () => false, close: async () => {} } as Page;
+    const exporter = () => {
+      let current = "";
+      // SAFETY: Export needs only interception, navigation, evaluation and closing from its private pages.
+      return { route: async () => {}, goto: async (origin: string) => { current = origin; read.push(origin); return null; }, evaluate: async () => ({ summary: site(current), json: JSON.stringify({ origin: current, localStorage: [] }) }), isClosed: () => false, close: async () => {} } as Page;
+    };
     // SAFETY: Target metadata identifies the attached context and the exporter's page.
     const cdp = { send: async () => ({ targetInfo: { targetId: "live", browserContextId: "context", title: "Account", url } }), detach: async () => {} } as CDPSession;
     // SAFETY: This context supplies attachment, tab enumeration and storage export.
-    const context = { pages: () => [tab], newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {}, cookies: async () => [], newPage: async () => exporter } as BrowserContext;
+    const context = { pages: () => [tab], newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {}, cookies: async () => [], newPage: async () => exporter() } as BrowserContext;
     // SAFETY: The browser is already attached and only enumerates its existing contexts.
     const attach = () => CloudBrowser.fromConnection({ contexts: () => [context] } as Browser, record, store);
     let browser = await attach();
-    const save = async () => { read.length = 0; return browser.save(10000, new AbortController().signal); };
+    const save = async () => {
+      read.length = 0;
+      const snapshot = await browser.save(10000, new AbortController().signal);
+      read.sort();
+      expect(snapshot.state.origins.map(entry => entry.origin)).toEqual(read);
+      return snapshot;
+    };
 
     await save();
     expect(read).toEqual([a, b, c, d]);
@@ -59,4 +69,51 @@ it("reads only sites with a page open since the last save, and rereads them afte
     await save();
     expect(read).toEqual([]);
   });
+});
+
+it("restores several sites at once and skips sites with nothing stored", async () => {
+  let loading = 0, most = 0;
+  const visited: string[] = [];
+  const page = () => {
+    // SAFETY: Restore needs only interception, navigation, evaluation and closing from its pages.
+    return { route: async () => {}, goto: async (origin: string) => {
+      visited.push(origin);
+      most = Math.max(most, ++loading);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      loading--;
+      return null;
+    }, evaluate: async () => undefined, isClosed: () => false, close: async () => {} } as Page;
+  };
+  // SAFETY: Restore needs only cookies and new pages from a fresh context.
+  const context = { addCookies: async () => {}, newPage: async () => page() } as BrowserContext;
+  const sites = Array.from({ length: 8 }, (_, n) => ({ origin: `https://${n}.example`, localStorage: [{ name: "session", value: `${n}` }] }));
+  await restoreBrowserStorage(context, { cookies: [], origins: [...sites, { origin: "https://empty.example", localStorage: [] }] });
+  expect(most).toBeGreaterThan(1);
+  expect(visited.sort()).toEqual(sites.map(value => value.origin).sort());
+});
+
+it("keeps site data in flight within the allowance and reads a larger site again alone", async () => {
+  const sizes = new Map([["https://large.example", 600], ...Array.from({ length: 7 }, (_, n): [string, number] => [`https://${n}.example`, 40])]);
+  let inFlight = 0, most = 0;
+  const page = () => {
+    let current = "";
+    // SAFETY: Export needs only interception, navigation, evaluation and closing from its pages.
+    return { route: async () => {}, goto: async (origin: string) => { current = origin; return null; }, evaluate: async (expression: string) => {
+      const budget = Number(/collect\(true, (\d+)\)/.exec(expression)?.[1]);
+      most = Math.max(most, inFlight += budget);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight -= budget;
+      const bytes = sizes.get(current)!;
+      if (bytes > budget) return { minimumBytes: bytes };
+      return { summary: { origin: current, bytes, localStorageBytes: bytes, indexedDBBytes: 0, localStorageEntries: 1, databases: 0, records: 0 }, json: JSON.stringify({ origin: current, localStorage: [] }) };
+    }, isClosed: () => false, close: async () => {} } as Page;
+  };
+  // SAFETY: Export pages report only their target identity and accept a service worker bypass.
+  const cdp = { send: async () => ({ targetInfo: { targetId: "export" } }) } as CDPSession;
+  // SAFETY: Export needs only cookies, new pages and their debugger sessions.
+  const context = { cookies: async () => [], newPage: async () => page(), newCDPSession: async () => cdp } as BrowserContext;
+  const snapshot = await exportBrowserStorage(context, [...sizes.keys()], 1000, new AbortController().signal, new Set());
+  expect(most).toBeLessThanOrEqual(1000);
+  expect(snapshot.state.origins.map(entry => entry.origin)).toEqual([...sizes.keys()].sort());
+  expect(snapshot.usage.complete).toBe(true);
 });
