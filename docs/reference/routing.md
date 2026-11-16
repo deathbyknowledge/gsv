@@ -30,6 +30,7 @@ reactivation.
 |---|---|---|---|
 | CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler or target provider |
 | Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or target provider |
+| Agent process, answered on the call | `Kernel.requestProcessFrame(pid, frame)` | process identity and syscall | Kernel handler or target provider |
 | Adapter worker | `adapter.inbound` syscall | linked actor identity, Ship selection, or shared-surface route | Personal controller or routed work/surface process |
 | Device driver | WebSocket response frame | persisted route id | Original client or process |
 
@@ -75,6 +76,8 @@ Before forwarding to a device, the Kernel checks:
 - A live driver WebSocket exists for the device id.
 
 Forwarded calls are stored in the Kernel SQLite `routing_table` with the call id, syscall, origin, target device, and timeout schedule. When the device responds, the Kernel consumes the route and returns the response to the original origin. If the route expires first, the origin receives a `504` timeout response.
+
+A Process tool call sent through `recvFrame` gets its routed answer later, as a frame delivered to the Process. A Process call that needs the answer before it can continue, such as reading a file that a Send attaches, uses `requestProcessFrame` instead. That call has the same grant, approval target and ledger line, and the Kernel waits for the device's answer and returns it on the call. The Process cancels the call by request id, and the Kernel then cancels it on the device.
 
 Shell continuations use a second durable session mapping. A routed shell start
 that returns `status: "running"` records its `sessionId` and owning device.

@@ -5,9 +5,10 @@ import {
   jsonValueSchema, type AiConfigResult, type JsonObject, type NetFetchArgs,
 } from "@humansandmachines/gsv/protocol";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
-import type { Frame, FrameBody, RequestFrame, ResponseOkFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import {
-  cancelProcessRequests, getKernelPtr, requestProcessNetFetch, sendFrameToKernel, type RequestProcessNetFetchOptions,
+  cancelProcessRequests, getKernelPtr, requestFromKernel, requestProcessNetFetch, sendFrameToKernel,
+  type RequestProcessNetFetchOptions,
 } from "../shared/utils";
 import { cancelResponseBody } from "./internal/messages";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
@@ -49,6 +50,11 @@ export class ProcessKernelClient {
     return kernel.allowProcessTool(this.host.pid, allow);
   }
 
+  /**
+   * One syscall answered on this call, wherever it runs: a call routed to a
+   * target is awaited until the target answers, and cancelling the signal
+   * cancels it there.
+   */
   async kernelRpc<T extends SyscallName>(
     call: T,
     args: ArgsOf<T>,
@@ -60,10 +66,10 @@ export class ProcessKernelClient {
     const pid = this.host.pid;
     const id = requestId ?? crypto.randomUUID();
     const frame: RequestFrame<T> = { type: "req", id, call, args };
-    const pending = sendFrameToKernel(this.host.installationId, pid, frame, approvedTarget);
+    const pending = requestFromKernel(this.host.installationId, pid, frame, approvedTarget);
     const cancellationReason = () =>
       signal?.reason instanceof Error ? signal.reason.message : "Request cancelled";
-    const response: Frame | null = await raceWithAbort(pending, signal, {
+    const response: ResponseFrame<T> = await raceWithAbort(pending, signal, {
       onAbort: () => this.host.startBackground(
         `Kernel request cancellation for ${id}`,
         cancelProcessRequests(
@@ -74,21 +80,18 @@ export class ProcessKernelClient {
         ).catch(() => 0),
       ),
       onLateResolve: (late) => {
-        if (late?.type === "res") void cancelResponseBody(late, cancellationReason());
+        void cancelResponseBody(late, cancellationReason());
       },
     });
 
-    if (!response || response.type !== "res") {
-      throw new Error(`No synchronous response for ${call}`);
-    }
     if (!response.ok) {
       throw new Error(response.error.message);
     }
     if (response.data === undefined) {
-      throw new Error(`Synchronous response for ${call} omitted its result`);
+      throw new Error(`Response for ${call} omitted its result`);
     }
     // an RPC hands back data alone; a body a place attached anyway is released, never left to back up
-    if (response.body) await cancelResponseBody(response, "Synchronous response body unused");
+    if (response.body) await cancelResponseBody(response, "Response body unused");
     return response.data;
   }
 

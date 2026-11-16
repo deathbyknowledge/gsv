@@ -934,7 +934,11 @@ type ConversationMessage = {
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
-  /** Replies a Process message offers; tapping one sends its text as the person's next message. */
+  /**
+   * Replies a Process message offers; tapping one sends its text as the person's next message.
+   * `messageChoiceTaken` in the protocol package tells which one a reply takes, counted from 1:
+   * the choice's own words, or its number where a messenger wrote the choices as a list.
+   */
   choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -2072,6 +2076,19 @@ the browser allowance for existing clients. See [cloud computers](/how-to/cloud-
 The service verifies each machine boot before admitting requests and never
 starts a replacement for a lost instance. Detached shell sessions survive
 connection loss within that instance's lifetime; physical stop terminates them.
+A computer's `expiresAt` moves later while it is in use: each request, and each
+shell session still running within its own timeout (none with `timeout: 0`),
+keeps it up for 30 more minutes, within the template's `maxLifetimeSeconds` from admission and the
+remaining allowance. `lifetimeSeconds` sets the first expiry. Each extension
+reserves its added time.
+When a computer's lifetime expires, the service saves `/workspace`, up to 1 GiB
+compressed, before destroying the computer; an earlier stop saves nothing. The
+instance's `workspace` reports `saving`, then `saved` with `bytes` and the save's
+`expiresAt` 7 days later, or `failed`, and `deleted` once the save is gone.
+`fromInstanceId` on `sys.instance.start` names one of the owner's computers, by
+instance or target ID, whose save is still kept. The new computer reports
+`restore.status` `pending`, becomes ready only after the restore, and then
+reports `restored`. A restore that fails fails the start.
 
 A start requires a persisted request ID. Repeating the same ID and arguments
 returns the same instance, including after it becomes terminal. With a new request

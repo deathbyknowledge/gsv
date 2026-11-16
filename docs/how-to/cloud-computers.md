@@ -10,11 +10,22 @@ interfaces. Choose a connected computer when the work needs resources or access 
 choose a cloud computer when it suits the task. Its availability is controlled
 by the operator, independently of whether the user's own computers are online.
 
-The initial image includes Node.js, npm, Python, Git and build tools. Install
-additional software as needed and work in `/workspace`. Save useful files in
-the owner's home on `gsv`, using a GSV repository for reusable source when
-appropriate. Copy results back before stopping the computer: stop or expiry
-destroys its files and running commands. There is no automatic restore.
+The initial image includes Node.js, npm, Python, Git and build tools, and
+common tools for documents and data:
+
+- PDFs: `pdftotext` and the other Poppler tools, `qpdf`, Ghostscript, and
+  Python's `pypdf` and `reportlab`.
+- Spreadsheets, documents and slides: Python's `pandas`, `openpyxl`,
+  `python-docx` and `python-pptx`.
+- Charts and images: `matplotlib` and ImageMagick.
+- Data: `jq`, `sqlite3`, `zip` and `unzip`.
+
+`pip install` and `apt-get install` add software for the life of the computer;
+LibreOffice, for example, is not preinstalled. Work in `/workspace`. Save useful
+files in the owner's home on `gsv`, using a GSV repository for reusable source
+when appropriate. Copy results back before stopping the computer: stopping it
+destroys its files and running commands. A computer whose lifetime expires saves
+`/workspace` first; see [continue from an expired computer](#continue-from-an-expired-computer).
 
 ## Start and use one
 
@@ -54,6 +65,41 @@ instance get <targetId>
 instance stop <targetId>
 ```
 
+## How long a computer stays up
+
+A computer stays up while it is in use. Each command, and each command that is
+still running, detached or not, keeps it up for 30 more minutes, up to its
+maximum lifetime and the remaining monthly allowance. Its `expiresAt` shows the current
+expiry. `--seconds` sets the first expiry; use extends it from there.
+
+A computer costs time while it runs, whether or not anything uses it. Stop it as
+soon as its work is done and the needed files are saved on `gsv`. A forgotten
+computer stops 30 minutes after its last use.
+
+## Continue from an expired computer
+
+When a computer's lifetime expires, it saves `/workspace` before it stops.
+`instance get ID` shows the save in `workspace.saveStatus`: `saving`, then
+`saved` with its size and `expiresAt`, or `failed`. A save is kept for 7 days,
+then deleted. A workspace larger than 1 GiB compressed is not saved. Saves are
+encrypted with a key that only the instance service holds, and are deleted with
+the space.
+
+Start a new computer from a kept save with `--from`:
+
+```sh
+instance start computer --request-id REQUEST_ID --from OLD_TARGET_ID --wait
+```
+
+The new computer becomes ready only after the saved `/workspace` is in place,
+and its `restore.status` reads `restored`. If the save cannot be read, the start
+fails with `restore.status` set to `failed` rather than starting empty. Only
+`/workspace` is saved: installed packages, files elsewhere and running commands
+are not.
+
+Stopping a computer means its work is done, so stopping saves nothing. The save
+catches work cut off by expiry; keep the files you need on `gsv`.
+
 ## Permissions and limits
 
 Default permissions allow Ship's shell, filesystem and network work on cloud
@@ -62,8 +108,9 @@ Personal computers retain their separate approval rules, and existing custom
 policies are preserved.
 
 Computer concurrency and monthly seconds are separate from browser limits.
-A start reserves its lifetime. Time is charged from readiness until stop or
-expiry; unused reservation is released after physical termination is confirmed.
+A start reserves its first lifetime, and each extension reserves the added time.
+Time is charged from readiness until stop or expiry; unused reservation is
+released after physical termination is confirmed.
 Computers belong to their initiating human account and installation.
 
 ## Try computers locally
@@ -82,7 +129,7 @@ stop the computer. Model calls still need a configured inference provider.
 
 This selects `workers/instances/wrangler.computer.dev.jsonc`, which builds the
 normal computer image and runs it locally through Wrangler. Each Ship allows
-one computer at a time, up to 30 minutes per computer and two hours per month.
+one computer at a time, up to four hours per computer and two hours per month.
 Stop computers before ending the dev session; their files are temporary.
 The default `npm run dev` keeps computers disabled and does not require Docker.
 
@@ -107,6 +154,8 @@ Without an entitlement service, configure `COMPUTER_LIMITS` with `enabled`,
 `computer.enabled`, `computer.concurrent_instances`, `computer.period_seconds`
 and `computer.max_instance_seconds`. Missing values disable creation without
 preventing existing computers from being stopped. Browser limits remain separate.
+The maximum is a computer's whole lifetime from its start, including every
+extension; without a configured value it is four hours.
 
 Build the image from the repository root. The Dockerfile copies host sources;
 the final image contains the daemon and development tools, without enrollment

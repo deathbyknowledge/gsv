@@ -203,10 +203,19 @@ describe("instance admission", () => {
     const first = store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits);
     const key = store.ownedProfile(actor, saved.profileId)!.key;
     migrate(store.storage); migrate(store.storage);
-    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }]);
+    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }, { id: 2 }]);
     expect(instance(store.byId(first.instanceId))).toEqual(first);
     expect(store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits)).toEqual(first);
     expect(store.ownedProfile(actor, saved.profileId)?.key).toEqual(key);
+  }));
+  it("adds saved workspaces to an installation created before them", () => inStore(store => {
+    const first = store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    store.sql.exec("DROP TABLE workspaces");
+    store.sql.exec("DELETE FROM instance_schema WHERE id = 2");
+    migrate(store.storage);
+    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(store.sql.exec("SELECT count(*) AS count FROM workspaces").one()).toEqual({ count: 0 });
+    expect(instance(store.byId(first.instanceId))).toEqual(first);
   }));
 });
 

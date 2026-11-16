@@ -126,7 +126,7 @@ describe("staged reply files", () => {
       mediaType: "image",
       filename: "photo.jpg",
     };
-    vi.spyOn(utils, "sendFrameToKernel").mockImplementation(async (_installationId, _pid, frame) => {
+    vi.spyOn(utils, "requestFromKernel").mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.call !== "fs.transfer.send") throw new Error(`unexpected ${frame.call}`);
       return {
         type: "res", id: frame.id, ok: true,

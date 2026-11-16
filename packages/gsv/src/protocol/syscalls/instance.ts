@@ -23,6 +23,27 @@ export type CloudInstance = {
   reason?: string;
   diagnosticRef?: string;
   persistence?: BrowserPersistence;
+  /** A computer's /workspace, saved when its lifetime expired. */
+  workspace?: ComputerWorkspace;
+  /** The earlier computer whose saved /workspace this computer starts from. */
+  restore?: ComputerRestore;
+};
+
+export type ComputerWorkspace = {
+  saveStatus: "saving" | "saved" | "failed" | "deleted";
+  savedAt?: number;
+  /** Compressed archive bytes. */
+  bytes?: number;
+  /** When the saved archive is deleted. */
+  expiresAt?: number;
+  error?: string;
+  diagnosticRef?: string;
+};
+
+export type ComputerRestore = {
+  fromInstanceId: string;
+  status: "pending" | "restored" | "failed";
+  error?: string;
 };
 
 export type InstanceTemplate = {
@@ -57,6 +78,8 @@ export type SysInstanceStartArgs = {
   profileId?: string;
   /** Create a separate instance instead of reusing the account's current browser. */
   fresh?: boolean;
+  /** Start a computer with the saved /workspace of an earlier computer, by instance or target ID. */
+  fromInstanceId?: string;
 };
 export type SysInstanceStartResult = { instance: CloudInstance; disposition: "created" | "reused" };
 export type SysInstanceListArgs = { includeTerminal?: boolean };

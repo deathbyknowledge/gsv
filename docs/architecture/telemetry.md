@@ -187,9 +187,21 @@ without granting those adapters ownership of another component's application eve
   before a sign-in does; later sign-ins do not report it again.
   `onboarding.welcome.delivered` reports the first Ship message accepted after
   it, once per owner, with the time between them, so it measures first sign-in
-  to Ship's first message. The Kernel keeps both marks in its private
-  `initial-onboarding` record, so an owner whose welcome predates the record is
-  never reported.
+  to Ship's first message. `onboarding.welcome.finished` reports the welcome
+  responsibility being resolved or cancelled, once per owner, with the time
+  since it opened and a closed outcome: `connected`, `messenger_declined` or
+  `declined` as the welcome names them, `cancelled`, or `other` for anything
+  else Ship or the person recorded. The resolution itself stays in the ledger,
+  and a welcome nobody closes reports nothing. The Kernel keeps the three marks
+  in its private `initial-onboarding` record, so an owner whose welcome predates
+  the record is never reported.
+  Choices are reported by count and position, never by their words. A Ship
+  message that offers them carries `choicesOffered`. A person's message that
+  follows one carries the same count and, when it takes a choice, `choiceTaken`,
+  its position counted from 1; other words leave it out. A message takes a
+  choice by its own words, which is what a tap sends, or by its number where a
+  messenger wrote the choices as a list. The Conversation decides this when it
+  accepts the message, so every client and messenger is measured the same way.
 - Accounts: activation and attribution. `installation.attributed` is reported
   once, by the request that first reserves a self-service signup's Ship, under
   the same pseudonym as `installation.activated` and the Ship's later Gateway
