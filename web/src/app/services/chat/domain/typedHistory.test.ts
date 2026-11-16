@@ -70,7 +70,7 @@ describe("typed history projection", () => {
       const moment = momentsFromConversation([], rows, null)[0];
       expect(moment.activities).toEqual([expect.objectContaining({ target: null })]);
       expect(moment.activities[0].calls[0]).toMatchObject({
-        syscall: "codemode.exec", finished: true, failed: outcome === "failed",
+        syscall: "codemode.exec", finished: true, ending: outcome === "failed" ? "error" : "done",
         output: outcome === "completed" ? "started\n0" : "started\nscript failed",
         summary: rows === unlinked ? "" : code,
       });
@@ -92,7 +92,7 @@ describe("typed history projection", () => {
     const moment = momentsFromConversation([], rows, "r")[0];
     expect(moment.activities.map((activity) => activity.target)).toEqual([null, "null"]);
     expect(new Set(moment.activities.map((activity) => activity.key)).size).toBe(2);
-    expect(receiptTargets(moment)).toEqual([{ target: "null", live: true, failed: false }]);
+    expect(receiptTargets(moment)).toEqual([{ target: "null", live: true, error: false }]);
     expect(placesUsed(moment)).toBe(1);
   });
 
@@ -219,8 +219,8 @@ describe("typed history projection", () => {
       })]);
       const moments = momentsFromConversation([], rows, null);
       expect(moments).toHaveLength(1);
-      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: output.error, finished: true, failed: true })]);
-      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, failed: true }]);
+      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: output.error, finished: true, ending: "error" })]);
+      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, error: true }]);
     }
   });
 
@@ -242,8 +242,8 @@ describe("typed history projection", () => {
       expect(rows).toEqual([expect.objectContaining({ toolOutcome: "completed", toolOutput: output, isError: false, status: "done" })]);
       const moments = momentsFromConversation([], rows, null);
       expect(moments).toHaveLength(1);
-      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: content, finished: true, failed: false })]);
-      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, failed: false }]);
+      expect(moments[0].activities[0].calls).toEqual([expect.objectContaining({ output: content, finished: true, ending: "done" })]);
+      expect(receiptTargets(moments[0])).toEqual([{ target: "gsv", live: false, error: false }]);
     }
   });
 

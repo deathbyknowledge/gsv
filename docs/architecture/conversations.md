@@ -67,10 +67,17 @@ the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
 the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
-On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
-receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
-A receipt names the places the work touched; work that named no place reads "worked on this".
-Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
+On phones, the return-to-latest control is a down arrow at the right edge.
+Each message has a quiet row of icon controls under it: copy and, when Ship worked before sending it,
+the receipt. Hover, focus or selecting the message shows the row, and the selected message (the latest
+by default) keeps it shown. The receipt's hint names the places the work touched; work that named no
+place reads "worked on this". Opening it shows the work beneath the message, step by step. A receipt
+says what Ship did, never how each step went: a command that ran is an ordinary step whatever its exit
+code, which ends its output as a terminal would, and a step that could not finish shows its reason the
+same way. Only a step the person declined or stopped says so. Running work, a pending approval and a run
+that stopped on an error without sending anything stay in the conversation as a line that counts the
+errors. A run that finished cleanly without sending anything leaves no trace in the conversation; action
+records remain inspectable in Settings → Logs.
 Direct `$` commands use a compact target header on phones, with running, unavailable or failed
 states when relevant. Expand it to read the complete command, output and terminal controls.
 

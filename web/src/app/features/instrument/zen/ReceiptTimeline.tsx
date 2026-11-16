@@ -64,14 +64,17 @@ function CallRow({ event, notes, who, places, live, onFleet, retryOf, retried, o
 }) {
   const t = useT();
   const { call } = event;
-  const state = call.failed ? "failed" : call.finished ? "done" : waiting ? "waiting" : live ? "running" : "unfinished";
+  /* a step's ending is plain: a command's exit code and an error's reason are in its output, never a verdict on the row;
+     only what the person did themselves has a word */
+  const state = call.ending ?? (waiting ? "waiting" : live ? "running" : "unfinished");
   const meta = [
     retryOf ? t("chat.receipt.retryOf") : null,
     retried ? t("chat.receipt.state.retried") : null,
   ].filter(Boolean);
-  const stateLabel: TextKey | null = state === "done" ? (retryOf ? "chat.receipt.state.retried" : null)
+  const stateLabel: TextKey | null = state === "done" || state === "error" ? (retryOf ? "chat.receipt.state.retried" : null)
+    : state === "declined" ? "chat.receipt.state.declined"
+    : state === "stopped" ? "chat.receipt.state.stopped"
     : state === "waiting" ? "chat.receipt.state.waiting"
-    : state === "failed" ? retried ? "chat.receipt.state.failedRetried" : "chat.receipt.state.failed"
     : state === "running" ? "chat.receipt.state.running" : "chat.receipt.state.unfinished";
   return (
     <li class={`tl-row is-call is-${state}${open ? " is-open" : ""}${event.retryOf ? " is-retry" : ""}`}>

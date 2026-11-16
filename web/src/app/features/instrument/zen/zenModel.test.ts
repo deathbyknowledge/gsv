@@ -5,7 +5,7 @@ import { conversationMessageRow } from "../../../services/chat/domain/conversati
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
 import { mergeTranscriptRows } from "../../../services/chat/domain/transcriptMerge";
 import { transcriptRowsFromRecords } from "../../../services/chat/domain/typedHistory";
-import { receiptsForMoments, receiptActions } from "./runReceipts";
+import { receiptPlacement, receiptsForMoments, receiptActions, silentWork, unresolvedErrors } from "./runReceipts";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import {
   activitiesForRows,
@@ -231,7 +231,7 @@ describe("activitiesForRows", () => {
     const activities = activitiesForRows(rows, "run", false);
     expect(activities.map((activity) => activity.target)).toEqual(["laptop", "gsv"]);
     expect(activities[0].calls).toHaveLength(1);
-    expect(activities[0].calls[0]).toMatchObject({ summary: "ls", output: "a b c", finished: true, failed: false });
+    expect(activities[0].calls[0]).toMatchObject({ summary: "ls", output: "a b c", finished: true, ending: "done" });
     expect(activities[0].endedAt).toBe(200);
     expect(activities[1].calls[0].summary).toBe("~/a");
   });
@@ -242,11 +242,24 @@ describe("activitiesForRows", () => {
     expect(activitiesForRows(rows, "run", true)[0].live).toBe(true);
     expect(activitiesForRows(rows, "run", false)[0].live).toBe(false);
   });
-  it("flags failed and denied calls", () => {
-    const rows = [
-      row({ id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop", toolArgs: { target: "laptop", input: "rm x" }, toolOutcome: "denied", status: "done" }),
-    ];
-    expect(activitiesForRows(rows, "run", false)[0].calls[0].failed).toBe(true);
+  it("reads a command's exit code as its answer, an error as no answer, and the person's choices as theirs", () => {
+    const ended = (overrides: Partial<ChatTranscriptRow>) => activitiesForRows([row({
+      id: "tool:1", role: "toolResult", toolCallId: "1", toolSyscall: "shell.exec", toolTarget: "laptop",
+      toolArgs: { target: "laptop", input: "grep -q standup notes.md" }, toolOutcome: "failed", status: "error", isError: true, text: "model text", ...overrides,
+    })], "run", false)[0].calls[0];
+    expect(ended({ toolOutput: { status: "failed", output: "", exitCode: 1, error: "Command exited with code 1", stdout: "", stderr: "" } }))
+      .toMatchObject({ ending: "done", output: "exit 1" });
+    expect(ended({ toolOutput: { status: "failed", output: "", error: "Command timed out after 120000ms" } }))
+      .toMatchObject({ ending: "error", output: "Command timed out after 120000ms" });
+    expect(ended({ toolOutput: { status: "completed", output: "", exitCode: 0 } })).toMatchObject({ ending: "error" });
+    // A Windows machine ends a timed-out command's job with code 1; the timeout, not the code, is what happened.
+    expect(ended({ toolOutput: { status: "failed", output: "partial\n", exitCode: 1, error: "Command timed out", stdout: "partial\n", stderr: "" } }))
+      .toMatchObject({ ending: "error", output: "partial\nCommand timed out\nexit 1" });
+    expect(ended({ toolOutcome: "denied", toolOutput: undefined })).toMatchObject({ ending: "declined" });
+    expect(ended({ toolOutcome: "cancelled", toolOutput: undefined })).toMatchObject({ ending: "stopped" });
+    expect(ended({ toolOutcome: "completed", status: "done", isError: false, toolOutput: { status: "completed", output: "standup at 9:30\n", exitCode: 0 } }))
+      .toMatchObject({ ending: "done", output: "standup at 9:30\n" });
+    expect(ended({ role: "tool", status: "running", toolOutcome: undefined, isError: undefined, toolOutput: undefined }).ending).toBeUndefined();
   });
 });
 
@@ -268,7 +281,7 @@ describe("filesystem operation presentation", () => {
     ];
     for (const [syscall, output, operation] of cases) {
       const call = present(syscall, output);
-      expect(call).toMatchObject({ operation, finished: true, failed: false, output: "" });
+      expect(call).toMatchObject({ operation, finished: true, ending: "done", output: "" });
       expect(outputText(syscall, output, "fallback")).not.toBe("");
     }
   });
@@ -276,7 +289,8 @@ describe("filesystem operation presentation", () => {
   it.each(["failed", "denied", "cancelled"] as const)("keeps %s operations neutral and retains the diagnostic body", (outcome) => {
     for (const [syscall, label] of [["fs.write", "write"], ["fs.edit", "edit"], ["fs.delete", "delete"]]) {
       expect(present(syscall, { ok: false, error: "permission denied" }, { toolOutcome: outcome })).toMatchObject({
-        operation: { label, subject: "/tmp/requested.txt" }, failed: true, output: "permission denied",
+        operation: { label, subject: "/tmp/requested.txt" }, ending: { failed: "error", denied: "declined", cancelled: "stopped" }[outcome],
+        output: "permission denied",
       });
     }
   });
@@ -296,7 +310,7 @@ describe("filesystem operation presentation", () => {
     const result = present("fs.write", { ok: true, path: "/tmp/resolved.txt", size: 11 }, {
       toolOutcome: "failed", text: "The returned result could not be retained.",
     });
-    expect(result).toMatchObject({ operation: { label: "write", subject: "/tmp/requested.txt" }, failed: true,
+    expect(result).toMatchObject({ operation: { label: "write", subject: "/tmp/requested.txt" }, ending: "error",
       output: "The returned result could not be retained.",
     });
   });
@@ -340,11 +354,11 @@ describe("filesystem operation presentation", () => {
     const unknown = present("fs.search", { matches: [] }, { toolArgs: { query: "needle", path: "/tmp" } });
     expect(unknown.operation?.label).toBe("search");
     const failed = present("fs.search", { ok: false, error: "search rejected" }, { toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed" });
-    expect(failed).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search rejected", failed: true });
+    expect(failed).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search rejected", ending: "error" });
     const interrupted = present("fs.search", { ok: true, matches: [{ path: "/tmp/hit.txt", line: 2, content: "needle" }], count: 1 }, {
       toolArgs: { query: "needle", path: "/tmp" }, toolOutcome: "failed", text: "search interrupted",
     });
-    expect(interrupted).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search interrupted", failed: true });
+    expect(interrupted).toMatchObject({ operation: { label: "search", subject: "needle in /tmp" }, output: "search interrupted", ending: "error" });
   });
 
   it("does not invent search terms or filesystem operations from tool text", () => {
@@ -872,9 +886,7 @@ describe("momentsFromConversation", () => {
     ]);
     expect(trailingNotes.map((note) => note.text)).toEqual(["Everything is recorded."]);
     expect(source.flatMap((moment) => moment.timeline ?? []).filter((event) => event.kind === "call").map((event) => event.retryOf)).toEqual([null, null]);
-    expect(receiptSummary(receipt.work, places, receipt.relatedCalls).filter((part) => part.tone === "failed")).toEqual([
-      { text: " · 1 failed and retried", tone: "failed" },
-    ]);
+    expect(summaryText(receipt.work)).toBe("1 action on MacBook 16");
   });
 
   type ShellRetryCase = { name: string; failedArgs: ChatTranscriptValue | undefined; laterArgs: ChatTranscriptValue | undefined };
@@ -894,9 +906,7 @@ describe("momentsFromConversation", () => {
     expect(actions.map(({ event }) => [event.call.callId, event.retryOf])).toEqual([
       ["failed", null], ["unrelated", null],
     ]);
-    expect(receiptSummary(receipts[0].work, places, receipts[0].relatedCalls).filter((part) => part.tone === "failed")).toEqual([
-      { text: " · 1 failed", tone: "failed" },
-    ]);
+    expect(summaryText(receipts[0].work)).toBe("1 action on MacBook 16");
   });
 
   it("finds the matching shell retry after unrelated work using the same executable", () => {
@@ -908,7 +918,7 @@ describe("momentsFromConversation", () => {
     expect(moment.timeline?.filter((event) => event.kind === "call").map((event) => [event.call.callId, event.retryOf])).toEqual([
       ["failed", null], ["unrelated", null], ["retry", "failed"],
     ]);
-    expect(summaryText(moment)).toBe("3 actions on MacBook 16 · 1 failed and retried");
+    expect(summaryText(moment)).toBe("3 actions on MacBook 16");
   });
 
   it("lays the run out in order, notes between calls, and links a retry to the failure it repeats", () => {
@@ -917,7 +927,7 @@ describe("momentsFromConversation", () => {
       shell("df", "df -h /Volumes/Studio", 8, 10),
       note("n2", "Now the notes.\n\nThen size the sync.", 12),
       call("read", 20, { toolStartedAt: 18 }),
-      shell("sync-a", "rsync -a /Projects/ /B/", 25, 30, { toolOutcome: "failed", isError: true, status: "error", toolOutput: { status: "completed", output: "rsync: link_stat failed", exitCode: 23 } }),
+      shell("sync-a", "rsync -a /Projects/ /B/", 25, 30, { toolOutcome: "failed", isError: true, status: "error", toolOutput: { status: "failed", output: "", error: "Command timed out" } }),
       shell("sync-b", "rsync -a /Projects/ /B/", 35, 45),
       shell("du", "du -sh /x", 48, 50),
       call("send", 55, { toolName: "Send", toolSyscall: null }),
@@ -933,8 +943,8 @@ describe("momentsFromConversation", () => {
       ["call", "sync-b", "laptop", "sync-a"],
       ["call", "du", "laptop", null],
     ]);
-    expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
-    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and Ship’s home · 1 failed and retried");
+    expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { ending: "error" } });
+    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and Ship’s home");
     expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "Ship’s home"]);
   });
 
@@ -946,7 +956,7 @@ describe("momentsFromConversation", () => {
     const [between] = momentsFromConversation([], [note("n1", "Look.", 5), done], "run");
     expect(summaryText(between)).toBe("1 action on MacBook 16");
     const [failedOnly] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, { toolOutcome: "failed", isError: true, status: "error" })], null);
-    expect(summaryText(failedOnly)).toBe("1 action on MacBook 16 · 1 failed");
+    expect(summaryText(failedOnly)).toBe("1 action on MacBook 16");
   });
 
   it("uses the purpose in the live receipt and preserves it when a separate result lands", () => {
@@ -967,6 +977,77 @@ describe("momentsFromConversation", () => {
       activities: [{ key: "process", target: null, calls: [], live, you: false, startedAt: 10, endedAt: live ? null : 20 }] });
     expect(summaryText(untargeted(true))).toBe("working on this");
     expect(summaryText(untargeted(false))).toBe("worked on this");
+  });
+
+  const failing = { toolOutcome: "failed", status: "error", isError: true } satisfies Partial<ChatTranscriptRow>;
+  const placements = (messages: ChatTranscriptRow[], transcript: ChatTranscriptRow[], activeRunId: string | null) => {
+    const moments = momentsFromConversation(messages, transcript, activeRunId);
+    const receipts = receiptsForMoments(moments, activeRunId, "ship");
+    return moments.map((moment) => receipts.get(moment.id)).map((receipt) => receipt ? receiptPlacement(receipt, false) : null);
+  };
+
+  it("folds a message's work behind the message, whatever happened in it", () => {
+    expect(placements([sent("reply", 60)], [shell("df", "df -h", 8, 10)], null)).toEqual(["message"]);
+    expect(placements([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, failing)], null)).toEqual(["message"]);
+    expect(placements([sent("update", 20), sent("done", 40)], [shell("df", "df -h", 8, 10), shell("du", "du -sh /x", 30, 35)], null))
+      .toEqual(["message", "message"]);
+  });
+
+  it("keeps work under way, waiting on the person, or failed without a word as a line in the conversation", () => {
+    expect(placements([], [shell("df", "df -h", 8, 10)], "run")).toEqual(["line"]);
+    expect(placements([sent("done", 20)], [shell("df", "df -h", 8, 10), shell("tidy", "rm -r /tmp/x", 30, 35)], "run")).toEqual(["message", "line"]);
+    const [moment] = momentsFromConversation([sent("reply", 60)], [shell("df", "df -h", 8, 10)], null);
+    expect(receiptPlacement(receiptsForMoments([moment], null, "ship").get(moment.id)!, true)).toBe("line");
+    expect(placements([], [shell("sync", "rsync -a /a /b", 25, 30, failing)], null)).toEqual(["line"]);
+    expect(placements([], [shell("first", "rsync /a /b", 10, 15, failing), shell("second", "rsync /a /b", 20, 25, failing)], null))
+      .toEqual(["line"]);
+  });
+
+  it("leaves work that ended cleanly without a word to Work, a retried failure included", () => {
+    expect(placements([], [shell("df", "df -h", 8, 10)], null)).toEqual(["work"]);
+    expect(placements([], [shell("failed", "rsync /a /b", 10, 15, failing), shell("retry", "rsync /a /b", 20, 25)], null)).toEqual(["work"]);
+    const silent = (messages: ChatTranscriptRow[], transcript: ChatTranscriptRow[], activeRunId: string | null) => {
+      const moments = momentsFromConversation(messages, transcript, activeRunId);
+      const receipts = receiptsForMoments(moments, activeRunId, "ship");
+      return moments.filter((moment) => silentWork(moment, receipts.get(moment.id))).map((moment) => callsOf(moment));
+    };
+    const work = [shell("df", "df -h", 8, 10), shell("tidy", "rm -r /tmp/x", 30, 35)];
+    expect(silent([sent("done", 20)], work, null)).toEqual([["tidy"]]);
+    expect(silent([sent("done", 20)], work, "run")).toEqual([]);
+    expect(silent([], [shell("sync", "rsync -a /a /b", 25, 30, failing)], null)).toEqual([]);
+  });
+
+  it("never counts a command's exit code against the run", () => {
+    const exited = { ...failing, toolOutput: { status: "failed", output: "rsync: link_stat failed (code 23)\n", exitCode: 23, error: "Command exited with code 23" } };
+    expect(placements([], [shell("sync", "rsync -a /a /b", 25, 30, exited)], null)).toEqual(["work"]);
+    expect(placements([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, exited)], null)).toEqual(["message"]);
+    const [moment] = momentsFromConversation([sent("reply", 60)], [shell("sync", "rsync -a /a /b", 25, 30, exited)], null);
+    expect(summaryText(moment)).toBe("1 action on MacBook 16");
+    expect(unresolvedErrors(receiptsForMoments([moment], null, "ship").get(moment.id)!)).toBe(0);
+  });
+
+  it("counts the errors Ship did not get past, and never the person's own choices", () => {
+    const errors = (transcript: ChatTranscriptRow[]) => {
+      const moments = momentsFromConversation([], transcript, null);
+      return unresolvedErrors(receiptsForMoments(moments, null, "ship").get(moments[0].id)!);
+    };
+    expect(errors([shell("sync", "rsync -a /a /b", 25, 30, failing)])).toBe(1);
+    expect(errors([shell("slow", "sleep 999", 25, 30, { ...failing, toolOutput: { status: "failed", output: "", exitCode: 1, error: "Command timed out" } })])).toBe(1);
+    expect(errors([shell("a", "rsync /a /b", 10, 15, failing), shell("b", "du -sh /x", 20, 25, failing)])).toBe(2);
+    expect(errors([shell("failed", "rsync /a /b", 10, 15, failing), shell("retry", "rsync /a /b", 20, 25)])).toBe(0);
+    expect(errors([shell("rm", "rm -r /tmp/x", 10, 15, { toolOutcome: "denied", status: "error", isError: true })])).toBe(0);
+    expect(errors([shell("du", "du -sh /x", 10, 15, { toolOutcome: "cancelled", status: "error", isError: true })])).toBe(0);
+  });
+
+  it("never treats words, a direct command or a thinking moment as silent work", () => {
+    const [reply] = momentsFromConversation([sent("reply", 60)], [], null);
+    const empty: Moment = { ...reply, id: "empty", text: "", attribution: undefined };
+    expect(silentWork(empty, undefined)).toBe(true);
+    expect(silentWork(reply, undefined)).toBe(false);
+    expect(silentWork({ ...empty, thinking: true }, undefined)).toBe(false);
+    expect(silentWork({ ...empty, role: "human" }, undefined)).toBe(false);
+    expect(silentWork({ ...empty, activities: [{ key: "terminal", target: "laptop", calls: [], live: false, you: true, startedAt: 1, endedAt: 2 }] }, undefined))
+      .toBe(false);
   });
 
   it.each([undefined, " \n "])("describes a legacy call with purpose %j without using the raw command as prose", (toolPurpose) => {
@@ -1147,9 +1228,19 @@ describe("outputText", () => {
 
   it("reads a command's stdout and stderr instead of the transport json", () => {
     expect(outputText("shell.exec", { ok: true, stdout: "a\nb\n", stderr: "", exitCode: 0 }, "{json}")).toBe("a\nb\n");
-    expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file");
+    expect(outputText("shell.exec", { stdout: "", stderr: "no such file", exitCode: 1 }, "")).toBe("no such file\nexit 1");
     expect(outputText("shell.exec", { stdout: "", stderr: "", exitCode: 0 }, "")).toBe("");
     expect(outputText("shell.exec", { status: "completed", output: "total 21\ndrwxr-xr-x .gsv" }, "{json}")).toBe("total 21\ndrwxr-xr-x .gsv");
+  });
+  it("ends a command's output with a non-zero exit code, and says why a command that never exited stopped", () => {
+    const failure = { status: "failed", truncated: false };
+    expect(outputText("shell.exec", { ...failure, output: "rsync: link_stat failed (code 23)\n", exitCode: 23, error: "Command exited with code 23" }, ""))
+      .toBe("rsync: link_stat failed (code 23)\nexit 23");
+    expect(outputText("shell.exec", { ...failure, output: "", exitCode: 1, error: "Command exited with code 1", stdout: "", stderr: "" }, "")).toBe("exit 1");
+    expect(outputText("shell.exec", { ...failure, output: "no such file\n", exitCode: 2, error: "no such file", stdout: "", stderr: "no such file\n" }, ""))
+      .toBe("no such file\nexit 2");
+    expect(outputText("shell.exec", { ...failure, output: "", error: "Command timed out after 120000ms" }, "fallback")).toBe("Command timed out after 120000ms");
+    expect(outputText("shell.exec", { ...failure, output: "partial\n", exitCode: 1, error: "Command timed out" }, "")).toBe("partial\nCommand timed out\nexit 1");
   });
   it("retains fallback for unknown or malformed shell results", () => {
     expect(outputText("shell.exec", { status: "failed", error: "unrecognized failure" }, "fallback")).toBe("fallback");
@@ -1234,7 +1325,7 @@ describe("receipt", () => {
     activities: activitiesForRows(rows, "run", active),
     narration: "",
   });
-  it("summarizes targets in first-touch order, retaining failure and expanded call details", () => {
+  it("summarizes targets in first-touch order, without counting a declined call as an error", () => {
     const rows = [
       row({ id: "t1", role: "toolResult", toolCallId: "1", toolSyscall: "fs.search", toolTarget: "gsv", toolArgs: { path: "~/mail", q: "statement" }, status: "done", timestamp: 100 }),
       row({ id: "t2", role: "toolResult", toolCallId: "2", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/Downloads/Q2.pdf" }, status: "done", timestamp: 150 }),
@@ -1242,8 +1333,8 @@ describe("receipt", () => {
     ];
     // places come in first-touch order, and each place's calls in theirs
     expect(receiptTargets(moment(rows))).toEqual([
-      { target: "gsv", live: false, failed: false },
-      { target: "laptop", live: false, failed: true },
+      { target: "gsv", live: false, error: false },
+      { target: "laptop", live: false, error: false },
     ]);
     expect(moment(rows).activities[1].calls.map((call) => call.syscall)).toEqual(["fs.read", "shell.exec"]);
     expect(receiptSteps(moment(rows))).toBe(3);
@@ -1252,12 +1343,12 @@ describe("receipt", () => {
   it("keeps one target summary for mixed work without discarding any calls", () => {
     const read = (id: string, path: string) => row({ id, role: "toolResult", toolCallId: id, toolSyscall: "fs.read", toolTarget: "gsv", toolArgs: { path }, status: "done", timestamp: 1 });
     const value = moment([read("1", "a"), read("2", "b"), read("3", "c")]);
-    expect(receiptTargets(value)).toEqual([{ target: "gsv", live: false, failed: false }]);
+    expect(receiptTargets(value)).toEqual([{ target: "gsv", live: false, error: false }]);
     expect(value.activities[0].calls.map((call) => call.summary)).toEqual(["a", "b", "c"]);
   });
   it("identifies the target still in use and omits empty work", () => {
     const rows = [row({ id: "t1", role: "tool", toolCallId: "1", toolSyscall: "fs.read", toolTarget: "laptop", toolArgs: { target: "laptop", path: "~/x" }, status: "running" })];
-    expect(receiptTargets(moment(rows, true))).toEqual([{ target: "laptop", live: true, failed: false }]);
+    expect(receiptTargets(moment(rows, true))).toEqual([{ target: "laptop", live: true, error: false }]);
     expect(receiptTargets(moment([]))).toEqual([]);
   });
   it("keeps every unfinished parallel target live when a later target has already finished", () => {
@@ -1267,7 +1358,7 @@ describe("receipt", () => {
       row({ id: "c", role: "toolResult", toolCallId: "c", toolSyscall: "fs.read", toolTarget: "gsv", status: "done" }),
     ], true);
     expect(receiptTargets(value)).toEqual([
-      { target: "laptop", live: true, failed: false }, { target: "office", live: true, failed: false }, { target: "gsv", live: false, failed: false },
+      { target: "laptop", live: true, error: false }, { target: "office", live: true, error: false }, { target: "gsv", live: false, error: false },
     ]);
   });
 });
