@@ -971,6 +971,20 @@ describe("momentsFromConversation", () => {
     expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", summary: "df -h", finished: true } });
   });
 
+  it("leaves the prompt of a shell call without command text empty and says what the call did", () => {
+    const poll = shell("poll", "", 10, 12, { toolName: "Shell", toolArgs: { input: "", sessionId: "b45f" } });
+    const enter = shell("enter", "", 14, 16, { toolName: "Shell", toolArgs: { input: "\n", sessionId: "b45f" } });
+    const typed = shell("df", "df -h", 18, 20, { toolName: "Shell" });
+    const [moment] = momentsFromConversation([sent("reply", 60)], [poll, enter, typed], null);
+    expect(moment.timeline?.map((event) => event.kind === "call" ? [event.call.description, event.call.summary] : null)).toEqual([
+      ["read a running command’s output", ""],
+      ["send input to a running command", ""],
+      ["run a command", "df -h"],
+    ]);
+    const [busy] = momentsFromConversation([], [{ ...poll, role: "tool", status: "running", toolOutcome: undefined, toolOutput: undefined }], "run");
+    expect(summaryText(busy)).toBe("read a running command’s output");
+  });
+
   it("says Ship worked on this when the work named no place", () => {
     const [base] = momentsFromConversation([sent("reply", 60)], [], null);
     const untargeted = (live: boolean): Moment => ({ ...base, timeline: undefined,
