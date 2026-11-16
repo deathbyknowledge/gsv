@@ -4,7 +4,9 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
 import { OwnerAuthError } from "./owner-auth-store";
 import { queueProductEmail, type ProductEmailChoice } from "./product-email";
-import { emitTelemetry, exceptionDiagnostics, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import {
+  emitTelemetry, exceptionDiagnostics, installationAttributedProperties, type SignupAttribution, type TelemetryEnvironment,
+} from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
 export type SignupPolicy = {
@@ -39,7 +41,7 @@ export class InstallationSignup {
       UNION ALL SELECT 1 FROM username_policy WHERE normalized_handle = ? LIMIT 1`).bind(handle, normalizeUsernamePolicy(handle)).first();
   }
 
-  async prepare(operationIdValue: string, principalIdValue: string, handle: string, productEmails?: ProductEmailChoice, ip?: string) {
+  async prepare(operationIdValue: string, principalIdValue: string, handle: string, attribution?: SignupAttribution, productEmails?: ProductEmailChoice, ip?: string) {
     const operationId = parseOpaqueId(operationIdValue, "operationId");
     const principalId = parseOpaqueId(principalIdValue, "principalId");
     const principal = await this.accounts.getPrincipal(principalId);
@@ -48,6 +50,11 @@ export class InstallationSignup {
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
+    // Where the signup came from is reported once, by the request that created the reservation, under
+    // the Ship's own pseudonym; a retry or resumed signup replays the reservation and reports nothing.
+    // Nothing is stored: the record is the only copy.
+    if (space.created) emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
+      event: { stream: "product", name: "installation.attributed", properties: installationAttributedProperties(attribution) } });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");
