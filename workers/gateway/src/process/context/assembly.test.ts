@@ -32,6 +32,12 @@ const CONFIG: AiConfigResult = {
   maxContextBytes: 64,
 };
 
+const LEGEND_HEAD = [
+  "<context_layers>",
+  "Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.",
+];
+const SYSTEM_LEGEND = [...LEGEND_HEAD, "system  /sys/config/ai/context.d/  read-only", "</context_layers>"];
+
 const SKILLS: PromptAssemblyInput["skills"] = {
   mode: "summary",
   entries: [{ id: "device-management", description: "Manage connected devices." }],
@@ -92,40 +98,35 @@ describe("assembleSystemPrompt", () => {
     expect(prompt).toBe("<one>\nfirst\n</one>\n\n<three>\nthird\n</three>");
   });
 
-  it("groups context files by root and omits empty roots", async () => {
+  it("groups standing context by file name and renders each name's layers in order", async () => {
+    const root = (key: "system" | "agent" | "user", location: string, access: "read-only" | "editable") =>
+      ({ key, access, location });
+    const SYSTEM = root("system", "/sys/config/ai/context.d", "read-only");
+    const AGENT = root("agent", "/home/friday/context.d", "editable");
+    const USER = root("user", "/home/hank/context.d", "editable");
     const providers: PromptContextProvider[] = [
       {
+        name: "owner.context",
+        layer: () => USER,
+        async collect() {
+          return [{ name: "voice.md", text: "owner voice" }];
+        },
+      },
+      {
         name: "system.context",
+        layer: () => SYSTEM,
         async collect() {
           return [
-            {
-              name: "00-runtime.md",
-              text: "system context",
-              contextRoot: {
-                key: "system",
-                label: "SYSTEM",
-                access: "read-only",
-                location: "/sys/config/ai/context.d",
-              },
-            },
+            { name: "voice.md", text: "system voice" },
+            { name: "environment.md", text: "system environment" },
           ];
         },
       },
       {
-        name: "program.context",
+        name: "home.context",
+        layer: () => AGENT,
         async collect() {
-          return [
-            {
-              name: "00-style.md",
-              text: "program context",
-              contextRoot: {
-                key: "program",
-                label: "PROGRAM",
-                access: "editable",
-                location: "/home/friday/context.d",
-              },
-            },
-          ];
+          return [{ name: "voice.md", text: "agent voice" }];
         },
       },
       {
@@ -138,22 +139,69 @@ describe("assembleSystemPrompt", () => {
 
     const prompt = await assembleSystemPrompt(makeInput(), providers);
     expect(prompt).toBe([
-      "<system path=\"/sys/config/ai/context.d/\">",
-      "<00-runtime.md>",
-      "system context",
-      "</00-runtime.md>",
-      "</system>",
+      "<context_layers>",
+      "Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.",
+      "system  /sys/config/ai/context.d/  read-only",
+      "agent   /home/friday/context.d/    editable",
+      "user    /home/hank/context.d/      editable",
+      "</context_layers>",
       "",
-      "<program path=\"/home/friday/context.d/\">",
-      "<00-style.md>",
-      "program context",
-      "</00-style.md>",
-      "</program>",
+      "<environment.md>",
+      "<system>",
+      "system environment",
+      "</system>",
+      "</environment.md>",
+      "",
+      "<voice.md>",
+      "<system>",
+      "system voice",
+      "</system>",
+      "<agent>",
+      "agent voice",
+      "</agent>",
+      "<user>",
+      "owner voice",
+      "</user>",
+      "</voice.md>",
       "",
       "<available_skills>",
       "skill index",
       "</available_skills>",
     ].join("\n"));
+  });
+
+  it("names every layer the process has, including an editable one with no files yet", async () => {
+    const input = makeInput({
+      identity: { ...OWNER_IDENTITY, uid: 1001, gid: 1001, username: "ship", home: "/home/ship", cwd: "/home/ship" },
+      ownerIdentity: OWNER_IDENTITY,
+      ripgit: {
+        async readPath(repo, path) {
+          if (repo.owner !== "hank") return { kind: "missing" };
+          if (path === "context.d") {
+            return { kind: "tree", entries: [{ name: "personal.md", mode: "100644", hash: "p", type: "blob" }] };
+          }
+          const bytes = new TextEncoder().encode("Likes tea.");
+          return { kind: "file", bytes, size: bytes.length };
+        },
+      },
+    });
+    input.config = {
+      ...input.config,
+      systemContextFiles: [{ name: "environment.md", text: "Runtime." }],
+      roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "behaviour.md", text: "Be Ship." }] },
+    };
+
+    const prompt = await assembleSystemPrompt(input);
+
+    expect(prompt.slice(0, prompt.indexOf("</context_layers>"))).toBe([
+      ...LEGEND_HEAD,
+      "system  /sys/config/ai/context.d/       read-only",
+      "base    /sys/config/ai/ship/context.d/  read-only",
+      "agent   /home/ship/context.d/           editable",
+      "user    /home/hank/context.d/           editable",
+      "",
+    ].join("\n"));
+    expect(prompt).not.toContain("<agent>");
   });
 
   it("reads both accounts' context files together and keeps their order", async () => {
@@ -186,7 +234,7 @@ describe("assembleSystemPrompt", () => {
     expect(peak).toBe(4);
     expect(snapshot.sources.flatMap((source) =>
       source.contextRoot && source.contextRoot.key !== "system" ? [`${source.contextRoot.key}:${source.name}`] : []))
-      .toEqual(["program:a.md", "program:b.md", "user:a.md", "user:b.md"]);
+      .toEqual(["agent:a.md", "agent:b.md", "user:a.md", "user:b.md"]);
   });
 
   it("records deterministic source hashes for epoch replay", async () => {
@@ -224,12 +272,14 @@ describe("createSystemContextProvider", () => {
       expect(sections[0].responsibilityBaseline).toBe(true);
       expect(snapshot.sources[0].responsibilityBaseline).toBe(true);
       expect(snapshot.prompt).toBe([
-        '<system path="/sys/config/ai/context.d/">',
+        ...SYSTEM_LEGEND,
+        "",
         "<responsibilities.md>",
+        "<system>",
         "Responsibilities:",
         input.r12y,
-        "</responsibilities.md>",
         "</system>",
+        "</responsibilities.md>",
       ].join("\n"));
     },
   );
@@ -252,19 +302,25 @@ describe("createSystemContextProvider", () => {
     for (const section of sections) expect(section).not.toHaveProperty("responsibilityBaseline");
     for (const source of snapshot.sources) expect(source).not.toHaveProperty("responsibilityBaseline");
     expect(snapshot.prompt).toBe([
-      '<system path="/sys/config/ai/context.d/">',
+      ...SYSTEM_LEGEND,
+      "",
       "<literal.md>",
+      "<system>",
       input.r12y,
+      "</system>",
       "</literal.md>",
       "",
       "<lookalike.md>",
+      "<system>",
       "{{r12y-extra}}",
+      "</system>",
       "</lookalike.md>",
       "",
       "<runtime.md>",
+      "<system>",
       "Run as root.",
-      "</runtime.md>",
       "</system>",
+      "</runtime.md>",
     ].join("\n"));
   });
 
@@ -285,24 +341,12 @@ describe("createSystemContextProvider", () => {
         ownerIdentity: OWNER_IDENTITY,
       }),
     );
-    expect(sections).toEqual([
-      expect.objectContaining({
-        name: "00-runtime.md",
-        contextRoot: expect.objectContaining({
-          key: "system",
-          label: "SYSTEM",
-          location: "/sys/config/ai/context.d",
-        }),
-      }),
-      expect.objectContaining({
-        name: "01-gsv.md",
-        contextRoot: expect.objectContaining({
-          key: "system",
-          label: "SYSTEM",
-          location: "/sys/config/ai/context.d",
-        }),
-      }),
-    ]);
+    expect(sections.map((section) => section.name)).toEqual(["00-runtime.md", "01-gsv.md"]);
+    expect(provider.layer?.(makeInput())).toEqual({
+      key: "system",
+      access: "read-only",
+      location: "/sys/config/ai/context.d",
+    });
     const text = sections.map((section) => section.text).join("\n");
     const expectedDate = currentDateInTimezone("Europe/Amsterdam");
     expect(text).toContain("Running in GSV for root at /root/projects/demo");
@@ -365,37 +409,42 @@ describe("createSystemContextProvider", () => {
 });
 
 describe("createRoleContextProvider", () => {
-  it("renders the role's shipped files read-only between system and home context", async () => {
+  it("renders the role's shipped files as the read-only base layer after system", async () => {
     const input = makeInput({
       identity: { ...OWNER_IDENTITY, uid: 1001, gid: 1001, username: "ship", home: "/home/ship", cwd: "/home/ship" },
       ownerIdentity: OWNER_IDENTITY,
     });
     input.config = {
       ...input.config,
-      systemContextFiles: [{ name: "00-runtime.md", text: "Runtime." }],
-      roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "05-voice.md", text: "Save preferences in {{owner.home}}/context.d." }] },
+      systemContextFiles: [{ name: "environment.md", text: "Runtime." }],
+      roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "voice.md", text: "Save preferences in {{owner.home}}/context.d." }] },
     };
     const snapshot = await assembleSystemPromptSnapshot(input, [createSystemContextProvider(), createRoleContextProvider()]);
     expect(snapshot.prompt).toBe([
-      '<system path="/sys/config/ai/context.d/">',
-      "<00-runtime.md>",
-      "Runtime.",
-      "</00-runtime.md>",
-      "</system>",
+      ...LEGEND_HEAD,
+      "system  /sys/config/ai/context.d/       read-only",
+      "base    /sys/config/ai/ship/context.d/  read-only",
+      "</context_layers>",
       "",
-      '<ship path="/sys/config/ai/ship/context.d/">',
-      "<05-voice.md>",
+      "<environment.md>",
+      "<system>",
+      "Runtime.",
+      "</system>",
+      "</environment.md>",
+      "",
+      "<voice.md>",
+      "<base>",
       "Save preferences in /home/hank/context.d.",
-      "</05-voice.md>",
-      "</ship>",
+      "</base>",
+      "</voice.md>",
     ].join("\n"));
     expect(snapshot.sources[1]).toMatchObject({
       provider: "role.context",
-      contextRoot: { key: "ship", access: "read-only", location: "/sys/config/ai/ship/context.d" },
+      contextRoot: { key: "base", access: "read-only", location: "/sys/config/ai/ship/context.d" },
     });
   });
 
-  it("renders whatever role and location the Kernel names", async () => {
+  it("names whatever base location the Kernel gives in the legend", async () => {
     const input = makeInput();
     input.config = {
       ...input.config,
@@ -403,11 +452,15 @@ describe("createRoleContextProvider", () => {
     };
     const snapshot = await assembleSystemPromptSnapshot(input, [createRoleContextProvider()]);
     expect(snapshot.prompt).toBe([
-      '<concierge path="/sys/config/ai/concierge/context.d/">',
+      ...LEGEND_HEAD,
+      "base    /sys/config/ai/concierge/context.d/  read-only",
+      "</context_layers>",
+      "",
       "<00-role.md>",
+      "<base>",
       "Greet guests.",
+      "</base>",
       "</00-role.md>",
-      "</concierge>",
     ].join("\n"));
   });
 
@@ -435,7 +488,7 @@ describe("createSkillIndexProvider", () => {
     const prompt = await assembleSystemPrompt(makeInput(), providers);
 
     expect(prompt).toContain("<available_skills>");
-    expect(prompt).toContain("<system path=\"/sys/config/ai/context.d/\">");
+    expect(prompt).toContain("<00-runtime.md>\n<system>");
     expect(prompt).toContain("Use `skills list <skill>`");
     expect(prompt).toContain("<skill>");
     expect(prompt).toContain("<name>device-management</name>");
@@ -463,7 +516,7 @@ describe("createSkillIndexProvider", () => {
 });
 
 describe("createHomeContextProvider", () => {
-  it("loads sorted context files within budget", async () => {
+  it("loads sorted context files within budget, as the user layer for a person's own process", async () => {
     const provider = createHomeContextProvider();
     const homeRepo = accountHomeRepoRef(IDENTITY.username);
     const sections = await provider.collect(
@@ -506,12 +559,9 @@ describe("createHomeContextProvider", () => {
     expect(sections.map((section) => section.name)).toEqual([
       "a.md",
     ]);
-    expect(sections[0].contextRoot).toEqual({
-      key: "program",
-      label: "PROGRAM",
-      access: "editable",
-      location: "/root/context.d",
-    });
+    expect(provider.layer?.(makeInput())).toEqual({ key: "user", access: "editable", location: "/root/context.d" });
+    expect(provider.layer?.(makeInput({ ownerIdentity: OWNER_IDENTITY })))
+      .toEqual({ key: "agent", access: "editable", location: "/root/context.d" });
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
     ]);

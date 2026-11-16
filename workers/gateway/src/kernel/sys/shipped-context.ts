@@ -13,7 +13,7 @@ type ShippedRole = "ship" | "crew";
 /**
  * The read-only standing context a Ship or its Crew runs with, from
  * `config/ai/{ship,crew}/context.d`, named after its role. A Ship's context
- * names its Crew account; a line that would name one before the Crew exists is
+ * names its Crew account; a line that would name it before the Crew exists is
  * left out.
  */
 export function shippedRoleContext(
@@ -24,9 +24,12 @@ export function shippedRoleContext(
   const crewUid = ctx.config.get(crewAccountKey(ownerUid));
   if (ctx.auth.isPersonalAgentUid(account.uid)) {
     const crew = crewUid === null ? undefined : ctx.auth.getPasswdByUid(Number(crewUid))?.username;
-    const files = roleFiles(ctx, "ship")
-      .filter(({ text }) => crew !== undefined || !text.includes(CREW_PLACEHOLDER))
-      .map(({ name, text }) => ({ name, text: crew === undefined ? text : text.replaceAll(CREW_PLACEHOLDER, () => crew) }));
+    const files = roleFiles(ctx, "ship").map(({ name, text }) => ({
+      name,
+      text: crew === undefined
+        ? text.split("\n").filter((line) => !line.includes(CREW_PLACEHOLDER)).join("\n")
+        : text.replaceAll(CREW_PLACEHOLDER, () => crew),
+    }));
     return roleContext("ship", files);
   }
   if (crewUid !== null && Number(crewUid) === account.uid) return roleContext("crew", roleFiles(ctx, "crew"));
@@ -46,10 +49,11 @@ function roleFiles(ctx: Pick<KernelContext, "config">, role: ShippedRole): Conte
 }
 
 /**
- * Ship and Crew homes used to receive copies of their role's context; the
- * Kernel now serves it. Once per account and Kernel lifetime, a copy that
- * matches a shipped revision is deleted, and any other is moved to
- * `context.d/retired/`, where it stays readable but no longer loads.
+ * Ship and Crew homes used to receive copies of their role's context under the
+ * names in SHIPPED_CONTEXT_SHA256S; the Kernel now serves it. Once per account
+ * and Kernel lifetime, a copy that matches a shipped revision is deleted, and
+ * any other file under one of those names is moved to `context.d/retired/`,
+ * where it stays readable but no longer loads.
  */
 export function retireSeededRoleContext(
   ctx: Pick<KernelContext, "env" | "auth">,
@@ -74,22 +78,17 @@ export async function seededRoleContextCleanupOps(
     client.readPath(repo, "context.d/retired"),
   ]);
   if (root.kind !== "tree") return [];
-  const shipped = new Map(role.files.map((file) => [file.name, file.text]));
-  // Revisions are keyed by role name and list every file a role ever shipped, including ones it no longer has.
-  const names = new Set([
-    ...shipped.keys(),
-    ...[...SHIPPED_REVISIONS.keys()].filter((key) => key.startsWith(`${role.name}/`)).map((key) => key.slice(role.name.length + 1)),
-  ]);
+  // Only names that were once copied into homes; an account's own file never shares one.
+  const names = new Set([...SHIPPED_REVISIONS.keys()]
+    .filter((key) => key.startsWith(`${role.name}/`))
+    .map((key) => key.slice(role.name.length + 1)));
   const taken = new Set(retired.kind === "tree" ? retired.entries.map((entry) => entry.name) : []);
   const copies = root.entries.filter((entry) => entry.type === "blob" && names.has(entry.name)).map((entry) => entry.name).sort();
   const ops: RipgitApplyOp[] = [];
   for (const name of copies) {
     const copy = await client.readPath(repo, `context.d/${name}`);
     if (copy.kind !== "file") continue;
-    const hash = await sha256Hex(copy.bytes);
-    const current = shipped.get(name);
-    if (SHIPPED_REVISIONS.get(`${role.name}/${name}`)?.includes(hash)
-      || (current !== undefined && hash === await sha256Hex(new TextEncoder().encode(current)))) {
+    if (SHIPPED_REVISIONS.get(`${role.name}/${name}`)?.includes(await sha256Hex(copy.bytes))) {
       ops.push({ type: "delete", path: `context.d/${name}` });
       continue;
     }

@@ -1,5 +1,7 @@
-import type {
-  PromptAssemblyInput, PromptAssemblySnapshot, PromptContextProvider, PromptSection, PromptSourceRecord,
+import {
+  CONTEXT_LAYERS,
+  type ContextLayerRoot, type PromptAssemblyInput, type PromptAssemblySnapshot, type PromptContextProvider,
+  type PromptSection, type PromptSourceRecord,
 } from "./types";
 import { resolvePromptProviders } from "./selection";
 
@@ -14,7 +16,8 @@ export async function assembleSystemPromptSnapshot(
   input: PromptAssemblyInput,
   providers: PromptContextProvider[] = resolvePromptProviders(),
 ): Promise<PromptAssemblySnapshot> {
-  const contextSections: PromptSection[] = [];
+  const layers: ContextLayerRoot[] = [];
+  const contextSections: LayeredSection[] = [];
   const regularParts: string[] = [];
   const sources: PromptSourceRecord[] = [];
 
@@ -23,6 +26,8 @@ export async function assembleSystemPromptSnapshot(
     providers.map(async (provider) => ({ provider, sections: await provider.collect(input) })),
   );
   for (const { provider, sections } of collected) {
+    const layer = provider.layer?.(input) ?? null;
+    if (layer) layers.push(layer);
     for (const section of sections) {
       const text = section.text.trim();
       if (!text) {
@@ -34,11 +39,11 @@ export async function assembleSystemPromptSnapshot(
         bytes: new TextEncoder().encode(text).byteLength,
         sha256: await sha256Hex(text),
       };
-      if (section.contextRoot) source.contextRoot = section.contextRoot;
+      if (layer) source.contextRoot = layer;
       if (section.responsibilityBaseline === true) source.responsibilityBaseline = true;
       sources.push(source);
-      if (section.contextRoot) {
-        contextSections.push({ ...section, text });
+      if (layer) {
+        contextSections.push({ ...section, text, contextRoot: layer });
       } else {
         regularParts.push(renderSection(section.name, text));
       }
@@ -46,7 +51,7 @@ export async function assembleSystemPromptSnapshot(
   }
 
   const parts = [
-    ...(contextSections.length > 0 ? [renderContextSections(contextSections)] : []),
+    ...(layers.length > 0 ? [renderContextSections(layers, contextSections)] : []),
     ...regularParts,
   ];
   return {
@@ -65,40 +70,39 @@ function renderSection(name: string, text: string): string {
   return `<${tag}>\n${text}\n</${tag}>`;
 }
 
-function renderContextSections(sections: PromptSection[]): string {
-  const roots = new Map<string, { root: NonNullable<PromptSection["contextRoot"]>; sections: PromptSection[] }>();
-  for (const section of sections) {
-    const root = section.contextRoot;
-    if (!root) continue;
-    const existing = roots.get(root.key);
-    if (existing) {
-      existing.sections.push(section);
-    } else {
-      roots.set(root.key, { root, sections: [section] });
-    }
+type LayeredSection = PromptSection & { contextRoot: ContextLayerRoot };
+
+/**
+ * Standing context renders once per file name, in name order. Each name holds
+ * its layers in precedence order, so a later layer reads as a refinement of an
+ * earlier one. A legend names every layer the process has, with its folder,
+ * including layers that hold no files yet.
+ */
+function renderContextSections(layers: ContextLayerRoot[], sections: LayeredSection[]): string {
+  const layerIndex = (root: ContextLayerRoot) => CONTEXT_LAYERS.indexOf(root.key);
+  const roots = [...layers].sort((left, right) => layerIndex(left) - layerIndex(right));
+  const files = new Map<string, LayeredSection[]>();
+  for (const section of [...sections].sort((left, right) => layerIndex(left.contextRoot) - layerIndex(right.contextRoot))) {
+    files.set(section.name, [...(files.get(section.name) ?? []), section]);
   }
 
-  const lines: string[] = [];
-  for (const { root, sections: rootSections } of roots.values()) {
-    const tag = contextRootTagName(root.key);
-    lines.push(`<${tag} path="${escapeAttribute(normalizePromptPath(root.location))}">`);
-    for (const section of rootSections) {
-      lines.push(`<${section.name}>`, section.text.trim(), `</${section.name}>`, "");
+  const width = Math.max(...roots.map((root) => normalizePromptPath(root.location).length));
+  const lines = [
+    "<context_layers>",
+    "Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.",
+    ...roots.map((root) =>
+      `${root.key.padEnd(6)}  ${normalizePromptPath(root.location).padEnd(width)}  ${root.access}`),
+    "</context_layers>",
+  ];
+  for (const name of [...files.keys()].sort((left, right) => left.localeCompare(right))) {
+    lines.push("", `<${name}>`);
+    for (const section of files.get(name)!) {
+      const layer = section.contextRoot.key;
+      lines.push(`<${layer}>`, section.text.trim(), `</${layer}>`);
     }
-    while (lines[lines.length - 1] === "") {
-      lines.pop();
-    }
-    lines.push(`</${tag}>`, "");
+    lines.push(`</${name}>`);
   }
-  while (lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
   return lines.join("\n");
-}
-
-function contextRootTagName(key: NonNullable<PromptSection["contextRoot"]>["key"]): string {
-  return sectionTagName(key);
 }
 
 function sectionTagName(name: string): string {
@@ -111,12 +115,4 @@ function normalizePromptPath(location: string): string {
     return `${trimmed}/`;
   }
   return trimmed;
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }

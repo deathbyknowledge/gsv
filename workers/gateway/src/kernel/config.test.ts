@@ -95,7 +95,7 @@ describe("ConfigStore", () => {
       const values = new Map(ai.map((entry) => [entry.key, entry.value]));
       expect(values.get("config/ai/reasoning")).toBe("medium");
       expect(values.get("config/ai/generation/streaming")).toBe("off");
-      expect(values.get("config/ai/context.d/02-interaction.md")).toContain(
+      expect(values.get("config/ai/context.d/environment.md")).toContain(
         "[GSV EVENT]",
       );
     },
@@ -188,30 +188,24 @@ describe("ConfigStore", () => {
   );
 
   it("includes shared runtime contracts and substitutions without pinning their prose", () => {
-    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/02-interaction.md"];
-    for (const marker of ["[GSV EVENT]", "Send", "yield: true", "attach"]) {
-      expect(context).toContain(marker);
-    }
-    const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
+    const environment = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/environment.md"]!;
+    expect(environment).toContain("[GSV EVENT]");
+    // Send explains itself where a run offers it; a delegated call has no Send.
+    expect(environment).not.toContain("yield: true");
     for (const command of ["targets list", "`gsv`", "fs.search", "skills show browser-target", "skills show connect-device"]) {
-      expect(targets).toContain(command);
+      expect(environment).toContain(command);
     }
-    const responsibilities = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
-    expect(responsibilities).toContain("`r12y`");
-    expect(responsibilities).toContain("{{r12y}}");
-    const discovery = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
-    expect(discovery).toContain("man --search -- '<plain-language goal>'");
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(discovery).toContain("mcpTools");
+    expect(environment).toContain("`r12y`");
+    expect(environment).toContain("{{r12y}}");
+    expect(environment).toContain("man --search -- '<plain-language goal>'");
+    expect(environment).toContain("mcpTools");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe("summary");
-    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"])
-      .toContain("skills show process-orchestration");
-    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
+    expect(environment).toContain("skills show process-orchestration");
     for (const variable of [
       "program.username", "user.username", "program.home", "user.home", "program.cwd",
       "current.date", "current.timezone", "user.language", "targets", "mcpServers",
     ]) {
-      expect(runtimeFacts).toContain(`{{${variable}}}`);
+      expect(environment).toContain(`{{${variable}}}`);
     }
   });
 

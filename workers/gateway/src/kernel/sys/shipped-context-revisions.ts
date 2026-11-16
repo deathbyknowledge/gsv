@@ -2,7 +2,8 @@
  * SHA-256 of every revision of the Ship and Crew context files that homes
  * received as copies, oldest first, with the commit that shipped it. The copy
  * of `10-delegation.md` named the Crew account, so its revisions are hashed
- * with the default name `crew`. The cleanup deletes a copy that still matches
+ * with the default name `crew`; a copy naming another Crew account is moved
+ * rather than deleted. The cleanup deletes a copy that still matches
  * one of these; it is cleanup input only, and can be deleted once the cleanup
  * has run for a release or two.
  */

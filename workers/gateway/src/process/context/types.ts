@@ -30,17 +30,21 @@ export type PromptAssemblyInput = {
   ripgit: PromptRipgitClient | null;
 };
 
+/** Standing context layers, in precedence order: a later layer refines an earlier one. */
+export const CONTEXT_LAYERS = ["system", "base", "agent", "user"] as const;
+export type ContextLayer = typeof CONTEXT_LAYERS[number];
+
+/** Where a standing context layer lives and whether the process can change it. */
+export type ContextLayerRoot = {
+  key: ContextLayer;
+  access: "read-only" | "editable";
+  location: string;
+};
+
 export type PromptSection = {
   name: string;
   text: string;
   responsibilityBaseline?: boolean;
-  contextRoot?: {
-    /** "system", "program", "user", or the name of the Kernel-selected role context. */
-    key: string;
-    label: string;
-    access: "read-only" | "editable";
-    location: string;
-  };
 };
 
 export type PromptSourceRecord = {
@@ -49,7 +53,8 @@ export type PromptSourceRecord = {
   bytes: number;
   sha256: string;
   responsibilityBaseline?: boolean;
-  contextRoot?: PromptSection["contextRoot"];
+  /** The layer a standing context file comes from; same-named files render together, in layer order. */
+  contextRoot?: ContextLayerRoot;
 };
 
 export type PromptAssemblySnapshot = {
@@ -59,5 +64,11 @@ export type PromptAssemblySnapshot = {
 
 export type PromptContextProvider = {
   name: string;
+  /**
+   * The standing context layer this provider's files belong to, or null when
+   * the process has no such layer. A layer the process has is named in the
+   * prompt even when it holds no files, so an editable one stays discoverable.
+   */
+  layer?(input: PromptAssemblyInput): ContextLayerRoot | null;
   collect(input: PromptAssemblyInput): Promise<PromptSection[]>;
 };
