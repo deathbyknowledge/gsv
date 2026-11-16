@@ -163,7 +163,9 @@ The owner session lists unfinished setups independently of browser storage.
 The request may also carry an optional attribution: the placement and example
 slugs the website put in the signup link's fragment and the campaign tags
 (`utm_source`, `utm_campaign`) an ad put in its query. The signup page reads
-them in the browser and keeps them in its own signup state; Accounts bounds
+them in the browser and keeps them in its own signup state. A later link that
+carries its own replaces them; a load without one, such as a reload or a tab
+the browser restores, keeps them. Accounts bounds
 their shape, classifies the placement and example into a closed allowlist
 (unknown values become `other`) and reports them once, as
 `installation.attributed`, from the request that first creates the reservation
