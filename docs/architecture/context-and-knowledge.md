@@ -49,9 +49,10 @@ interaction:
 The conventional shared file is `context.d/personal.md`. An owned agent sees
 it as the editable user layer in the prompt; `~` still refers to that agent's
 own home. Keep shared context short and specific. The personal intelligence's behaviour
-and voice ship with each release as read-only Ship context; a person's
-preferences about how they are spoken to go in their own `context.d/voice.md`,
-which renders after the Ship's voice and overrides it. Unresolved work belongs in the Kernel responsibility ledger rather
+and voice ship with each release as the read-only base layer; what a person
+asks of how their Ship talks or works goes in the Ship's own
+`context.d/voice.md` or `context.d/behaviour.md`, which render after the
+shipped files of the same name and refine them. Unresolved work belongs in the Kernel responsibility ledger rather
 than standing context. Detailed or occasionally relevant information belongs
 in the Personal wiki.
 

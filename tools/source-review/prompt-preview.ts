@@ -18,10 +18,10 @@ type PromptPreview = PromptAssemblySnapshot & {
 
 // This fixture uses the production defaults and providers, with local sample identities.
 // It never contacts a space or reads customer context.
-// ownerFiles adds sample files to the owner's context.d, such as a voice.md, to show how layers combine.
+// homeFiles adds sample files to the account's own context.d, such as a voice.md, to show how layers combine.
 export async function createPromptPreview(
   account: PreviewAccount,
-  ownerFiles: Record<string, string> = {},
+  homeFiles: Record<string, string> = {},
 ): Promise<PromptPreview> {
   const systemContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
@@ -35,7 +35,7 @@ export async function createPromptPreview(
     }));
   const files = new Map<string, string>([
     ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
-    ...Object.entries(ownerFiles).map(([name, text]) => [`home/alex/context.d/${name}`, text] as const),
+    ...Object.entries(homeFiles).map(([name, text]) => [`home/${account}/context.d/${name}`, text] as const),
   ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,

@@ -592,12 +592,13 @@ describe("handleAiConfig", () => {
     }
   });
 
-  it("serves a Ship its shipped context, clears old copies from its home once, and puts the owner's voice after it", async () => {
+  it("serves a Ship its shipped context, clears old copies from its home once, and keeps its own voice after the shipped one", async () => {
     const files = new Map([
       ["friday/context.d/10-delegation.md", "Crew account: `crew`\n"],
       ["friday/context.d/05-voice.md", "# Voice\n\nAn edited old copy.\n"],
       ["friday/context.d/20-projects.md", "Ship's own notes."],
-      ["sam/context.d/voice.md", "Always answer in Dutch."],
+      ["friday/context.d/voice.md", "Always answer in Dutch."],
+      ["sam/context.d/personal.md", "Likes tea."],
     ]);
     const applied: RipgitApplyOp[] = [];
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -663,12 +664,12 @@ describe("handleAiConfig", () => {
     expect(rendered.sources.filter((source) => source.contextRoot?.key !== "system").map((source) => `${source.contextRoot?.key}:${source.name}`))
       .toEqual([
         "base:behaviour.md", "base:voice.md",
-        "agent:20-projects.md",
-        "user:voice.md",
+        "agent:20-projects.md", "agent:voice.md",
+        "user:personal.md",
       ]);
     expect(rendered.prompt).not.toContain("An edited old copy.");
-    // The owner's voice is the last layer of voice.md, right after the Ship's.
-    expect(rendered.prompt).toMatch(/<voice\.md>\n<base>\n[\s\S]*\n<\/base>\n<user>\nAlways answer in Dutch\.\n<\/user>\n<\/voice\.md>/);
+    // The Ship's own voice.md is the agent layer of voice.md, right after the shipped base.
+    expect(rendered.prompt).toMatch(/<voice\.md>\n<base>\n[\s\S]*\n<\/base>\n<agent>\nAlways answer in Dutch\.\n<\/agent>\n<\/voice\.md>/);
   });
 
   it("retries account memory reconciliation after a failed read", async () => {

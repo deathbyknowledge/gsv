@@ -25,7 +25,7 @@ matching command, skill, target, or connected integration.
 
 The prompt groups standing context by file name, in name order. Each name
 renders its layers in precedence order, so a later layer refines an earlier
-one under the same name: the owner's `voice.md` follows the Ship's. A legend
+one under the same name: the Ship's own `voice.md` follows the shipped one. A legend
 names every layer the process has, with its folder and access, even one that
 holds no files yet, so an agent can see where its own refinements go. Each
 file then carries only its layer tag:
@@ -43,9 +43,9 @@ user    /home/alex/context.d/           editable
 <base>
 # Voice ...
 </base>
-<user>
-Always answer in Dutch.
-</user>
+<agent>
+Keep replies to one sentence.
+</agent>
 </voice.md>
 ```
 
@@ -57,8 +57,8 @@ The shipped files are named by what they hold rather than numbered:
 | File | Layer | Holds |
 |---|---|---|
 | `environment.md` | system | Where every agent is and how things work there: runtime facts, the Ship and its runtime, authority, targets, responsibilities, memory, discovery |
-| `behaviour.md` | Ship, Crew | The role's job |
-| `voice.md` | Ship | How the Ship sounds, to its owner and to others |
+| `behaviour.md` | Ship, Crew | The agent's job and how it works, including speaking for the owner |
+| `voice.md` | Ship | How the Ship talks |
 
 How a run delivers its result is not standing context. A run someone is
 waiting on is offered the Send tool, whose description explains it; a delegated
@@ -84,10 +84,18 @@ config/ai/crew/context.d/behaviour.md
 The Ship's `behaviour.md` names the owner's Crew account; the gateway fills in
 the name for each Ship and leaves that line out until the Crew account exists.
 
-How a person wants to be spoken to belongs in their own `~/context.d/voice.md`.
-Its user layer renders after the Ship's shipped voice and overrides it.
-Facts about the person belong in their `personal.md`. Both are owner
-context, so every agent working for the person reads them.
+What the person asks of their Ship belongs in the Ship's own home, as its
+agent layer, because only the Ship talks to the person:
+
+- how the Ship talks, such as shorter messages, in `~/context.d/voice.md`;
+- how the Ship works, such as how much initiative it takes or how often it
+  follows up, in `~/context.d/behaviour.md`.
+
+Each renders right after the shipped file of the same name and refines it, so
+release updates still reach the Ship and the person's changes stay. Facts and
+preferences that every agent working for the person should follow belong in
+the owner's `personal.md` instead. The owner can read and edit the Ship's home,
+since they own the account.
 
 Ship and Crew homes used to receive copies of these files under numbered names
 such as `00-role.md` and `05-voice.md`. The first time a process loads its
@@ -109,8 +117,9 @@ Conventional files include:
 
 ```text
 <agent home>/context.d/05-persona.md
+<Ship home>/context.d/voice.md
+<Ship home>/context.d/behaviour.md
 <human home>/context.d/personal.md
-<human home>/context.d/voice.md
 ```
 
 Keep both layers short and stable. The shared `personal.md` is for explicit
