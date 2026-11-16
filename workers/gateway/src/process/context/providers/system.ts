@@ -1,17 +1,18 @@
-import type { PromptContextProvider, PromptSection } from "../types";
+import type { ContextLayerRoot, PromptContextProvider, PromptSection } from "../types";
 
 const MAX_RENDERED_TARGETS = 5;
 
 export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
+    layer: () => SYSTEM_ROOT,
     async collect(input) {
-      return renderContextFiles(input.config.systemContextFiles, input, SYSTEM_ROOT);
+      return renderContextFiles(input.config.systemContextFiles, input);
     },
   };
 }
 
-const SYSTEM_ROOT: NonNullable<PromptSection["contextRoot"]> = {
+const SYSTEM_ROOT: ContextLayerRoot = {
   key: "system",
   access: "read-only",
   location: "/sys/config/ai/context.d",
@@ -21,14 +22,12 @@ const SYSTEM_ROOT: NonNullable<PromptSection["contextRoot"]> = {
 export function createRoleContextProvider(): PromptContextProvider {
   return {
     name: "role.context",
-    async collect(input) {
+    layer(input) {
       const role = input.config.roleContext;
-      if (!role) return [];
-      return renderContextFiles(role.files, input, {
-        key: "role",
-        access: "read-only",
-        location: role.location,
-      });
+      return role ? { key: "role", access: "read-only", location: role.location } : null;
+    },
+    async collect(input) {
+      return renderContextFiles(input.config.roleContext?.files, input);
     },
   };
 }
@@ -36,7 +35,6 @@ export function createRoleContextProvider(): PromptContextProvider {
 function renderContextFiles(
   files: Array<{ name: string; text: string }> | undefined,
   input: Parameters<typeof renderContextTemplate>[1],
-  contextRoot: NonNullable<PromptSection["contextRoot"]>,
 ): PromptSection[] {
   return [...(files ?? [])]
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -45,11 +43,7 @@ function renderContextFiles(
       if (!text) {
         return null;
       }
-      const section: PromptSection = {
-        name: file.name,
-        text,
-        contextRoot,
-      };
+      const section: PromptSection = { name: file.name, text };
       if (countResponsibilityTemplates(file.text) > 0) section.responsibilityBaseline = true;
       return section;
     })

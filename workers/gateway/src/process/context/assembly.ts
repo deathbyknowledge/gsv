@@ -1,7 +1,7 @@
 import {
   CONTEXT_LAYERS,
-  type ContextLayer, type PromptAssemblyInput, type PromptAssemblySnapshot, type PromptContextProvider, type PromptSection,
-  type PromptSourceRecord,
+  type ContextLayerRoot, type PromptAssemblyInput, type PromptAssemblySnapshot, type PromptContextProvider,
+  type PromptSection, type PromptSourceRecord,
 } from "./types";
 import { resolvePromptProviders } from "./selection";
 
@@ -16,6 +16,7 @@ export async function assembleSystemPromptSnapshot(
   input: PromptAssemblyInput,
   providers: PromptContextProvider[] = resolvePromptProviders(),
 ): Promise<PromptAssemblySnapshot> {
+  const layers: ContextLayerRoot[] = [];
   const contextSections: LayeredSection[] = [];
   const regularParts: string[] = [];
   const sources: PromptSourceRecord[] = [];
@@ -25,6 +26,8 @@ export async function assembleSystemPromptSnapshot(
     providers.map(async (provider) => ({ provider, sections: await provider.collect(input) })),
   );
   for (const { provider, sections } of collected) {
+    const layer = provider.layer?.(input) ?? null;
+    if (layer) layers.push(layer);
     for (const section of sections) {
       const text = section.text.trim();
       if (!text) {
@@ -36,11 +39,11 @@ export async function assembleSystemPromptSnapshot(
         bytes: new TextEncoder().encode(text).byteLength,
         sha256: await sha256Hex(text),
       };
-      if (section.contextRoot) source.contextRoot = section.contextRoot;
+      if (layer) source.contextRoot = layer;
       if (section.responsibilityBaseline === true) source.responsibilityBaseline = true;
       sources.push(source);
-      if (section.contextRoot) {
-        contextSections.push({ ...section, text, contextRoot: section.contextRoot });
+      if (layer) {
+        contextSections.push({ ...section, text, contextRoot: layer });
       } else {
         regularParts.push(renderSection(section.name, text));
       }
@@ -48,7 +51,7 @@ export async function assembleSystemPromptSnapshot(
   }
 
   const parts = [
-    ...(contextSections.length > 0 ? [renderContextSections(contextSections)] : []),
+    ...(layers.length > 0 ? [renderContextSections(layers, contextSections)] : []),
     ...regularParts,
   ];
   return {
@@ -67,28 +70,27 @@ function renderSection(name: string, text: string): string {
   return `<${tag}>\n${text}\n</${tag}>`;
 }
 
-type LayeredSection = PromptSection & { contextRoot: NonNullable<PromptSection["contextRoot"]> };
+type LayeredSection = PromptSection & { contextRoot: ContextLayerRoot };
 
 /**
  * Standing context renders once per file name, in name order. Each name holds
  * its layers in precedence order, so a later layer reads as a refinement of an
- * earlier one; a legend names each layer's folder once.
+ * earlier one. A legend names every layer the process has, with its folder,
+ * including layers that hold no files yet.
  */
-function renderContextSections(sections: LayeredSection[]): string {
-  const layerIndex = (section: LayeredSection) => CONTEXT_LAYERS.indexOf(section.contextRoot.key);
-  const roots = new Map<ContextLayer, LayeredSection["contextRoot"]>();
+function renderContextSections(layers: ContextLayerRoot[], sections: LayeredSection[]): string {
+  const layerIndex = (root: ContextLayerRoot) => CONTEXT_LAYERS.indexOf(root.key);
+  const roots = [...layers].sort((left, right) => layerIndex(left) - layerIndex(right));
   const files = new Map<string, LayeredSection[]>();
-  for (const section of [...sections].sort((left, right) => layerIndex(left) - layerIndex(right))) {
-    const root = section.contextRoot;
-    if (!roots.has(root.key)) roots.set(root.key, root);
+  for (const section of [...sections].sort((left, right) => layerIndex(left.contextRoot) - layerIndex(right.contextRoot))) {
     files.set(section.name, [...(files.get(section.name) ?? []), section]);
   }
 
-  const width = Math.max(...[...roots.values()].map((root) => normalizePromptPath(root.location).length));
+  const width = Math.max(...roots.map((root) => normalizePromptPath(root.location).length));
   const lines = [
     "<context_layers>",
     "Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.",
-    ...[...roots.values()].map((root) =>
+    ...roots.map((root) =>
       `${root.key.padEnd(6)}  ${normalizePromptPath(root.location).padEnd(width)}  ${root.access}`),
     "</context_layers>",
   ];

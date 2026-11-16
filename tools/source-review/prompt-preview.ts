@@ -1,6 +1,8 @@
 import { assembleSystemPromptSnapshot } from "../../workers/gateway/src/process/context/assembly";
 import { resolvePromptProviders } from "../../workers/gateway/src/process/context/selection";
-import type { PromptAssemblyInput, PromptAssemblySnapshot, PromptSection } from "../../workers/gateway/src/process/context/types";
+import type {
+  PromptAssemblyInput, PromptAssemblySnapshot, PromptContextProvider, PromptSection, PromptSourceRecord,
+} from "../../workers/gateway/src/process/context/types";
 import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config";
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
 import { BUILTIN_SKILL_NAMES, SYSTEM_SKILLS_ROOT, readSystemSkillPath } from "../../workers/gateway/src/kernel/sys/builtin-skills";
@@ -8,7 +10,7 @@ import { contextFiles } from "../../workers/gateway/src/prompts/context";
 import { PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
-type PreviewSection = PromptSection & { paths: string[]; provider: string };
+type PreviewSection = PromptSection & { paths: string[]; provider: string; contextRoot?: PromptSourceRecord["contextRoot"] };
 type PromptPreview = PromptAssemblySnapshot & {
   sections: PreviewSection[];
   catalog: PromptSource[];
@@ -82,16 +84,18 @@ export async function createPromptPreview(
     },
   };
   const sections: PreviewSection[] = [];
-  const providers = resolvePromptProviders().map((provider) => ({
-    name: provider.name,
+  const providers = resolvePromptProviders().map((provider): PromptContextProvider => ({
+    ...provider,
     async collect(assemblyInput: PromptAssemblyInput) {
       const collected = await provider.collect(assemblyInput);
+      const contextRoot = provider.layer?.(assemblyInput) ?? undefined;
+      const sourceScope = contextRoot?.key === "role" ? account : contextRoot?.key === "user" ? "user" : "system";
       for (const section of collected) {
-        const layer = section.contextRoot?.key;
-        const sourceScope = layer === "role" ? account : layer === "user" ? "user" : "system";
         const path = `${sourceScope}/context.d/${section.name}`;
         const paths = catalog.some((source) => source.path === path) ? [path] : [];
-        sections.push({ ...section, paths, provider: provider.name });
+        const previewSection: PreviewSection = { ...section, paths, provider: provider.name };
+        if (contextRoot) previewSection.contextRoot = contextRoot;
+        sections.push(previewSection);
       }
       return collected;
     },

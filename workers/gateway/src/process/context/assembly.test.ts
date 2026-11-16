@@ -107,23 +107,26 @@ describe("assembleSystemPrompt", () => {
     const providers: PromptContextProvider[] = [
       {
         name: "owner.context",
+        layer: () => USER,
         async collect() {
-          return [{ name: "voice.md", text: "owner voice", contextRoot: USER }];
+          return [{ name: "voice.md", text: "owner voice" }];
         },
       },
       {
         name: "system.context",
+        layer: () => SYSTEM,
         async collect() {
           return [
-            { name: "voice.md", text: "system voice", contextRoot: SYSTEM },
-            { name: "environment.md", text: "system environment", contextRoot: SYSTEM },
+            { name: "voice.md", text: "system voice" },
+            { name: "environment.md", text: "system environment" },
           ];
         },
       },
       {
         name: "home.context",
+        layer: () => AGENT,
         async collect() {
-          return [{ name: "voice.md", text: "agent voice", contextRoot: AGENT }];
+          return [{ name: "voice.md", text: "agent voice" }];
         },
       },
       {
@@ -165,6 +168,40 @@ describe("assembleSystemPrompt", () => {
       "skill index",
       "</available_skills>",
     ].join("\n"));
+  });
+
+  it("names every layer the process has, including an editable one with no files yet", async () => {
+    const input = makeInput({
+      identity: { ...OWNER_IDENTITY, uid: 1001, gid: 1001, username: "ship", home: "/home/ship", cwd: "/home/ship" },
+      ownerIdentity: OWNER_IDENTITY,
+      ripgit: {
+        async readPath(repo, path) {
+          if (repo.owner !== "hank") return { kind: "missing" };
+          if (path === "context.d") {
+            return { kind: "tree", entries: [{ name: "personal.md", mode: "100644", hash: "p", type: "blob" }] };
+          }
+          const bytes = new TextEncoder().encode("Likes tea.");
+          return { kind: "file", bytes, size: bytes.length };
+        },
+      },
+    });
+    input.config = {
+      ...input.config,
+      systemContextFiles: [{ name: "environment.md", text: "Runtime." }],
+      roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "behaviour.md", text: "Be Ship." }] },
+    };
+
+    const prompt = await assembleSystemPrompt(input);
+
+    expect(prompt.slice(0, prompt.indexOf("</context_layers>"))).toBe([
+      ...LEGEND_HEAD,
+      "system  /sys/config/ai/context.d/       read-only",
+      "role    /sys/config/ai/ship/context.d/  read-only",
+      "agent   /home/ship/context.d/           editable",
+      "user    /home/hank/context.d/           editable",
+      "",
+    ].join("\n"));
+    expect(prompt).not.toContain("<agent>");
   });
 
   it("reads both accounts' context files together and keeps their order", async () => {
@@ -304,22 +341,12 @@ describe("createSystemContextProvider", () => {
         ownerIdentity: OWNER_IDENTITY,
       }),
     );
-    expect(sections).toEqual([
-      expect.objectContaining({
-        name: "00-runtime.md",
-        contextRoot: expect.objectContaining({
-          key: "system",
-          location: "/sys/config/ai/context.d",
-        }),
-      }),
-      expect.objectContaining({
-        name: "01-gsv.md",
-        contextRoot: expect.objectContaining({
-          key: "system",
-          location: "/sys/config/ai/context.d",
-        }),
-      }),
-    ]);
+    expect(sections.map((section) => section.name)).toEqual(["00-runtime.md", "01-gsv.md"]);
+    expect(provider.layer?.(makeInput())).toEqual({
+      key: "system",
+      access: "read-only",
+      location: "/sys/config/ai/context.d",
+    });
     const text = sections.map((section) => section.text).join("\n");
     const expectedDate = currentDateInTimezone("Europe/Amsterdam");
     expect(text).toContain("Running in GSV for root at /root/projects/demo");
@@ -532,11 +559,9 @@ describe("createHomeContextProvider", () => {
     expect(sections.map((section) => section.name)).toEqual([
       "a.md",
     ]);
-    expect(sections[0].contextRoot).toEqual({
-      key: "user",
-      access: "editable",
-      location: "/root/context.d",
-    });
+    expect(provider.layer?.(makeInput())).toEqual({ key: "user", access: "editable", location: "/root/context.d" });
+    expect(provider.layer?.(makeInput({ ownerIdentity: OWNER_IDENTITY })))
+      .toEqual({ key: "agent", access: "editable", location: "/root/context.d" });
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
     ]);

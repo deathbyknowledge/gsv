@@ -1,14 +1,13 @@
 import type { PromptContextProvider } from "../types";
-import { collectAccountContext } from "./account";
+import { accountContextLayer, collectAccountContext, distinctOwner } from "./account";
 
 export function createHomeContextProvider(): PromptContextProvider {
   return {
     name: "home.context",
+    // A person's own process reads their home as the user layer; an agent's home is the agent layer.
+    layer: (input) => accountContextLayer(input.identity, distinctOwner(input) ? "agent" : "user"),
     async collect(input) {
-      // A person's own process reads their home as the user layer; an agent's home is the agent layer.
-      const owner = input.ownerIdentity;
-      const layer = !owner || owner.username === input.identity.username ? "user" : "agent";
-      return collectAccountContext(input, input.identity, layer, "context.d");
+      return collectAccountContext(input, input.identity, "context.d");
     },
   };
 }

@@ -25,15 +25,17 @@ matching command, skill, target, or connected integration.
 The prompt groups standing context by file name, in name order. Each name
 renders its layers in precedence order, so a later layer refines an earlier
 one under the same name: the owner's `voice.md` follows the Ship's. A legend
-names each present layer's folder and access once, and each file then carries
-only its layer tag:
+names every layer the process has, with its folder and access, even one that
+holds no files yet, so an agent can see where its own refinements go. Each
+file then carries only its layer tag:
 
 ```text
 <context_layers>
 Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.
-system  /sys/config/ai/context.d/        read-only
-role    /sys/config/ai/ship/context.d/   read-only
-user    /home/alex/context.d/            editable
+system  /sys/config/ai/context.d/       read-only
+role    /sys/config/ai/ship/context.d/  read-only
+agent   /home/ship/context.d/           editable
+user    /home/alex/context.d/           editable
 </context_layers>
 
 <voice.md>
