@@ -31,12 +31,13 @@ export class ProfileStorage {
     if (!Array.isArray(state.cookies) || !Array.isArray(state.origins)) throw new Error("Invalid saved browser state");
     return state;
   }
-  async save(instance: CloudInstance, state: StorageState, maxBytes: number, signal?: AbortSignal, usage?: BrowserStorageUsage, issues: BrowserStorageIssue[] = []): Promise<void> {
+  /** Returns how many saved sites kept their earlier data without being read. */
+  async save(instance: CloudInstance, state: StorageState, maxBytes: number, signal?: AbortSignal, usage?: BrowserStorageUsage, issues: BrowserStorageIssue[] = []): Promise<number> {
     signal?.throwIfAborted();
-    if (!instance.profileId) return;
+    if (!instance.profileId) return 0;
     const actor = { ownerUid: instance.ownerUid, human: false };
     const row = this.store.ownedProfile(actor, instance.profileId);
-    if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== instance.instanceId) return;
+    if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== instance.instanceId) return 0;
     const previous = profile(row);
     const savedAt = Date.now();
     // A save reads only sites that may have changed. Every other saved site, and a
@@ -80,7 +81,7 @@ export class ProfileStorage {
       if (current && profile(current).state === "active" && profile(current).activeInstanceId === instance.instanceId && current.saved_revision === row.saved_revision) {
         this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, usage });
       }
-      return;
+      return retained.length;
     }
     const revision = row.saved_revision + 1;
     const address = `${this.prefix(row)}${revision}-${crypto.randomUUID()}`;
@@ -102,7 +103,7 @@ export class ProfileStorage {
       }
       signal?.throwIfAborted();
       const current = this.store.ownedProfile(actor, instance.profileId);
-      if (!current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) return;
+      if (!current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) return retained.length;
       this.store.storage.transactionSync(() => {
         this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
         this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, storedBytes, contentHash: hash, usage });
@@ -115,6 +116,7 @@ export class ProfileStorage {
         await this.cleanup();
       }
     }
+    return retained.length;
   }
   hasPendingCleanup(): boolean {
     return this.store.sql.exec("SELECT 1 FROM obsolete_profile_objects LIMIT 1").toArray().length > 0;

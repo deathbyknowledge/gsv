@@ -32,6 +32,8 @@ type RuntimeState = {
 };
 
 /** Owns one surviving Chromium session. Reconnection never launches a replacement. */
+export type BrowserRestore = { restoreMs: number; sitesRestored: number };
+
 export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, DebuggerBackend<CDPSession> {
   readonly fs: BrowserTargetFileSystem;
   readonly files: BrowserFsDriver;
@@ -54,6 +56,8 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     private readonly state: RuntimeState,
     private readonly record: CloudInstance,
     private readonly store: InstanceStore,
+    /** How long restoring the saved profile took, when this attachment restored one. */
+    readonly restored?: BrowserRestore,
   ) {
     this.state.origins = boundedBrowserOrigins(this.state.origins ?? []);
     const observe = (page: Page) => {
@@ -105,6 +109,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     const row = store.byId(record.instanceId);
     let state: RuntimeState;
     let context: BrowserContext;
+    let restored: BrowserRestore | undefined;
     if (row.runtime) {
       // SAFETY: persist() is the sole writer of this private runtime record.
       state = JSON.parse(row.runtime) as RuntimeState;
@@ -138,7 +143,11 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       }
     } else {
       context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      if (savedState) await restoreBrowserStorage(context, savedState);
+      if (savedState) {
+        const started = Date.now();
+        const sitesRestored = await restoreBrowserStorage(context, savedState);
+        restored = { restoreMs: Date.now() - started, sitesRestored };
+      }
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
@@ -147,7 +156,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: boundedBrowserOrigins(savedState?.origins.map(origin => origin.origin) ?? []), unsaved: [] };
     }
     await context.addInitScript(cloudBrowserCredentials);
-    const runtime = new CloudBrowser(browser, context, state, record, store);
+    const runtime = new CloudBrowser(browser, context, state, record, store, restored);
     runtime.persist();
     await runtime.refreshTabs();
     return runtime;

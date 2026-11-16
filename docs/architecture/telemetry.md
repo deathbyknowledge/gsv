@@ -143,14 +143,15 @@ installation gets only the kind and ID: the public `/git/` proxy answers any
 without the parentheses when ripgit did not diagnose it, and deletion errors
 add them after the status.
 
-The component allowlist includes Gateway, Accounts, Inference, Search, Mail and
-ripgit.
+The component allowlist includes Gateway, Accounts, Inference, Search, Mail,
+ripgit and Instances.
 Event ownership is validated as well as the producing Worker: a mail producer
 cannot emit an inference or activation event. The deployment must wire both the
 producer switch and tail consumer; schema support alone does not export anything.
 
 `GsvRuntime` attaches an enabled tail consumer to Gateway and ripgit, sets
-`GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted.
+`GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted. The instances
+Worker is composed by its operator, whose deployment does the same for it.
 `GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
 without granting those adapters ownership of another component's application events.
 
@@ -234,6 +235,17 @@ explicit country rather than geolocating their own export request.
   failure or unknown delivery; deferred processing; entitlement-refresh health.
 - ripgit: unexpected request failures by route class and failure kind, joined to
   the caller's error by diagnostic ID.
+- Instances: cloud browser timings. `browser.save.finished` reports each save's
+  outcome, what started it (a finished handoff, a stop, expiry or a request),
+  its duration, and how many sites it read and how many kept their earlier data.
+  `browser.start.finished` reports once per start whether the browser became
+  ready, was stopped or failed, the time since the start was requested, and the
+  time and site count of restoring a saved profile. `browser.handoff.finished`
+  reports how a login handoff ended, its duration, and how many inputs it took,
+  how many failed, and their median and slowest times. Input timings stay in
+  coordinator memory, so a handoff that outlives a coordinator restart reports
+  no input counts rather than partial ones. No record carries a site, URL,
+  input or profile.
 
 A provider accepting outgoing mail does not prove recipient delivery. Unknown
 outcomes stay unknown. A successful intake does not mean summarization has

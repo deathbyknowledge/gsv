@@ -12,6 +12,7 @@ import { BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
 import type { TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import { decodeBrowserViewStream } from "@humansandmachines/gsv/protocol";
 import type { TestInstanceEvents } from "./worker";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -23,7 +24,7 @@ afterEach(async () => {
   await vi.dynamicImportSettled();
   vi.restoreAllMocks();
 });
-async function fixture(work: (object: InstanceCoordinator, store: InstanceStore, id: string, installationId: string, browser: Partial<CloudBrowser>) => Promise<void>, humanInput = vi.fn(async () => {})) {
+async function fixture(work: (object: InstanceCoordinator, store: InstanceStore, id: string, installationId: string, browser: Partial<CloudBrowser>, ctx: DurableObjectState) => Promise<void>, humanInput = vi.fn(async () => {})) {
   vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
   const shell: Partial<CloudBrowser["shell"]> = { idle: async () => {}, exec: async () => ({ status: "completed", output: "ok", exitCode: 0 }) };
   const browser: Partial<CloudBrowser> = {
@@ -49,7 +50,20 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     const value = store.admit(actor, { requestId: "start", templateId: "browser", lifetimeSeconds: 300 }, limits);
     store.update({ ...value, state: "ready", readyAt: Date.now() });
     store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "test-session", value.instanceId);
-    await work(object, store, value.instanceId, installationId, browser);
+    await work(object, store, value.instanceId, installationId, browser, ctx);
+  });
+}
+
+/** Turns telemetry on for this coordinator and returns each recorded event's properties by name. */
+function telemetry(object: InstanceCoordinator, installationId: string) {
+  Reflect.set(object, "env", { ...env, GSV_TELEMETRY_ENABLED: "1" });
+  const logged: unknown[] = [];
+  vi.spyOn(console, "log").mockImplementation(entry => { logged.push(entry); });
+  return (name: string) => logged.flatMap(entry => {
+    const record = telemetryRecordSchema.safeParse(entry);
+    if (!record.success || record.data.event.name !== name) return [];
+    expect(record.data).toMatchObject({ installationId, component: "instances" });
+    return [record.data.event.properties];
   });
 }
 
@@ -977,6 +991,7 @@ describe("browser health", () => {
       state: { cookies: [], origins: [{ origin: "https://shop.example", localStorage: [{ name: "login", value: "kept" }] }] },
       usage: { complete: false, bytes: 100, cookieBytes: 2, cookies: 0, sites: [] },
       failures: [{ issue: { origin: "https://unsupported.example", reason: "unsupported", message: "This site stores CryptoKey values that cannot be saved by this browser." }, cause: new Error("Unsupported IndexedDB value type: [object CryptoKey]") }],
+      exported: ["https://shop.example", "https://unsupported.example"],
     });
     const { instance: stopped } = await object.stop(actor, { instanceId });
     expect(stopped).toMatchObject({ state: "stopping", persistence: { saveStatus: "partial", issues: [{ origin: "https://unsupported.example", reason: "unsupported", diagnosticRef: expect.any(String) }] } });
@@ -1007,6 +1022,7 @@ describe("browser health", () => {
     browser.save = async () => ({
       state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] },
       failures: Array.from({ length: 128 }, (_, i) => ({ issue: { origin: `https://site-${i}.example.com`, reason: "unavailable" as const, message: "Site storage unavailable" }, cause: `Site ${i} failure ${version}` })),
+      exported: Array.from({ length: 128 }, (_, i) => `https://site-${i}.example.com`),
     });
     const first = (await object.saveProfile(actor, instanceId)).profile!;
     const repeated = (await object.saveProfile(actor, instanceId)).profile!;
@@ -1158,5 +1174,106 @@ describe("installation retirement", () => {
     expect(store.sql.exec("SELECT id FROM profiles").toArray()).toEqual([]);
     await expect(object.start(actor, { requestId: "late", templateId: "browser" })).rejects.toThrow("retired");
     await expect(object.eraseInstallation({ ...request, operationId: "other" })).rejects.toThrow("immutable");
+  }));
+});
+
+describe("timing telemetry", () => {
+  const snapshot = (origins: string[]) => ({
+    state: { cookies: [], origins: origins.map(origin => ({ origin, localStorage: [{ name: "session", value: "1" }] })) },
+    usage: { bytes: 40, cookieBytes: 2, cookies: 0, sites: origins.map(origin => ({ origin, bytes: 30, localStorageBytes: 30, indexedDBBytes: 0, localStorageEntries: 1, databases: 0, records: 0 })) },
+    exported: origins,
+  });
+
+  it("reports each save's trigger and sites, and each handoff's inputs, never a site or input", () => {
+    const delays = [100, 300];
+    return fixture(async (object, _store, instanceId, installationId, browser) => {
+      const events = telemetry(object, installationId);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60_000);
+      const [a, b, c] = ["https://a.example", "https://b.example", "https://c.example"];
+      const saves = [() => snapshot([a, b, c]), () => snapshot([a]), () => { throw new Error("Export failed"); }, () => snapshot([])];
+      browser.save = async () => { vi.setSystemTime(Date.now() + 50); return saves.shift()!(); };
+      const selector = { instanceId, requestId: "login" };
+      const view = { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" };
+
+      await object.saveProfile(actor, instanceId);
+      await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+      await object.openHandoff(actor, selector);
+      await object.input(actor, view, { kind: "text", text: "secret" });
+      await object.input(actor, view, { kind: "key", key: "Enter", modifiers: 0 });
+      await expect(object.input(actor, { ...view, documentId: "replaced" }, { kind: "click", x: 10, y: 10 })).rejects.toThrow("page changed");
+      await object.finishHandoff(actor, selector);
+      await object.saveProfile(actor, instanceId);
+      await object.stop(actor, { instanceId });
+
+      expect(events("browser.save.finished")).toEqual([
+        { outcome: "saved", trigger: "request", durationMs: 50, sitesRead: 3, sitesKept: 0 },
+        { outcome: "saved", trigger: "handoff", durationMs: 50, sitesRead: 1, sitesKept: 2 },
+        { outcome: "failed", trigger: "request", durationMs: 50 },
+        { outcome: "saved", trigger: "stop", durationMs: 50, sitesRead: 0, sitesKept: 3 },
+      ]);
+      expect(events("browser.handoff.finished")).toEqual([
+        { outcome: "completed", durationMs: 450, inputs: 3, inputFailures: 1, inputMedianMs: 100, inputMaxMs: 300 },
+      ]);
+    }, vi.fn(async () => { vi.setSystemTime(Date.now() + delays.shift()!); }));
+  });
+
+  it.each(["ready", "stopped", "failed"] as const)("reports a start that ended %s once, with its restore when ready", outcome => fixture(async (object, store, instanceId, installationId, browser) => {
+    const events = telemetry(object, installationId);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000);
+    store.update({ ...instance(store.byId(instanceId)), state: "starting", readyAt: undefined });
+    store.sql.exec("UPDATE instances SET session_id = NULL WHERE id = ?", instanceId);
+    vi.spyOn(BrowserProvider.prototype, "acquire").mockImplementation(async () => {
+      vi.setSystemTime(Date.now() + 2_000);
+      if (outcome === "failed") throw new Error("No browser available");
+      return "new-session";
+    });
+    Object.assign(browser, { restored: { restoreMs: 1_500, sitesRestored: 4 } });
+    if (outcome === "stopped") await object.stop(actor, { instanceId });
+    else await object.alarm();
+    const durationMs = Date.now() - instance(store.byId(instanceId)).createdAt;
+    const expected = { ready: { outcome, durationMs, restoreMs: 1_500, sitesRestored: 4 }, stopped: { outcome, durationMs }, failed: { outcome, durationMs } }[outcome];
+    expect(events("browser.start.finished")).toEqual([expected]);
+    await object.alarm();
+    expect(events("browser.start.finished")).toEqual([expected]);
+  }));
+
+  it("reports how each handoff ended, without the input counts a coordinator restart lost", () => fixture(async (object, store, instanceId, installationId, browser, ctx) => {
+    const events = telemetry(object, installationId);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000);
+    const request = (requestId: string) => object.requestHandoff(actor, { instanceId, requestId, tabId: 1, purpose: "Sign in" });
+
+    await request("cancelled");
+    await object.openHandoff(actor, { instanceId, requestId: "cancelled" });
+    await object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "cancelled" }, { kind: "text", text: "a" });
+    vi.setSystemTime(Date.now() + 1_000);
+    await object.cancelHandoff(actor, { instanceId, requestId: "cancelled" });
+
+    const { handoff } = await request("expired");
+    store.putHandoff({ ...handoff, expiresAt: Date.now() - 1, revision: handoff.revision + 1 });
+    vi.setSystemTime(Date.now() + 2_000);
+    await object.alarm();
+
+    const getTab = browser.getTab;
+    browser.getTab = async () => null;
+    await expect(request("failed")).rejects.toThrow("no longer exists");
+    browser.getTab = getTab;
+
+    await request("restarted");
+    const restarted = new InstanceCoordinator(ctx, { ...env, GSV_TELEMETRY_ENABLED: "1" });
+    await restarted.cancelHandoff(actor, { instanceId, requestId: "restarted" });
+
+    await request("stopped");
+    await object.stop(actor, { instanceId, force: true });
+
+    expect(events("browser.handoff.finished")).toEqual([
+      { outcome: "cancelled", durationMs: 1_000, inputs: 1, inputFailures: 0, inputMedianMs: 0, inputMaxMs: 0 },
+      { outcome: "expired", durationMs: 2_000, inputs: 0, inputFailures: 0 },
+      { outcome: "failed", durationMs: 0, inputs: 0, inputFailures: 0 },
+      { outcome: "cancelled", durationMs: 0 },
+      { outcome: "cancelled", durationMs: 0, inputs: 0, inputFailures: 0 },
+    ]);
   }));
 });
