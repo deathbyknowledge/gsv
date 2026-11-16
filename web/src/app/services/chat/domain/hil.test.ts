@@ -74,6 +74,13 @@ describe("HIL request wording", () => {
     expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
+  it("says what a shell request without command text does to a running command", () => {
+    expect(hilRequestSentence({ ...shell, args: { input: "", sessionId: "b45f" } }, "my mac")).toBe("Read a running command’s output on my mac");
+    expect(describeCall({ ...shell, args: { input: "\n", sessionId: "b45f" } }, "my mac")).toBe("send input to a running command on my mac");
+    expect(describeCall({ ...shell, args: { input: "", sessionId: "b45f", start: true } }, "my mac")).toBe("run a command on my mac");
+    expect(describeCall({ ...shell, args: { input: "" } }, "my mac")).toBe("run a command on my mac");
+  });
+
   it("shows a crontab's file and jobs, and a plain sentence when the model wrote none", () => {
     const crontab = {
       ...BASE_REQUEST,

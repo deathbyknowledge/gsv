@@ -356,7 +356,9 @@ function callEnding(syscall: string, row: ChatTranscriptRow): CallEnding {
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
   const syscall = row.toolSyscall ?? (row.toolName === "CodeMode" ? "codemode.exec" : row.toolName ?? "call");
   const finished = row.role === "toolResult" || row.status === "done" || row.status === "error";
-  const summary = argumentThatMatters(syscall, row.toolArgs) || (row.toolName === "CodeMode" ? "" : row.toolName ?? syscall);
+  // A command slot holds only command text: a shell call without any, such as a poll, leaves its prompt empty.
+  const summary = argumentThatMatters(syscall, row.toolArgs)
+    || (row.toolName === "CodeMode" || syscall.startsWith("shell.") ? "" : row.toolName ?? syscall);
   const purpose = normalizeCallPurpose(row.toolPurpose);
   let retryKey: string | undefined = summary;
   if (syscall.startsWith("shell.")) {
