@@ -34,7 +34,7 @@ it("enters input in a known open tab without rereading every tab, and finds a ne
     const store = new InstanceStore(ctx.storage);
     const record = store.admit({ ownerUid: 1000, human: true }, { requestId: "input", templateId: "browser" },
       { enabled: true, concurrentInstances: 2, periodSeconds: 1000, maxInstanceSeconds: 600, savedProfiles: 2, profileStorageBytes: 5242880 });
-    store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 3, tabs: { "1": "first", "2": "second" }, origins: [], unsaved: [] }), record.instanceId);
+    store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 3, tabs: { "1": "first", "2": "second" }, origins: [] }), record.instanceId);
     let lookups = 0;
     const typed: string[] = [];
     const targets = new Map<Page, string>();

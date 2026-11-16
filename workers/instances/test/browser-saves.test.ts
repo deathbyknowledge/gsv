@@ -8,12 +8,12 @@ import { InstanceStore } from "../src/store";
 
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 1000, maxInstanceSeconds: 600, savedProfiles: 2, profileStorageBytes: 5242880 };
 
-it("reads only sites with a page open since the last save, and rereads them after a failed commit", async () => {
+it("reads only sites with a page open since the last save, those of a failed commit again, and every site after reattaching", async () => {
   await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (_object, ctx) => {
     const store = new InstanceStore(ctx.storage);
     const record = store.admit({ ownerUid: 1000, human: true }, { requestId: "saves", templateId: "browser" }, limits);
     const [a, b, c, d] = ["https://a.example", "https://b.example", "https://c.example", "https://d.example"];
-    // A browser attached before unsaved sites were tracked has no record of what changed.
+    // Nothing observed this browser before it was attached, so any tracked site may have changed.
     store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 2, tabs: { "1": "live" }, origins: [a, b, c, d] }), record.instanceId);
     // SAFETY: Saving reads only each frame's URL.
     const frame = (url: string) => ({ url: () => url }) as Frame;
@@ -62,10 +62,10 @@ it("reads only sites with a page open since the last save, and rereads them afte
     navigate("about:blank");
     await save();
     expect(read).toEqual([b]);
-    // The coordinator restarted before committing that save.
+    // The coordinator restarted. Nothing observed the browser meanwhile, so every tracked site is read again.
     browser = await attach();
     await save();
-    expect(read).toEqual([b]);
+    expect(read).toEqual([a, b, c, d]);
     await save();
     expect(read).toEqual([]);
   });
@@ -76,7 +76,7 @@ it("rereads a site whose service worker ran with no page open, and keeps it whil
     const store = new InstanceStore(ctx.storage);
     const record = store.admit({ ownerUid: 1000, human: true }, { requestId: "workers", templateId: "browser" }, limits);
     const [a, b] = ["https://a.example", "https://b.example"];
-    store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 2, tabs: { "1": "live" }, origins: [a, b], unsaved: [] }), record.instanceId);
+    store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 2, tabs: { "1": "live" }, origins: [a, b] }), record.instanceId);
     const read: string[] = [];
     // SAFETY: Saving reads only each frame's URL.
     const tab = { isClosed: () => false, frames: () => [{ url: () => "about:blank" } as Frame], on: () => {} } as Page;
@@ -99,7 +99,8 @@ it("rereads a site whose service worker ran with no page open, and keeps it whil
     // SAFETY: Saving reads only a service worker's URL.
     const worker = { url: () => `${a}/sw.js` } as Worker;
 
-    expect(await save()).toEqual([]);
+    // Nothing observed the browser before it was attached, so the first save reads every tracked site.
+    expect(await save()).toEqual([a, b]);
     // The site's worker woke with no page open, so it may have written the site's storage.
     workers = [worker];
     started?.(worker);

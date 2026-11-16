@@ -24,10 +24,11 @@ import { browserTabMetadata, browserViewTabs } from "./browser-metadata";
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = {
   contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[];
-  /** Tracked origins with a page open since the last committed save: only their storage can differ from it. */
-  unsaved?: string[];
-  /** Origins read by the latest save. A reattached browser cannot tell whether it committed, so reads them again. */
-  saving?: string[];
+  /**
+   * Tracked origins whose storage can differ from the last committed save: those with a page
+   * open or a service worker running since then. A reattached browser starts with every one.
+   */
+  unsaved: string[];
 };
 
 /** Owns one surviving Chromium session. Reconnection never launches a replacement. */
@@ -55,9 +56,6 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     private readonly store: InstanceStore,
   ) {
     this.state.origins = boundedBrowserOrigins(this.state.origins ?? []);
-    // A browser attached without this record may have changed any tracked site.
-    this.state.unsaved = [...new Set([...this.state.unsaved ?? this.state.origins, ...this.state.saving ?? []])].filter(origin => this.state.origins!.includes(origin));
-    this.state.saving = [];
     const observe = (page: Page) => {
       const remember = (url: string) => {
         if (this.storagePages.has(page)) return;
@@ -111,6 +109,9 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       // SAFETY: persist() is the sole writer of this private runtime record.
       state = JSON.parse(row.runtime) as RuntimeState;
       state.origins = boundedBrowserOrigins(state.origins ?? [], savedState?.origins.map(origin => origin.origin) ?? []);
+      // Nothing observed the browser while no coordinator was attached, nor knows whether its
+      // last save was committed, so any tracked site may differ from the saved profile.
+      state.unsaved = [...state.origins];
       const candidates = await Promise.all(browser.contexts().map(async candidate => {
         const page = candidate.pages()[0];
         if (!page) return null;
@@ -274,10 +275,9 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       for (const frame of page.frames()) running(frame.url());
     }
     for (const worker of this.context.serviceWorkers()) running(worker.url());
-    const origins = [...new Set([...this.state.unsaved!, ...open])];
+    const origins = [...new Set([...this.state.unsaved, ...open])];
     // Open pages and running service workers can still change their site after the export reads it.
     this.state.unsaved = [...open];
-    this.state.saving = origins;
     this.persist();
     try {
       const snapshot = await exportBrowserStorage(this.context, origins, maxBytes, signal, this.storagePages, (targetId, owned) => {
@@ -297,8 +297,8 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (this.addUnsaved(origins)) this.persist();
   }
   private addUnsaved(origins: string[]): boolean {
-    const added = origins.filter(origin => this.state.origins!.includes(origin) && !this.state.unsaved!.includes(origin));
-    this.state.unsaved!.push(...new Set(added));
+    const added = origins.filter(origin => this.state.origins!.includes(origin) && !this.state.unsaved.includes(origin));
+    this.state.unsaved.push(...new Set(added));
     return added.length > 0;
   }
   async documentId(id: number): Promise<string> {
