@@ -147,9 +147,7 @@ function openedOverflow(element: HTMLElement | null): number {
   if (!element || !transcript) return 0;
   const view = transcript.getBoundingClientRect();
   const box = element.getBoundingClientRect();
-  // Rectangles are in zoomed pixels; scrolling is in the transcript's own.
-  const scale = view.height / transcript.offsetHeight || 1;
-  return Math.max(0, Math.min(box.bottom - view.bottom + 24, box.top - view.top - 96)) / scale;
+  return Math.max(0, Math.min(box.bottom - view.bottom + 24, box.top - view.top - 96));
 }
 
 const ActivityLine = memo(function ActivityLine({

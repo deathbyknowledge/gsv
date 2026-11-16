@@ -139,8 +139,8 @@
 @container instrument (max-width: 720px) {
   .people { grid-template-columns: minmax(0, 1fr); }
   .people-detail { display: none; }
-  .people-conversation-header { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; min-height: calc(52px / var(--type-scale)); padding-block: calc(6px / var(--type-scale)); gap: 0 8px; }
-  .people-conversation-header > .people-action { min-height: calc(44px / var(--type-scale)); }
+  .people-conversation-header { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; min-height: 52px; padding-block: 6px; gap: 0 8px; }
+  .people-conversation-header > .people-action { min-height: 44px; }
   .people-conversation-back { display: block; align-self: start; }
   .people-conversation-menu { display: block; align-self: start; }
   .people-header-actions { display: none; position: absolute; top: calc(100% - 2px); right: var(--people-gutter); z-index: 4; min-width: 140px; max-width: calc(100% - 36px); padding: 8px 16px; border: 1px solid var(--border); background: var(--panel); }
@@ -150,8 +150,8 @@
   .people .people-handling-summary { font-size: 9px; margin-top: 2px; }
   .people-contact, .people-profile { --people-gutter: 18px; }
   .people-history { padding-block: 8px 4px; }
-  .people-composer { padding-bottom: calc(8px / var(--type-scale)); }
-  .people-composer-actions > button { min-height: calc(44px / var(--type-scale)); }
+  .people-composer { padding-bottom: 8px; }
+  .people-composer-actions > button { min-height: 44px; }
   .people-request { padding-block: 24px; }
   .people.has-selection .people-list { display: none; }
   .people.has-selection .people-detail { display: flex; }
@@ -184,7 +184,7 @@
 .people-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; font-size: 10px; }
 .people-view-controls .error { flex-basis: 100%; }
 
-.people-contact .fleet-dialog { width: min(560px, calc(100vw / var(--type-scale) - 32px)); height: min(640px, calc(var(--instrument-height) / var(--type-scale) - 32px)); }
+.people-contact .fleet-dialog { width: min(560px, calc(100vw - 32px)); height: min(640px, calc(var(--instrument-height) - 32px)); }
 .people-contact .fleet-inspector { padding: 12px 32px 32px; }
 .people-contact-origin { margin: 8px 0 28px; color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
 .people-name-field { display: flex; align-items: end; gap: 20px; }
@@ -252,7 +252,7 @@
 .people-invite-person > span { color: var(--text-dim); font-size: 11px; }
 .people-next-step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; width: min(100%, 840px); align-self: center; padding: 0 var(--people-gutter) 14px; box-sizing: border-box; color: var(--text-dim); font: 14px/1.5 var(--gsv-font-prose); }
 :is(.people, .chat-person) .people-action.is-accent { color: var(--accent); }
-.people > .fleet-dialog { width: min(640px, calc(100vw / var(--type-scale) - 32px)); height: min(740px, calc(var(--instrument-height) / var(--type-scale) - 32px)); }
+.people > .fleet-dialog { width: min(640px, calc(100vw - 32px)); height: min(740px, calc(var(--instrument-height) - 32px)); }
 .people > .fleet-dialog .fleet-inspector { padding: 12px 32px 32px; }
 @container instrument (max-width: 720px) {
   .people.is-new { display: flex; flex-direction: column; }

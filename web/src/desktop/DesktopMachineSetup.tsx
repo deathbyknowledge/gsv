@@ -71,25 +71,16 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
     if (!open && dialog.current?.open) dialog.current.close();
   }, [open]);
   useLayoutEffect(() => {
-    const element = dialog.current;
-    const viewport = element?.closest(".instrument-scaled");
-    if (!open || !element || !viewport) return;
-    const art = element.querySelector<HTMLElement>(".desktop-machine-art");
-    // WebKit scales viewport and container units again inside CSS zoom.
-    // ResizeObserver gives layout pixels, so the dialog and glyphs scale once.
+    const art = open ? dialog.current?.querySelector<HTMLElement>(".desktop-machine-art") : null;
+    if (!art) return;
+    // The glyphs fill the illustration's box at whatever size the window gives it.
     const observer = new ResizeObserver((entries) => {
-      for (const { target, contentRect: { width, height } } of entries) {
-        if (target === viewport) {
-          element.style.setProperty("--desktop-machine-width", `${width}px`);
-          element.style.setProperty("--desktop-machine-height", `${height}px`);
-        } else if (target === art) {
-          const fontSize = Math.min(width / COMPUTER_COLUMNS, height / (COMPUTER_ROWS + 2));
-          art.style.setProperty("--desktop-machine-font-size", `${fontSize}px`);
-        }
+      for (const { contentRect: { width, height } } of entries) {
+        const fontSize = Math.min(width / COMPUTER_COLUMNS, height / (COMPUTER_ROWS + 2));
+        art.style.setProperty("--desktop-machine-font-size", `${fontSize}px`);
       }
     });
-    observer.observe(viewport);
-    if (art) observer.observe(art);
+    observer.observe(art);
     return () => observer.disconnect();
   }, [open, showComputer]);
 

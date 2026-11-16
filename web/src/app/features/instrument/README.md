@@ -25,12 +25,11 @@ When Chat's activity line is present, the transcript's bottom edge uses the same
 line and inward glow while it clips text. It clears in gaps and at the end of the
 transcript. Without that activity line, the composer's existing rule is the boundary.
 The star field continues behind both regions without an opaque header backdrop.
-The unscaled content viewport reserves the device's top and side safe-area insets,
-including in landscape, before applying text zoom. Scroll panes in Work, Memory,
+The content viewport reserves the device's top and side safe-area insets,
+including in landscape. Scroll panes in Work, Memory,
 Settings, login and activation extend to the visible bottom edge, with the bottom safe
 inset added inside their content padding. Chat and People reserve that same
-clearance for their bottom controls. The physical inset stays constant at every
-text size. The viewport follows visual viewport and window resize/scroll events,
+clearance for their bottom controls. The viewport follows visual viewport and window resize/scroll events,
 with brief frame tracking around input focus changes. Position corrections are
 immediate; a single reported keyboard-height jump eases over 180ms, reducing only
 the content between the header and composer. Reduced motion applies the height

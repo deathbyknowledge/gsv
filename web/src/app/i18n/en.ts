@@ -1531,7 +1531,6 @@ export const en = {
   "shell.help.memory": "Memory",
   "shell.help.people": "People",
   "shell.help.theme": "Switch between light and dark",
-  "shell.help.textSize": "Cycle text size",
   "shell.help.toggle": "Show or hide Help",
   "shell.help.closePanel": "Close this panel",
   "shell.help.chatBrowse": "Chat · browse",
