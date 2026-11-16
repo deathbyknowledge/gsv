@@ -27,7 +27,7 @@ normal conversation text contract, without request-specific metadata.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Ship and Crew context | `config/ai/{ship,crew}/context.d/` | The release's read-only role and voice for the personal agent and its Crew. |
+| Ship and Crew context | `config/ai/{ship,crew}/context.d/` | The release's read-only behaviour and voice for the personal agent and its Crew. |
 | Program context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
 | User context | `<human home>/context.d/` | Compact standing context layered into every agent owned by that human. |
 | Personal wiki | `/src/repos/<human>/personal/` | Human-owned durable, searchable personal memory shared by all owned agents. |
@@ -48,10 +48,10 @@ interaction:
 
 The conventional shared file is `context.d/10-personal.md`. An owned agent sees
 it under the editable `<user>` prompt root; `~` still refers to that agent's own
-home. Keep shared context short and specific. The personal intelligence's role
+home. Keep shared context short and specific. The personal intelligence's behaviour
 and voice ship with each release as read-only Ship context; a person's
-preferences about how their Ship communicates go in the Ship's own
-`context.d/20-voice.md`, so agents doing delegated work do not load them. Unresolved work belongs in the Kernel responsibility ledger rather
+preferences about how they are spoken to go in their own `context.d/voice.md`,
+which renders after the Ship's voice and overrides it. Unresolved work belongs in the Kernel responsibility ledger rather
 than standing context. Detailed or occasionally relevant information belongs
 in the Personal wiki.
 
@@ -200,14 +200,13 @@ assembler, the same catalogue and sample runtime facts. Saving changes repositor
 defaults, without contacting a live space.
 
 System defaults remain live except where explicitly overridden. Account defaults
-seed missing files. Home scaffolding also replaces recognized generated Ship
-roles and retires generated account-local memory entries when adopting the
-shared system memory entry. The Kernel also checks the run-as and owner accounts
+seed missing files. Home scaffolding retires generated account-local memory entries now covered
+by the shared environment. The Kernel also checks the run-as and owner accounts
 before a Process requests context, covering existing specialist processes. A
 successful check is reused for that Kernel lifetime. Customized and concurrent
-edits are preserved. An explicit override
-of the formerly combined `01-gsv.md` remains authoritative: migration leaves the
-new `02-interaction.md` empty unless it already has an explicit override.
+edits are preserved. System context once shipped as eight numbered files;
+saved overrides under those names are removed on upgrade, so an operator who
+customized one reapplies the change to `environment.md`.
 
 See `tools/source-review/README.md` for the authoring workflow.
 

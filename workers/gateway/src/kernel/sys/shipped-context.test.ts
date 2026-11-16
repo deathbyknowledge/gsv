@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AiRoleContext, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient, RipgitRepoRef } from "../../fs";
+import { contextFiles } from "../../prompts/context";
 import { SYSTEM_CONFIG_DEFAULTS } from "../config";
 import type { KernelContext } from "../context";
 import { seededRoleContextCleanupOps, shippedRoleContext } from "./shipped-context";
@@ -81,40 +82,39 @@ describe("shipped role context", () => {
     const role = shippedRoleContext(kernel({ crew: CREW }), SHIP, OWNER_UID);
     expect(role?.name).toBe("ship");
     expect(role?.location).toBe("/sys/config/ai/ship/context.d");
-    expect(role?.files.map((file) => file.name)).toEqual([
-      "00-role.md", "05-voice.md", "06-speaking-for-the-owner.md", "10-delegation.md",
-    ]);
-    expect(role?.files.find((file) => file.name === "10-delegation.md")?.text).toContain("`crew`");
+    expect(role?.files.map((file) => file.name)).toEqual(["behaviour.md", "voice.md"]);
+    expect(role?.files.find((file) => file.name === "behaviour.md")?.text).toContain("Crew account: `crew`");
   });
 
-  it("leaves out the Crew line until the Crew exists", () => {
-    const role = shippedRoleContext(kernel(), SHIP, OWNER_UID);
-    expect(role?.files.map((file) => file.name)).not.toContain("10-delegation.md");
+  it("leaves out only the Crew line until the Crew exists", () => {
+    const behaviour = shippedRoleContext(kernel(), SHIP, OWNER_UID)?.files.find((file) => file.name === "behaviour.md")?.text;
+    expect(behaviour).toContain("# Speaking for the owner");
+    expect(behaviour).not.toContain("Crew account:");
+    expect(behaviour).not.toContain("{{crew.username}}");
   });
 
   it("gives the Crew its own files and other agents none", () => {
     expect(shippedRoleContext(kernel({ crew: CREW }), CREW, OWNER_UID)).toEqual({
       name: "crew",
       location: "/sys/config/ai/crew/context.d",
-      files: [{ name: "00-role.md", text: SYSTEM_CONFIG_DEFAULTS["config/ai/crew/context.d/00-role.md"] }],
+      files: [{ name: "behaviour.md", text: SYSTEM_CONFIG_DEFAULTS["config/ai/crew/context.d/behaviour.md"] }],
     });
     expect(shippedRoleContext(kernel({ crew: CREW }), SCOUT, OWNER_UID)).toBeUndefined();
   });
 
   it("follows an operator's override of a shipped file", () => {
-    const role = shippedRoleContext(kernel({ overrides: { "config/ai/ship/context.d/05-voice.md": "# Voice\n\nBe brief." } }), SHIP, OWNER_UID);
-    expect(role?.files.find((file) => file.name === "05-voice.md")?.text).toBe("# Voice\n\nBe brief.");
+    const role = shippedRoleContext(kernel({ overrides: { "config/ai/ship/context.d/voice.md": "# Voice\n\nBe brief." } }), SHIP, OWNER_UID);
+    expect(role?.files.find((file) => file.name === "voice.md")?.text).toBe("# Voice\n\nBe brief.");
   });
 });
 
 describe("copied role context cleanup", () => {
   const shipRole = (): AiRoleContext => shippedRoleContext(kernel({ crew: CREW }), SHIP, OWNER_UID)!;
 
-  it("deletes copies that match a shipped revision, including the current one", async () => {
-    const delegation = shipRole().files.find((file) => file.name === "10-delegation.md")!.text;
+  it("deletes copies that match a shipped revision", async () => {
     const ops = await seededRoleContextCleanupOps(home({
       "context.d/00-role.md": COPIED_SHIP_ROLE,
-      "context.d/10-delegation.md": delegation,
+      "context.d/10-delegation.md": "Crew account: `crew`\n",
       "context.d/10-personal-notes.md": "Not a shipped file.",
     }), REPO, shipRole());
     expect(ops).toEqual([
@@ -131,10 +131,19 @@ describe("copied role context cleanup", () => {
     expect(ops).toEqual([{ type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice-2.md" }]);
   });
 
+  it("leaves the account's own files alone, even under a name the release now uses", async () => {
+    const ops = await seededRoleContextCleanupOps(home({
+      "context.d/voice.md": "# Voice\n\nThe Ship's own notes.",
+      "context.d/behaviour.md": shipRole().files.find((file) => file.name === "behaviour.md")!.text,
+    }), REPO, shipRole());
+    expect(ops).toEqual([]);
+  });
+
   it("touches only the names of the home's own role", async () => {
     const crew = shippedRoleContext(kernel({ crew: CREW }), CREW, OWNER_UID)!;
+    // The Crew's role text is unchanged since homes received it as 00-role.md.
     const ops = await seededRoleContextCleanupOps(home({
-      "context.d/00-role.md": SYSTEM_CONFIG_DEFAULTS["config/ai/crew/context.d/00-role.md"],
+      "context.d/00-role.md": contextFiles("crew")[0]!.text,
       "context.d/05-voice.md": "A Crew file that only shares a Ship name.",
     }), { ...REPO, owner: "crew" }, crew);
     expect(ops).toEqual([{ type: "delete", path: "context.d/00-role.md" }]);

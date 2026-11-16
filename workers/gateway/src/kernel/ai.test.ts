@@ -568,7 +568,6 @@ describe("handleAiConfig", () => {
     const ripgit = { fetch } as Fetcher;
     const ctx = makeAiConfigContext({
       "config/ai/skills/index_mode": "off",
-      "config/ai/context.d/15-memory.md": SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/15-memory.md"]!,
     }, { uid: 2000, ownerUid: 1000, processId: "existing-specialist", ripgit });
     const cachedConfig = await handleAiConfig({}, ctx);
     const [snapshot] = await Promise.all([handleAiContext({}, ctx), handleAiContext({}, ctx)]);
@@ -586,19 +585,19 @@ describe("handleAiConfig", () => {
       ripgit: new RipgitClient(ripgit),
       storage: { get: vi.fn(), list: vi.fn() },
     });
-    expect(rendered.sources.filter((source) => source.name === "15-memory.md")).toHaveLength(customized ? 3 : 1);
+    expect(rendered.sources.filter((source) => source.name === "15-memory.md")).toHaveLength(customized ? 2 : 0);
     for (const owner of ["friday", "sam"]) {
       expect(files.get(`${owner}/context.d/15-memory.md`)).toBe(customized ? memory : undefined);
       expect(files.get(`${owner}/context.d/00-role.md`)).toBe("Existing account instructions.");
     }
   });
 
-  it("serves a Ship its shipped context and clears the copies from its home once", async () => {
-    const shipped = SYSTEM_CONFIG_DEFAULTS["config/ai/ship/context.d/00-role.md"]!;
+  it("serves a Ship its shipped context, clears old copies from its home once, and puts the owner's voice after it", async () => {
     const files = new Map([
-      ["friday/context.d/00-role.md", shipped],
-      ["friday/context.d/05-voice.md", "# Voice\n\nAlways answer in Dutch.\n"],
+      ["friday/context.d/10-delegation.md", "Crew account: `crew`\n"],
+      ["friday/context.d/05-voice.md", "# Voice\n\nAn edited old copy.\n"],
       ["friday/context.d/20-projects.md", "Ship's own notes."],
+      ["sam/context.d/voice.md", "Always answer in Dutch."],
     ]);
     const applied: RipgitApplyOp[] = [];
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -644,8 +643,8 @@ describe("handleAiConfig", () => {
     const snapshot = await handleAiContext({}, ctx);
     expect(snapshot.roleContext?.name).toBe("ship");
     expect(applied).toEqual([
-      { type: "delete", path: "context.d/00-role.md" },
       { type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice.md" },
+      { type: "delete", path: "context.d/10-delegation.md" },
     ]);
     applied.length = 0;
     await handleAiContext({}, ctx);
@@ -663,10 +662,12 @@ describe("handleAiConfig", () => {
     });
     expect(rendered.sources.filter((source) => source.contextRoot?.key !== "system").map((source) => `${source.contextRoot?.key}:${source.name}`))
       .toEqual([
-        "ship:00-role.md", "ship:05-voice.md", "ship:06-speaking-for-the-owner.md",
+        "ship:behaviour.md", "ship:voice.md",
         "program:20-projects.md",
+        "user:voice.md",
       ]);
-    expect(rendered.prompt).not.toContain("Always answer in Dutch.");
+    expect(rendered.prompt).not.toContain("An edited old copy.");
+    expect(rendered.prompt.indexOf("Always answer in Dutch.")).toBeGreaterThan(rendered.prompt.indexOf("</ship>"));
   });
 
   it("retries account memory reconciliation after a failed read", async () => {

@@ -30,16 +30,20 @@ requests.
 Active standing defaults live under `workers/gateway/src/prompts/`:
 
 ```text
-system/context.d/*.md   shared runtime, interaction, targets, work and memory instructions
-ship/context.d/*.md     Ship's role, voice and Crew account name
-crew/context.d/*.md     Crew's execution role
-user/context.d/*.md     the owner's standing personal facts template
+system/context.d/environment.md   where every agent is and how things work there
+ship/context.d/behaviour.md       the Ship's job, including speaking for the owner
+ship/context.d/voice.md           how the Ship sounds
+crew/context.d/behaviour.md       the Crew's job
+user/context.d/10-personal.md     the owner's standing personal facts template
 tasks/*.md              standalone task instructions
 onboarding/*.md         welcome responsibility briefs, never standing context
 ```
 
 Each standing Markdown file is one complete `context.d` entry. Its directory
-selects the scope; its filename supplies the stored name and lexical order.
+selects the scope; its filename supplies the stored name. Roots render as
+system, then the account's role, then the account's home, then the owner, and
+files within a root in lexical order, so the owner's own `voice.md` follows the
+Ship's.
 `context.ts` bundles the complete files in one catalogue shared by the system
 defaults and preview. Register a new standing source there; the preview derives
 its scope and source link from the path. There is no fragment concatenation or
@@ -69,11 +73,6 @@ memory instructions now provided by system context. Customized and concurrent
 edits survive. The Kernel checks existing run-as and owner accounts before a
 Process requests context, reusing successful checks for that Kernel lifetime;
 the source editor never rewrites a live account's files.
-
-When splitting `01-gsv.md`, the schema migration preserves existing explicit
-overrides by leaving `02-interaction.md` empty for those installations unless
-it already has its own override. Removing that empty override opts into the new
-shared interaction default.
 
 The manual view reads the sibling `../gsv-manual` worktree by default. Set `GSV_MANUAL_ROOT` when the manual lives elsewhere:
 
