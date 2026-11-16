@@ -1,5 +1,7 @@
 import type { AiRoleContext, ContextFile, ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { RipgitApplyOp, RipgitClient, RipgitRepoRef } from "../../fs";
+import retiredContextInstructions from "../../prompts/tasks/retired-context.md";
 import { reconcileHomeOnce } from "../account-home";
 import { crewAccountKey } from "../agents";
 import type { KernelContext } from "../context";
@@ -53,19 +55,47 @@ function roleFiles(ctx: Pick<KernelContext, "config">, role: ShippedRole): Conte
  * names in SHIPPED_CONTEXT_SHA256S; the Kernel now serves it. Once per account
  * and Kernel lifetime, a copy that matches a shipped revision is deleted, and
  * any other file under one of those names is moved to `context.d/retired/`,
- * where it stays readable but no longer loads.
+ * where it stays readable but no longer loads. An edited copy may hold what the
+ * owner asked for, so the Ship gets one responsibility to carry that into the
+ * account's own context.
  */
-export function retireSeededRoleContext(
-  ctx: Pick<KernelContext, "env" | "auth">,
+export async function retireSeededRoleContext(
+  ctx: Pick<KernelContext, "env" | "auth" | "responsibilities" | "reconcileResponsibilityWake" | "defer">,
   identity: ProcessIdentity,
   role: AiRoleContext,
+  ownerUid: number,
 ): Promise<void> {
-  return reconcileHomeOnce(ctx, identity, "gsv: retire copied role context", async (client, repo) => {
+  // Only the call whose cleanup ran sees the files it moved.
+  let retired: string[] = [];
+  await reconcileHomeOnce(ctx, identity, "gsv: retire copied role context", async (client, repo) => {
     const ops = await seededRoleContextCleanupOps(client, repo, role);
-    const kept = ops.filter((op) => op.type === "move").length;
-    if (kept > 0) console.warn(`[Prompt] moved ${kept} edited ${role.name} context copies to context.d/retired`);
+    retired = ops.flatMap((op) => op.type === "move" ? [`${identity.home}/${op.to}`] : []);
     return ops;
   });
+  if (retired.length === 0) return;
+  console.warn(`[Prompt] moved ${retired.length} edited ${role.name} context copies to context.d/retired`);
+  const source = { kind: "system", component: "shipped-context" } as const;
+  ctx.responsibilities.create({
+    ownerUid,
+    title: "Carry over saved preferences",
+    details: {
+      instructions: retiredContextInstructions.trim(),
+      home: identity.home,
+      release: role.location,
+      retired,
+    },
+    source,
+    actor: source,
+    assignee: { kind: "ship" },
+    state: "open",
+    priority: "low",
+    dedupeKey: `shipped-context.retired:${identity.uid}`,
+    observedByShip: false,
+    now: Date.now(),
+  });
+  ctx.defer(ctx.reconcileResponsibilityWake(ownerUid).catch((error) => {
+    console.warn("[Prompt] failed to schedule the retired context responsibility:", exceptionDiagnostics(error));
+  }));
 }
 
 export async function seededRoleContextCleanupOps(

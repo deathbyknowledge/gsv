@@ -480,6 +480,11 @@ describe("handleAiConfig", () => {
           metadata: input.metadata ?? {},
         })),
       },
+      responsibilities: {
+        create: vi.fn(() => ({ created: true })),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => {}),
+      defer: vi.fn(),
       processId: options.processId,
       env,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -647,9 +652,25 @@ describe("handleAiConfig", () => {
       { type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice.md" },
       { type: "delete", path: "context.d/10-delegation.md" },
     ]);
+    // Only the edited copy needs the Ship's judgment; the matching one is gone.
+    expect(ctx.responsibilities.create).toHaveBeenCalledTimes(1);
+    expect(ctx.responsibilities.create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      assignee: { kind: "ship" },
+      state: "open",
+      dedupeKey: "shipped-context.retired:2000",
+      details: expect.objectContaining({
+        home: "/home/friday",
+        release: "/sys/config/ai/ship/context.d",
+        retired: ["/home/friday/context.d/retired/05-voice.md"],
+        instructions: expect.stringContaining("voice.md"),
+      }),
+    }));
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
     applied.length = 0;
     await handleAiContext({}, ctx);
     expect(applied).toEqual([]);
+    expect(ctx.responsibilities.create).toHaveBeenCalledTimes(1);
 
     const config = await handleAiConfig({}, ctx);
     const rendered = await assembleSystemPromptSnapshot({

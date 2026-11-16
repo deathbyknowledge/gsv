@@ -207,7 +207,7 @@ export async function handleAiContext(
       ensureSharedMemoryContext(ctx, account),
       ...(owner && owner.uid !== account.uid ? [ensureSharedMemoryContext(ctx, owner)] : []),
       retireSeededSkillsForPrompt(ctx, owner),
-      ...(roleContext ? [retireSeededRoleContextForPrompt(ctx, account, roleContext)] : []),
+      ...(roleContext ? [retireSeededRoleContextForPrompt(ctx, account, roleContext, resolveCallerOwnerUid(ctx))] : []),
     ]);
   }
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
@@ -253,9 +253,10 @@ async function retireSeededRoleContextForPrompt(
   ctx: KernelContext,
   account: ProcessIdentity,
   roleContext: AiRoleContext,
+  ownerUid: number,
 ): Promise<void> {
   try {
-    await retireSeededRoleContext(ctx, account, roleContext);
+    await retireSeededRoleContext(ctx, account, roleContext, ownerUid);
   } catch (error) {
     console.warn("[Prompt] failed to retire copied role context:", exceptionDiagnostics(error));
   }
