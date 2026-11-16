@@ -25,9 +25,10 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
     // The signup link names where it was clicked and which campaign brought it; that rides along until the Ship is reserved.
     const attribution = signupAttributionFromLink(new URL(window.location.href));
-    // A new signup takes this link's origin or none; only a resumed one keeps what was stored.
-    if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create", attribution });
-    else if (attribution) await candidate.save({ attribution });
+    if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create" });
+    // A link's own origin replaces the stored one. A load without one keeps it, because the page has
+    // already taken it off the URL: a reload, or a tab the phone restores, must not report the signup as direct.
+    if (attribution) await candidate.save({ attribution });
     client = candidate;
     load = async () => candidate;
   } catch (error) {

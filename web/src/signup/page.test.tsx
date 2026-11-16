@@ -121,12 +121,21 @@ describe("signup attribution", () => {
     expect((await props.load()).state.attribution).toEqual({ utmSource: "facebook" });
   });
 
-  it("drops an origin left over from an abandoned attributed visit when signup starts again directly", async () => {
-    window.location.href = origin;
+  it("keeps the stored origin when the page loads again without one, as a reload or a restored tab does", async () => {
+    window.location.href = `${origin}/owner/signup/`;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: { id: "challenge-1", email: "ada@example.com", browserSecret: "a".repeat(64) }, operationId: null, handle: null,
+      attribution: { placement: "hero", utmSource: "facebook" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", utmSource: "facebook" });
+  });
+
+  it("replaces the stored origin with a new link's own", async () => {
+    window.location.href = `${origin}/?utm_source=linkedin`;
     storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
       challenge: null, operationId: null, handle: null, attribution: { placement: "hero" } } });
     const props = await screen();
-    expect((await props.load()).state.attribution).toBeNull();
+    expect((await props.load()).state.attribution).toEqual({ utmSource: "linkedin" });
   });
 
   it("keeps the stored origin when a signup resumes without a fragment", async () => {
@@ -141,6 +150,6 @@ describe("signup attribution", () => {
   it("ignores slugs that are not plain", async () => {
     window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
     const props = await screen();
-    expect((await props.load()).state.attribution).toBeNull();
+    expect((await props.load()).state.attribution).toBeUndefined();
   });
 });
