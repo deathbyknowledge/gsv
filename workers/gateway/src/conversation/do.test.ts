@@ -151,6 +151,30 @@ describe("Conversation Durable Object", () => {
     expect((await stub.history()).messages[0]?.choices).toEqual(["Morning person", "Night owl"]);
   });
 
+  it("tells which of the choices on offer a person's next message takes", async () => {
+    const stub = conversation("answered");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const ask = (sequence: number) => ({
+      ...message(sequence),
+      author: { kind: "process" as const, pid: "proc:test", uid: 1000 },
+      origin: { kind: "process" as const, pid: "proc:test", runId: `run:${sequence}` },
+      text: "Where do we start?",
+      choices: ["Plan my weekend", "Find the best deal", "Don't let me forget"],
+    });
+
+    // nothing is on offer before Ship asks, and asking is not answering
+    expect((await stub.append(message(1))).answered).toBeUndefined();
+    expect((await stub.append(ask(2))).answered).toBeUndefined();
+    const taken = await stub.append({ ...message(3), text: "Find the best deal" });
+    expect(taken.answered).toEqual({ choicesOffered: 3, choiceTaken: 2 });
+    // a replay returns the stored message, not a second answer
+    expect(await stub.append({ ...message(3), text: "Find the best deal" })).toEqual({ message: taken.message, created: false });
+    // the choices went with the message that was answered
+    expect((await stub.append({ ...message(4), text: "Plan my weekend" })).answered).toBeUndefined();
+    await stub.append(ask(5));
+    expect((await stub.append({ ...message(6), text: "Can you book me a dentist?" })).answered).toEqual({ choicesOffered: 3 });
+  });
+
   it("builds a bounded preview around a match without storing a text copy in the index", async () => {
     const stub = conversation("snippet");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });

@@ -2203,6 +2203,7 @@ export const en = {
   "chat.composer.choose": "Choose attachments",
   "chat.composer.placeholder": "Message your Ship",
   "chat.composer.placeholderApproval": "yes or no, or write back",
+  "chat.composer.placeholderChoices": "Pick one, or write your own",
   "chat.composer.offline": "{place} is offline · view connection",
   "chat.composer.add": "Add to chat",
   "chat.composer.drop": "drop to attach",

@@ -2207,6 +2207,7 @@ export const ptBR = {
   "chat.composer.choose": "Escolher anexos",
   "chat.composer.placeholder": "Escreva para seu Ship",
   "chat.composer.placeholderApproval": "sim ou não, ou escreva uma resposta",
+  "chat.composer.placeholderChoices": "Escolha uma ou escreva a sua",
   "chat.composer.offline": "{place} está sem conexão · ver conexão",
   "chat.composer.add": "Adicionar ao chat",
   "chat.composer.drop": "solte para anexar",

@@ -1686,6 +1686,36 @@ describe("Kernel canonical message commits", () => {
     }
   });
 
+  it("reports how many choices a Ship message offered, never their words", async () => {
+    const kernel = buildCommitKernel(null);
+    getConversationByIdMock.mockReset();
+    const stub = conversationStub();
+    // The Conversation returns the stored message, which carries the choices it accepted.
+    getConversationByIdMock.mockReturnValue({
+      ...stub,
+      append: vi.fn(async (input: any) => {
+        const appended = await stub.append(input);
+        return input.choices ? { ...appended, message: { ...appended.message, choices: input.choices } } : appended;
+      }),
+    });
+    const telemetry = captureTelemetry(kernel);
+    try {
+      await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "Hi, I'm Ship." });
+      await kernel.processOutput.commitProcessMessage("proc-1", {
+        runId: "run-1", actionId: "send-2", conversationId: conversation.id, text: "Where do we start?",
+        choices: ["Plan my weekend", "Find the best deal", "Don't let me forget"],
+      });
+    } finally {
+      telemetry.restore();
+    }
+    // SAFETY: the filter keeps only records whose event name matched, so the event is present.
+    const committed = telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed").map((record: any) => record.event.properties);
+    expect(committed).toHaveLength(2);
+    expect(committed[0]).not.toHaveProperty("choicesOffered");
+    expect(committed[1]).toMatchObject({ delivery: "background", choicesOffered: 3 });
+    expect(JSON.stringify(telemetry.emitted)).not.toContain("weekend");
+  });
+
   it("reports the welcome once, from first sign-in to the first Ship message", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const kernel = buildCommitKernel(null);

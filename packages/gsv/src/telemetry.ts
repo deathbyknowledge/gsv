@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import { exceptionDiagnosticProperties } from "./diagnostics.js";
+import { MESSAGE_CHOICE_LIMIT } from "./protocol/message-choices.js";
 export { exceptionDiagnostics, sanitizeExceptionDiagnostics, redactDiagnosticText, type ExceptionDiagnostics } from "./diagnostics.js";
 
 export const GSV_TELEMETRY_MARKER = "gsv.telemetry";
@@ -301,6 +302,10 @@ export const shipPlatformSchema = z.enum([
   "other",
 ]);
 
+// A count of the replies a message offers, or the position of one of them
+// counted from 1. The words of a choice never leave the Kernel.
+const messageChoicePositionSchema = z.number().check(z.int(), z.gte(1), z.lte(MESSAGE_CHOICE_LIMIT));
+
 const shipMessageCommittedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("ship.message.committed"),
@@ -312,6 +317,8 @@ const shipMessageCommittedSchema = z.strictObject({
     // Present only on the first message a run commits after the person's own
     // message: the time from Process receipt to that commit.
     replyMs: z.optional(nonNegativeIntegerSchema),
+    // Present only when the message offers replies to tap: how many.
+    choicesOffered: z.optional(messageChoicePositionSchema),
   }),
 });
 
@@ -325,6 +332,11 @@ const shipMessageReceivedSchema = z.strictObject({
     platform: shipPlatformSchema,
     hasText: z.boolean(),
     hasMedia: z.boolean(),
+    // Present only when the message answers one that offered replies: how many
+    // were on offer, and the position of the one taken. A message that offers
+    // them and gets other words back carries the count alone.
+    choicesOffered: z.optional(messageChoicePositionSchema),
+    choiceTaken: z.optional(messageChoicePositionSchema),
   }),
 });
 
@@ -372,6 +384,28 @@ const onboardingWelcomeDeliveredSchema = z.strictObject({
     durationMs: nonNegativeIntegerSchema,
     delivery: z.enum(["client", "adapter", "background"]),
     platform: shipPlatformSchema,
+  }),
+});
+
+// How the welcome ended, as a closed class of the outcome Ship or the person
+// recorded. Anything outside the outcomes the welcome names classifies as
+// "other", so a record never carries the words of a resolution.
+export const onboardingWelcomeOutcomeSchema = z.enum([
+  "connected",
+  "messenger_declined",
+  "declined",
+  "cancelled",
+  "other",
+]);
+
+// The welcome responsibility reaching its end, once per owner, with the time
+// since it opened.
+const onboardingWelcomeFinishedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.finished"),
+  properties: z.strictObject({
+    outcome: onboardingWelcomeOutcomeSchema,
+    durationMs: nonNegativeIntegerSchema,
   }),
 });
 
@@ -542,6 +576,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   conversationReplyFailedSchema,
   onboardingWelcomeActivatedSchema,
   onboardingWelcomeDeliveredSchema,
+  onboardingWelcomeFinishedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
@@ -577,6 +612,7 @@ export const telemetryEventComponents = {
   "conversation.reply.failed": ["gateway"],
   "onboarding.welcome.activated": ["gateway"],
   "onboarding.welcome.delivered": ["gateway"],
+  "onboarding.welcome.finished": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
@@ -607,6 +643,7 @@ export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
 export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
+export type OnboardingWelcomeOutcome = z.infer<typeof onboardingWelcomeOutcomeSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]
