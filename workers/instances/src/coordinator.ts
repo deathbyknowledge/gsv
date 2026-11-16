@@ -26,6 +26,8 @@ const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
 const STARTING_POLL_MS = 1_000;
+/** A closed browser's shutdown is confirmed this soon, so its profile and slot free promptly. */
+const SHUTDOWN_CONFIRM_MS = 1_000;
 // Commands extend a computer at most once a minute, not on every request.
 const EXTENSION_STEP_MS = 60_000;
 const PENDING_CHANGES_KEY = "pending_instance_changes";
@@ -186,6 +188,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
               throw new Error(`${saved?.error ?? "Browser data could not be saved."} The browser is still running. Inspect instance get ${instance(row).targetId} before retrying; --force discards unsaved changes.${saved?.diagnosticRef ? ` Diagnostic: ${saved.diagnosticRef}.` : ""}`);
             }
             this.fenceStop(instance(this.#store.byId(row.id)), "Stopped by owner");
+            // Shutdown starts once the save commits, not at the next maintenance pass.
+            await this.ctx.storage.setAlarm(Date.now() + 1);
           })().finally(() => { this.#stops.delete(row.id); });
           this.#stops.set(row.id, stopping);
         }
@@ -829,7 +833,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           await this.save(row.id);
         }
         await this.#provider.close(row.session_id);
-        // Confirmation happens on the next alarm, before releasing reservations.
+        // A prompt pass confirms the session ended before releasing reservations.
+        await this.ctx.storage.setAlarm(Date.now() + SHUTDOWN_CONFIRM_MS);
         this.#browsers.delete(row.id);
         return;
       }

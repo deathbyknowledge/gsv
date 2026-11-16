@@ -263,6 +263,8 @@ leaves the instance available for inspection by the saved request ID. Instance
 commands accept either the displayed eight-character target ID or the full
 instance ID. An unknown instance ID is an error, including for stop.
 For stop, `--wait` returns after termination and release of the saved-state lease.
+Release follows within seconds of a successful save, so a new browser can start
+right away.
 Ordinary stop fails if the final save fails. `instance stop <browser-id> --force
 --wait` explicitly discards unsaved changes. `browser profile save` retries a save
 and returns its status; instance results also include compact persistence status.

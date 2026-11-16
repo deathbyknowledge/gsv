@@ -5,7 +5,7 @@ import { InstanceCoordinator } from "../src/coordinator";
 import { CloudBrowser } from "../src/browser";
 import { InstancePolicy } from "../src/config";
 import { BrowserProvider } from "../src/provider";
-import { instance, InstanceStore } from "../src/store";
+import { instance, InstanceStore, profile } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 import { BrowserStorageError, SAVE_TIMEOUT_MS } from "../src/browser-storage";
 import { BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
@@ -571,6 +571,32 @@ describe("browser save ordering", () => {
     expect(await env.PROFILES.head(oldKey)).toBeNull();
     expect(store.sql.exec("SELECT * FROM obsolete_profile_objects").toArray()).toHaveLength(0);
     expect(await store.storage.getAlarm()).toBeNull();
+  }));
+
+  it("frees a stopped browser's profile within seconds, not at the next maintenance pass", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const exists = vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
+    const close = vi.spyOn(BrowserProvider.prototype, "close").mockResolvedValue();
+    // Ahead of the real clock, so the runtime never fires these alarms on its own.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000);
+    const saving = deferred(), saved = deferred();
+    const original = browser.save!;
+    browser.save = async (...args) => { saving.resolve(); await saved.promise; return original(...args); };
+    const stopping = object.stop(actor, { instanceId });
+    await saving.promise;
+    // The pass that stop arms runs while its save still holds the browser.
+    await object.alarm();
+    saved.resolve();
+    await stopping;
+    expect(await store.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
+    await object.alarm();
+    expect(close).toHaveBeenCalledWith("test-session");
+    expect(await store.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1000);
+    exists.mockResolvedValue(false);
+    await object.alarm();
+    const profileId = instance(store.byId(instanceId)).profileId!;
+    expect(instance(store.byId(instanceId)).state).toBe("stopped");
+    expect(profile(store.ownedProfile(actor, profileId)!).activeInstanceId).toBeUndefined();
   }));
 
   it("cancels automation before a handoff waits for the save queued behind it", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
