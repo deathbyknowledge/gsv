@@ -73,7 +73,7 @@ the receipt. Hover, focus or selecting the message shows the row, and the select
 by default) keeps it shown. The receipt's hint names the places the work touched; work that named no
 place reads "worked on this". Opening it shows the work beneath the message, step by step. A receipt
 says what Ship did, never how each step went: a command that ran is an ordinary step whatever its exit
-code, which ends its output as a terminal would, and a step that could not run shows its reason the
+code, which ends its output as a terminal would, and a step that could not finish shows its reason the
 same way. Only a step the person declined or stopped says so. Running work, a pending approval and a run
 that stopped on an error without sending anything stay in the conversation as a line that counts the
 errors. A run that finished cleanly without sending anything leaves no trace in the conversation; action

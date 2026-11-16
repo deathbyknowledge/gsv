@@ -252,6 +252,9 @@ describe("activitiesForRows", () => {
     expect(ended({ toolOutput: { status: "failed", output: "", error: "Command timed out after 120000ms" } }))
       .toMatchObject({ ending: "error", output: "Command timed out after 120000ms" });
     expect(ended({ toolOutput: { status: "completed", output: "", exitCode: 0 } })).toMatchObject({ ending: "error" });
+    // A Windows machine ends a timed-out command's job with code 1; the timeout, not the code, is what happened.
+    expect(ended({ toolOutput: { status: "failed", output: "partial\n", exitCode: 1, error: "Command timed out", stdout: "partial\n", stderr: "" } }))
+      .toMatchObject({ ending: "error", output: "partial\nCommand timed out\nexit 1" });
     expect(ended({ toolOutcome: "denied", toolOutput: undefined })).toMatchObject({ ending: "declined" });
     expect(ended({ toolOutcome: "cancelled", toolOutput: undefined })).toMatchObject({ ending: "stopped" });
     expect(ended({ toolOutcome: "completed", status: "done", isError: false, toolOutput: { status: "completed", output: "standup at 9:30\n", exitCode: 0 } }))
@@ -1029,6 +1032,7 @@ describe("momentsFromConversation", () => {
       return unresolvedErrors(receiptsForMoments(moments, null, "ship").get(moments[0].id)!);
     };
     expect(errors([shell("sync", "rsync -a /a /b", 25, 30, failing)])).toBe(1);
+    expect(errors([shell("slow", "sleep 999", 25, 30, { ...failing, toolOutput: { status: "failed", output: "", exitCode: 1, error: "Command timed out" } })])).toBe(1);
     expect(errors([shell("a", "rsync /a /b", 10, 15, failing), shell("b", "du -sh /x", 20, 25, failing)])).toBe(2);
     expect(errors([shell("failed", "rsync /a /b", 10, 15, failing), shell("retry", "rsync /a /b", 20, 25)])).toBe(0);
     expect(errors([shell("rm", "rm -r /tmp/x", 10, 15, { toolOutcome: "denied", status: "error", isError: true })])).toBe(0);

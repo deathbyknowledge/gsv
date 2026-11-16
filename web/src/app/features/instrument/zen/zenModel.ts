@@ -226,6 +226,14 @@ const shellResultSchema = z.object({
   output: z.string().optional(), stdout: z.string().optional(), stderr: z.string().optional(),
   exitCode: z.number().nullable().optional(), error: z.string().optional(),
 }).refine((value) => value.output !== undefined || value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
+
+/**
+ * Why a command stopped, when its result says more than its exit code: it timed out, was killed or never started.
+ * A command that exited on its own repeats its stderr or its code as the error, and says nothing more.
+ */
+function stopReason({ error, stderr = "", exitCode }: z.infer<typeof shellResultSchema>): string {
+  return error !== undefined && error !== stderr.trim() && error !== `Command exited with code ${exitCode}` ? error : "";
+}
 const codeModeResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("completed"), result: z.json(), logs: z.array(z.string()).optional() }),
   z.object({ status: z.literal("failed"), error: z.string(), logs: z.array(z.string()).optional() }),
@@ -289,10 +297,10 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   if (syscall === "shell.exec") {
     const shell = shellResultSchema.safeParse(output);
     if (shell.success) {
-      const { stdout = "", stderr = "", exitCode, error } = shell.data;
+      const { stdout = "", stderr = "", exitCode } = shell.data;
       const streams = shell.data.output ?? (stderr ? (stdout ? `${stdout}\n${stderr}` : stderr) : stdout);
-      /* like a terminal, the output ends on a non-zero exit code; a command that never exited says why it stopped */
-      const why = error !== undefined && error !== stderr.trim() && error !== `Command exited with code ${exitCode}` ? error : "";
+      /* like a terminal, the output ends on a non-zero exit code; a command stopped by something else says why */
+      const why = stopReason(shell.data);
       const code = exitCode ?? 0;
       const exit = code !== 0 ? t("chat.output.exit", { code }) : "";
       if (!why && !exit) return streams.trim() ? streams : "";
@@ -331,13 +339,16 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   return fallback;
 }
 
-/** The outcome the Process recorded, except that a command which ran and exited non-zero gave its answer. */
+/**
+ * The outcome the Process recorded, except that a command which ran and exited non-zero on its own gave its answer.
+ * One stopped by a timeout or a signal gave none, whatever code it reports.
+ */
 function callEnding(syscall: string, row: ChatTranscriptRow): CallEnding {
   if (row.toolOutcome === "denied") return "declined";
   if (row.toolOutcome === "cancelled") return "stopped";
   if (row.isError !== true && row.status !== "error" && (row.toolOutcome === undefined || row.toolOutcome === "completed")) return "done";
   const shell = syscall === "shell.exec" ? shellResultSchema.safeParse(row.toolOutput) : null;
-  return shell?.success && (shell.data.exitCode ?? 0) !== 0 ? "done" : "error";
+  return shell?.success && (shell.data.exitCode ?? 0) !== 0 && !stopReason(shell.data) ? "done" : "error";
 }
 
 /** Some rows carry the result as a JSON string in their text; read it as the result it is.
