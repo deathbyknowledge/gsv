@@ -58,6 +58,9 @@ function deferred() {
   return { promise, resolve };
 }
 
+// Maintenance attaches each browser before checking it, so attachment identifies the browsers a pass reached.
+const maintained = () => vi.mocked(CloudBrowser.attach).mock.calls.map(([, , value]) => value.instanceId);
+
 function anotherReadyBrowser(store: InstanceStore): string {
   const profile = store.createProfile(actor, crypto.randomUUID(), "Second browser", limits);
   const value = store.admit(actor, { requestId: crypto.randomUUID(), templateId: "browser", profileId: profile.profileId, fresh: true, lifetimeSeconds: 300 }, limits);
@@ -262,14 +265,12 @@ describe("human browser control", () => {
     const secondId = anotherReadyBrowser(store);
     vi.useFakeTimers({ toFake: ["Date"] });
     browser.heartbeat = vi.fn(async () => { vi.setSystemTime(Date.now() + 20001); });
-    const saves = vi.spyOn(ProfileStorage.prototype, "save");
     await object.alarm();
-    expect(saves).toHaveBeenCalledOnce();
-    const firstMaintained = saves.mock.calls[0]![0].instanceId;
-    expect(await store.storage.get("maintenance_cursor")).toBe(firstMaintained);
+    expect(maintained()).toHaveLength(1);
+    expect(await store.storage.get("maintenance_cursor")).toBe(maintained()[0]);
     expect(await store.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
     await object.alarm();
-    expect(new Set(saves.mock.calls.map(([value]) => value.instanceId))).toEqual(new Set([firstId, secondId]));
+    expect(new Set(maintained())).toEqual(new Set([firstId, secondId]));
   }));
   it("continues past a stopping browser whose provider lookup repeatedly times out", () => fixture(async (object, store, firstId) => {
     const secondId = anotherReadyBrowser(store);
@@ -279,12 +280,11 @@ describe("human browser control", () => {
       vi.setSystemTime(Date.now() + 30000);
       throw new Error("Provider lookup timed out");
     });
-    const saves = vi.spyOn(ProfileStorage.prototype, "save");
     await object.alarm();
-    expect(saves).not.toHaveBeenCalled();
+    expect(maintained()).toEqual([]);
     expect(await store.storage.get("maintenance_cursor")).toBe(firstId);
     await object.alarm();
-    expect(saves.mock.calls.map(([value]) => value.instanceId)).toContain(secondId);
+    expect(maintained()).toContain(secondId);
     expect(instance(store.byId(firstId)).state).toBe("stopping");
   }));
   it("releases an unknown allocation after its acquisition grace period, regardless of lifetime", () => fixture(async (object, store, id) => {
@@ -665,7 +665,24 @@ describe("browser save ordering", () => {
     expect(browser.humanInput).toHaveBeenLastCalledWith(1, { kind: "click", x: 20, y: 20 });
   }));
 
-  it.each(["manual", "alarm"] as const)("holds new commands and human input until a %s save commits", trigger => fixture(async (object, _store, instanceId, _installationId, browser) => {
+  it("saves when a handoff finishes, never in the background while the browser is in use", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const save = vi.spyOn(browser, "save");
+    const selector = { instanceId, requestId: "login" };
+    const view = { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" };
+    await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    await object.openHandoff(actor, selector);
+    await object.input(actor, view, { kind: "text", text: "secret" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000);
+    await object.alarm();
+    await object.input(actor, view, { kind: "click", x: 10, y: 10 });
+    await object.alarm();
+    expect(save).not.toHaveBeenCalled();
+    await object.finishHandoff(actor, selector);
+    expect(save).toHaveBeenCalledOnce();
+  }));
+
+  it("holds new commands and human input until a save commits", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     const exported = deferred();
     const uploading = deferred();
     const committed = deferred();
@@ -681,7 +698,7 @@ describe("browser save ordering", () => {
     });
     vi.spyOn(browser.shell!, "exec").mockImplementation(async () => { events.push("command"); return { status: "completed", output: "ok", exitCode: 0 }; });
     browser.humanInput = async () => { events.push("input"); };
-    const saving = trigger === "manual" ? object.saveProfile(actor, instanceId) : object.alarm();
+    const saving = object.saveProfile(actor, instanceId);
     await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
     const command = object.execute(actor, instanceId, { type: "req", id: "after-save", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
     const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "click", x: 10, y: 10 });

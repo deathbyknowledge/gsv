@@ -90,10 +90,13 @@ embedded frames. Already tracked origins keep their places; additional origins
 do not expand the save workload or displace earlier sign-ins. Local storage and
 IndexedDB from additional origins are not saved. Cookies are saved separately.
 
-Ship saves periodically, after human input settles, when you finish a login
-handoff, and before an ordinary stop. Closing a website tab does not forget its
-saved data. Restore completes before the next browser becomes ready. If restore
-fails, that start fails visibly rather than opening an empty replacement.
+Ship saves when you finish a login handoff, before an ordinary stop, when the
+browser's lifetime ends and on `browser profile save`. It never saves in the
+background while the browser is in use, so saving cannot hold up the live view.
+If the browser fails before one of those saves, changes since the last save are
+lost. Closing a website tab does not forget its saved data. Restore completes
+before the next browser becomes ready. If restore fails, that start fails
+visibly rather than opening an empty replacement.
 
 **I’m done, resume Ship** finishes a login handoff only after its save succeeds.
 If saving fails, human control and the waiting Ship task stay open; retry

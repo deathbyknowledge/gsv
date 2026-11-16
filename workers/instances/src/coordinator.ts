@@ -61,7 +61,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #saves = new Map<string, { done: Promise<void>; outcome: Promise<boolean>; abort: AbortController }>();
   readonly #stops = new Map<string, Promise<void>>();
   readonly #handoffBarriers = new Map<string, Promise<void>>();
-  readonly #autosaveAfter = new Map<string, number>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
   readonly #watches = new Map<string, { instanceId: string; watch: BrowserWatch }>();
   #notifying: Promise<void> | null = null;
@@ -393,16 +392,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         }, deadline, "human");
       }, deadline);
     })();
-    const settled = operation.finally(async () => {
-      try {
-        if (!this.#retirement.get() && this.#store.byId(args.instanceId).active) {
-          this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
-          const alarm = await this.ctx.storage.getAlarm();
-          if (!this.#retirement.get() && (alarm === null || alarm > Date.now() + 3000)) await this.ctx.storage.setAlarm(Date.now() + 3000);
-        }
-      } finally {
-        if (this.#humanInputs.get(args.instanceId) === settled) this.#humanInputs.delete(args.instanceId);
-      }
+    const settled = operation.finally(() => {
+      if (this.#humanInputs.get(args.instanceId) === settled) this.#humanInputs.delete(args.instanceId);
     });
     this.#humanInputs.set(args.instanceId, settled);
     this.ctx.waitUntil(settled.catch(cause => {
@@ -537,6 +528,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // A caller may stop waiting, but the actual attachment retains the memory slot.
     return within(attached, 30000, "Browser attachment");
   }
+  // Saves run only when a handoff finishes, before an ordinary stop, at expiry or on request.
+  // A save holds the operation gate for a whole export, so a background save would stall live input.
   private save(id: string): Promise<boolean> {
     const pending = this.#saves.get(id)?.outcome;
     if (pending) return pending;
@@ -800,14 +793,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           const current = instance(row);
           this.#store.update({ ...current, diagnosticRef: undefined, revision: current.revision + 1 });
         }
-        const autosaveAfter = this.#autosaveAfter.get(id) ?? 0;
-        if (!this.#stops.has(id) && !this.#humanInputs.has(id) && !(this.#operations.get(id)?.size) && Date.now() >= autosaveAfter) {
-          await this.save(id);
-          this.#autosaveAfter.delete(id);
-        } else if (autosaveAfter > Date.now()) {
-          const next = await this.ctx.storage.getAlarm();
-          if (next === null || next > autosaveAfter) await this.ctx.storage.setAlarm(autosaveAfter);
-        }
       }
       if (value.state === "stopping") await this.cleanup(row);
     } catch (error) {
@@ -847,7 +832,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#browsers.delete(row.id);
     this.#store.terminal(row.id, Boolean(instance(this.#store.byId(row.id)).diagnosticRef));
     this.#operationGates.delete(row.id);
-    this.#autosaveAfter.delete(row.id);
   }
 }
 
