@@ -34,7 +34,8 @@ Use **expand** for a larger view and **more → stop browser** to stop it;
 The view follows the tab Ship is reading or interacting with, including text
 reads and screenshots, and shows its cursor and clicks. Opening a background tab
 leaves the view in place until Ship uses it. You can click, scroll, paste and type
-directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
+directly in that view. Text you type while earlier input is still on its way is
+sent together, so typing keeps pace on a slow connection. Clicking pins the view to that tab; choose **Follow Ship**
 to follow again. Watching leaves Ship running. Your input gets brief priority
 while you are interacting, and browser actions run in sequence so a human click
 cannot split Ship's click or typing action. Closing the view leaves the

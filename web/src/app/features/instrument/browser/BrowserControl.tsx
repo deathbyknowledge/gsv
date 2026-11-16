@@ -60,6 +60,8 @@ export function BrowserRequests() {
 
 /** A failure shown in the viewer: as reported, or after the viewer's own lead-in when the person's input went unconfirmed. */
 type ViewerError = { cause: string; duringInput?: true };
+/** Typed text merges up to this length; a larger paste travels as its own input. */
+const MERGED_TEXT_LENGTH = 1024;
 
 export function BrowserViewer({ request, onClose }: { request: BrowserSelection; onClose: () => void }) {
   const t = useT();
@@ -84,6 +86,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const inputQueue = useRef<Promise<void>>(Promise.resolve());
+  const queuedText = useRef<{ key: string; text: string } | null>(null);
   const inputEpoch = useRef(0);
   const live = useRef(false);
   useLayoutEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
@@ -114,9 +117,20 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     if (value.kind === "click") setSelectedTab(shown.tabId);
     const epoch = inputEpoch.current;
     const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: handoff?.requestId };
+    // Text typed while earlier input is in flight joins the queued text for the same document,
+    // so typing costs one round trip per wait rather than one per character.
+    const key = `${epoch}/${args.tabId}/${args.documentId}/${args.handoffRequestId ?? ""}`;
+    const queued = queuedText.current;
+    if (value.kind === "text" && queued?.key === key && queued.text.length + value.text.length <= MERGED_TEXT_LENGTH) {
+      queued.text += value.text;
+      return;
+    }
+    const text = value.kind === "text" ? { key, text: value.text } : null;
+    queuedText.current = text;
     inputQueue.current = inputQueue.current.then(async () => {
+      if (queuedText.current === text) queuedText.current = null;
       if (!live.current || inputEpoch.current !== epoch || displayedFrame.signal.aborted) return;
-      await sendBrowserInput(client, args, value);
+      await sendBrowserInput(client, args, text ? { kind: "text", text: text.text } : value);
       setError(null);
     }).catch(cause => { inputEpoch.current++; setError({ cause: String(cause), duringInput: true }); });
   };
