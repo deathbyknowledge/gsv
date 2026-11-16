@@ -55,19 +55,35 @@ const REQUESTED_STOPS = new Set(["Stopped without saving", "Profile deleted", "S
 const INPUT_SAMPLES = 1_000;
 type SaveTrigger = Extract<TelemetryEvent, { name: "browser.save.finished" }>["properties"]["trigger"];
 
-/** Input timings for one live handoff, kept in memory, so a coordinator restart loses them. */
+type InputSummary = { inputs: number; inputFailures: number; inputMedianMs?: number; inputMaxMs?: number };
+
+/** Input timings for one handoff, kept in memory, so a coordinator restart loses them. */
 class HandoffInputs {
   #inputs = 0;
   #failures = 0;
   #slowestMs = 0;
+  #pending = 0;
+  #closed?: (summary: InputSummary) => void;
   readonly #samples: number[] = [];
-  record(durationMs: number, ok: boolean): void {
-    this.#inputs++;
-    if (!ok) this.#failures++;
-    this.#slowestMs = Math.max(this.#slowestMs, durationMs);
-    if (this.#samples.length < INPUT_SAMPLES) this.#samples.push(durationMs);
+  /** Admits one input and returns the call that records its outcome. */
+  admit(): (ok: boolean) => void {
+    const started = Date.now();
+    this.#pending++;
+    return ok => {
+      const durationMs = Date.now() - started;
+      this.#inputs++;
+      if (!ok) this.#failures++;
+      this.#slowestMs = Math.max(this.#slowestMs, durationMs);
+      if (this.#samples.length < INPUT_SAMPLES) this.#samples.push(durationMs);
+      if (--this.#pending === 0) this.#closed?.(this.summary());
+    };
   }
-  summary() {
+  /** Reports once every admitted input has settled, so a slow input ending the handoff is still counted. */
+  close(report: (summary: InputSummary) => void): void {
+    if (this.#pending === 0) report(this.summary());
+    else this.#closed = report;
+  }
+  private summary(): InputSummary {
     const samples = [...this.#samples].sort((a, b) => a - b);
     return {
       inputs: this.#inputs, inputFailures: this.#failures,
@@ -404,9 +420,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       else if (this.#store.liveHandoffs(args.instanceId).length) throw new Error("Open the pending browser request before entering input");
     };
     check();
-    const started = Date.now();
     const live = this.#handoffInputs.get(args.instanceId);
-    const timings = args.handoffRequestId && live?.requestId === args.handoffRequestId ? live.timings : undefined;
+    const settle = args.handoffRequestId && live?.requestId === args.handoffRequestId ? live.timings.admit() : undefined;
     const deadline = AbortSignal.timeout(10000);
     const previous = this.#humanInputs.get(args.instanceId);
     const operation = (async () => {
@@ -439,10 +454,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try {
       await within(settled, 10000, "Browser input", deadline);
     } catch (error) {
-      timings?.record(Date.now() - started, false);
+      settle?.(false);
       throw error;
     }
-    timings?.record(Date.now() - started, true);
+    settle?.(true);
     return { accepted: true as const };
   }
 
@@ -646,14 +661,17 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private profileSaving(profileId: string): boolean {
     return [...this.#saves.keys()].some(id => instance(this.#store.byId(id)).profileId === profileId);
   }
-  /** Ends a live handoff and reports how it went, in durations and counts only. */
+  /** Ends a live handoff at once and reports how it went, in durations and counts only. */
   private closeHandoff(value: BrowserHandoff, state: "completed" | "cancelled" | "expired" | "failed", change: Partial<BrowserHandoff> = {}): BrowserHandoff {
     const closed: BrowserHandoff = { ...value, ...change, state, revision: value.revision + 1 };
     this.#store.putHandoff(closed);
+    const durationMs = Date.now() - value.createdAt;
+    const report = (inputs?: InputSummary) => this.report({ stream: "operational", name: "browser.handoff.finished", properties: { outcome: state, durationMs, ...inputs } });
     const live = this.#handoffInputs.get(value.instanceId);
-    const inputs = live?.requestId === value.requestId ? live.timings.summary() : undefined;
-    if (inputs) this.#handoffInputs.delete(value.instanceId);
-    this.report({ stream: "operational", name: "browser.handoff.finished", properties: { outcome: state, durationMs: Date.now() - value.createdAt, ...inputs } });
+    if (live?.requestId !== value.requestId) return report(), closed;
+    this.#handoffInputs.delete(value.instanceId);
+    // Inputs admitted before the end still settle, within their 10 s deadline, and count toward it.
+    live.timings.close(report);
     return closed;
   }
   private report(event: TelemetryEvent): void {

@@ -1239,6 +1239,29 @@ describe("timing telemetry", () => {
     expect(events("browser.start.finished")).toEqual([expected]);
   }));
 
+  it.each(["cancel", "stop"] as const)("reports a handoff ended by %s during an input once that input settles", ending => {
+    const entered = deferred(), released = deferred();
+    return fixture(async (object, store, instanceId, installationId) => {
+      const events = telemetry(object, installationId);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60_000);
+      const selector = { instanceId, requestId: "slow" };
+      await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+      await object.openHandoff(actor, selector);
+      const typing = object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "slow" }, { kind: "text", text: "a" });
+      await entered.promise;
+      const ended = ending === "cancel" ? object.cancelHandoff(actor, selector) : object.stop(actor, { instanceId, force: true });
+      // The handoff has ended while its input is still running. Only Date is faked, so this
+      // polls with real timers and leaves the measured times alone (vi.waitFor would advance them).
+      while (store.handoff(instanceId, "slow")?.state !== "cancelled") await new Promise(resolve => setTimeout(resolve, 5));
+      expect(events("browser.handoff.finished")).toEqual([]);
+      vi.setSystemTime(Date.now() + 4_000);
+      released.resolve();
+      await Promise.allSettled([typing, ended]);
+      expect(events("browser.handoff.finished")).toEqual([{ outcome: "cancelled", durationMs: 0, inputs: 1, inputFailures: 0, inputMedianMs: 4_000, inputMaxMs: 4_000 }]);
+    }, vi.fn(async () => { entered.resolve(); await released.promise; }));
+  });
+
   it("reports how each handoff ended, without the input counts a coordinator restart lost", () => fixture(async (object, store, instanceId, installationId, browser, ctx) => {
     const events = telemetry(object, installationId);
     vi.useFakeTimers({ toFake: ["Date"] });

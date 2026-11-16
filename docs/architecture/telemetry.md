@@ -242,7 +242,9 @@ explicit country rather than geolocating their own export request.
   ready, was stopped or failed, the time since the start was requested, and the
   time and site count of restoring a saved profile. `browser.handoff.finished`
   reports how a login handoff ended, its duration, and how many inputs it took,
-  how many failed, and their median and slowest times. Input timings stay in
+  how many failed, and their median and slowest times. A handoff that ends
+  while an input is still running reports once that input settles, at most about
+  10 seconds later, so a slow last input is counted. Input timings stay in
   coordinator memory, so a handoff that outlives a coordinator restart reports
   no input counts rather than partial ones. No record carries a site, URL,
   input or profile.
