@@ -286,6 +286,16 @@ const installationActivatedSchema = z.strictObject({
   properties: z.strictObject({}),
 });
 
+// Cloudflare's coarse IP country only; XX means unknown and T1 means Tor.
+// Never accept an address, location coordinates or a client-supplied label.
+export const ipCountrySchema = z.string().check(z.regex(/^(?!XX$)[A-Z]{2}$/));
+
+const shipOwnerConnectedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("ship.owner.connected"),
+  properties: z.strictObject({ country: ipCountrySchema }),
+});
+
 // Closed allowlist so product analytics can break Ship replies down by the
 // surface that will receive them without ever carrying a raw peer platform
 // string or adapter name. Unknown clients and adapters classify as "other".
@@ -625,6 +635,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   contactInviteCreatedSchema,
   contactInviteAcceptedSchema,
   contactInviteSignupSchema,
+  shipOwnerConnectedSchema,
   shipMessageCommittedSchema,
   shipMessageReceivedSchema,
   conversationReplyFailedSchema,
@@ -665,6 +676,7 @@ export const telemetryEventComponents = {
   "contact.invite.created": ["gateway"],
   "contact.invite.accepted": ["gateway"],
   "contact.invite.signup": ["accounts"],
+  "ship.owner.connected": ["gateway"],
   "ship.message.committed": ["gateway"],
   "ship.message.received": ["gateway"],
   "conversation.reply.failed": ["gateway"],

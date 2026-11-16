@@ -66,6 +66,7 @@ export class ConnectionRuntime {
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     if (connection.state.source) state.source = connection.state.source;
+    if (connection.state.country) state.country = connection.state.country;
     connection.setState(state);
     this.host.connections.set(connection.id, connection);
   }
@@ -244,7 +245,18 @@ async handleSysConnect(
       this.host.transport.sendError(connection, frame.id, 401, "Credentials changed; sign in again");
       return;
     }
+    const country = connection.state?.country;
     this.activateConnection(connection, newState);
+
+    if (country && outcome.peer.principal.kind === "human"
+      && outcome.peer.principal.account.uid >= 1000
+      && !ctx.auth.isPersonalAgentUid(outcome.peer.principal.account.uid)) {
+      emitTelemetry(this.host.bindings, {
+        installationId: this.host.installationId,
+        component: "gateway",
+        event: { stream: "product", name: "ship.owner.connected", properties: { country } },
+      });
+    }
 
     if (peerProvidesOperations(outcome.peer)) {
       this.broadcastTargetStatus(outcome.peer.id, "connected");
