@@ -373,7 +373,7 @@ describe("createRoleContextProvider", () => {
     input.config = {
       ...input.config,
       systemContextFiles: [{ name: "00-runtime.md", text: "Runtime." }],
-      roleContext: { role: "ship", files: [{ name: "05-voice.md", text: "Save preferences in {{owner.home}}/context.d." }] },
+      roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "05-voice.md", text: "Save preferences in {{owner.home}}/context.d." }] },
     };
     const snapshot = await assembleSystemPromptSnapshot(input, [createSystemContextProvider(), createRoleContextProvider()]);
     expect(snapshot.prompt).toBe([
@@ -393,6 +393,22 @@ describe("createRoleContextProvider", () => {
       provider: "role.context",
       contextRoot: { key: "ship", access: "read-only", location: "/sys/config/ai/ship/context.d" },
     });
+  });
+
+  it("renders whatever role and location the Kernel names", async () => {
+    const input = makeInput();
+    input.config = {
+      ...input.config,
+      roleContext: { name: "concierge", location: "/sys/config/ai/concierge/context.d", files: [{ name: "00-role.md", text: "Greet guests." }] },
+    };
+    const snapshot = await assembleSystemPromptSnapshot(input, [createRoleContextProvider()]);
+    expect(snapshot.prompt).toBe([
+      '<concierge path="/sys/config/ai/concierge/context.d/">',
+      "<00-role.md>",
+      "Greet guests.",
+      "</00-role.md>",
+      "</concierge>",
+    ].join("\n"));
   });
 
   it("adds nothing for an account without a role", async () => {

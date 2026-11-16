@@ -33,7 +33,7 @@ export type AiContextResult = {
   targets?: AiToolsTarget[];
   mcpServers: string[];
   systemContextFiles?: ContextFile[];
-  /** The shipped standing context for the caller's role, when it runs as a Ship or Crew account. */
+  /** Read-only standing context the Kernel selects for the caller's account role, if it has one. */
   roleContext?: AiRoleContext;
   system: {
     timezone: string;
@@ -48,9 +48,12 @@ export type AiContextResult = {
   mailbox: AiContextMailbox | null;
 };
 
-/** Read-only standing context a release ships for one account role. */
+/** Read-only standing context the Kernel selects for an account role. */
 export type AiRoleContext = {
-  role: "ship" | "crew";
+  /** The prompt root the files render under. */
+  name: string;
+  /** Where the caller can read the files. */
+  location: string;
   files: ContextFile[];
 };
 

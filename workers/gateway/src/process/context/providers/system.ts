@@ -18,7 +18,7 @@ const SYSTEM_ROOT: NonNullable<PromptSection["contextRoot"]> = {
   location: "/sys/config/ai/context.d",
 };
 
-/** The read-only context a release ships for the Ship or Crew role the process runs as. */
+/** The read-only context the Kernel selects for the role of the account the process runs as. */
 export function createRoleContextProvider(): PromptContextProvider {
   return {
     name: "role.context",
@@ -26,10 +26,10 @@ export function createRoleContextProvider(): PromptContextProvider {
       const role = input.config.roleContext;
       if (!role) return [];
       return renderContextFiles(role.files, input, {
-        key: role.role,
-        label: role.role.toUpperCase(),
+        key: role.name,
+        label: role.name.toUpperCase(),
         access: "read-only",
-        location: `/sys/config/ai/${role.role}/context.d`,
+        location: role.location,
       });
     },
   };

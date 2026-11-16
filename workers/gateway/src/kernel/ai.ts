@@ -243,7 +243,7 @@ export async function handleAiContext(
   return result;
 }
 
-/** The shipped context for a caller running as a Ship or Crew account. */
+/** The read-only context for the caller's account role, if it has one. */
 function resolveRoleContext(ctx: KernelContext): AiRoleContext | undefined {
   const account = principalOf(ctx)?.account;
   return account ? shippedRoleContext(ctx, account, resolveCallerOwnerUid(ctx)) : undefined;

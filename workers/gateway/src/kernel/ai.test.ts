@@ -642,7 +642,7 @@ describe("handleAiConfig", () => {
     vi.mocked(ctx.auth.isPersonalAgentUid).mockImplementation((uid: number) => uid === 2000);
 
     const snapshot = await handleAiContext({}, ctx);
-    expect(snapshot.roleContext?.role).toBe("ship");
+    expect(snapshot.roleContext?.name).toBe("ship");
     expect(applied).toEqual([
       { type: "delete", path: "context.d/00-role.md" },
       { type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice.md" },

@@ -35,7 +35,8 @@ export type PromptSection = {
   text: string;
   responsibilityBaseline?: boolean;
   contextRoot?: {
-    key: "system" | "ship" | "crew" | "program" | "user";
+    /** "system", "program", "user", or the name of the Kernel-selected role context. */
+    key: string;
     label: string;
     access: "read-only" | "editable";
     location: string;

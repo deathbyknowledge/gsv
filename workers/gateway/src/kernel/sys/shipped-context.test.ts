@@ -79,7 +79,8 @@ const REPO: RipgitRepoRef = { owner: "ship", repo: "home", branch: "main" };
 describe("shipped role context", () => {
   it("gives the Ship its release files, naming its Crew", () => {
     const role = shippedRoleContext(kernel({ crew: CREW }), SHIP, OWNER_UID);
-    expect(role?.role).toBe("ship");
+    expect(role?.name).toBe("ship");
+    expect(role?.location).toBe("/sys/config/ai/ship/context.d");
     expect(role?.files.map((file) => file.name)).toEqual([
       "00-role.md", "05-voice.md", "06-speaking-for-the-owner.md", "10-delegation.md",
     ]);
@@ -93,7 +94,8 @@ describe("shipped role context", () => {
 
   it("gives the Crew its own files and other agents none", () => {
     expect(shippedRoleContext(kernel({ crew: CREW }), CREW, OWNER_UID)).toEqual({
-      role: "crew",
+      name: "crew",
+      location: "/sys/config/ai/crew/context.d",
       files: [{ name: "00-role.md", text: SYSTEM_CONFIG_DEFAULTS["config/ai/crew/context.d/00-role.md"] }],
     });
     expect(shippedRoleContext(kernel({ crew: CREW }), SCOUT, OWNER_UID)).toBeUndefined();

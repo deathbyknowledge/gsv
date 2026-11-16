@@ -43,7 +43,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       contextWindowTokens: 128000, contextWindowSource: "model",
       maxContextBytes: Number(SYSTEM_CONFIG_DEFAULTS["config/ai/max_context_bytes"]),
       systemContextFiles,
-      roleContext: { role: account, files: roleContextFiles },
+      roleContext: { name: account, location: `/sys/config/ai/${account}/context.d`, files: roleContextFiles },
     },
     skills: {
       mode: "summary",

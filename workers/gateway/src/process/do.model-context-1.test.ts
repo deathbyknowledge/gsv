@@ -523,7 +523,7 @@ describe("model context", () => {
       });
       const configA = {
         ...terminalTestConfig(pid),
-        roleContext: { role: "ship" as const, files: [{ name: "05-voice.md", text: "voice alpha" }] },
+        roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "05-voice.md", text: "voice alpha" }] },
       };
       const runA = {
         runId: "run-role-a",
@@ -537,7 +537,7 @@ describe("model context", () => {
       const epochA = await process.history.ensureContextEpoch(runA.runId, runA, configA);
       const configB = {
         ...configA,
-        roleContext: { role: "ship" as const, files: [{ name: "05-voice.md", text: "voice beta" }] },
+        roleContext: { name: "ship", location: "/sys/config/ai/ship/context.d", files: [{ name: "05-voice.md", text: "voice beta" }] },
       };
       const runB = { ...runA, runId: "run-role-b", config: configB, systemPrompt: undefined };
       process.runs.active = runB;

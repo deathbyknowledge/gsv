@@ -60,7 +60,8 @@ const aiConfigResultSchema = z.object({
     text: z.string(),
   })).optional(),
   roleContext: z.object({
-    role: z.enum(["ship", "crew"]),
+    name: z.string(),
+    location: z.string(),
     files: z.array(z.object({ name: z.string(), text: z.string() })),
   }).optional(),
   system: z.object({ timezone: z.string(), language: z.string().optional() }).optional(),

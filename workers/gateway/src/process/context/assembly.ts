@@ -98,7 +98,7 @@ function renderContextSections(sections: PromptSection[]): string {
 }
 
 function contextRootTagName(key: NonNullable<PromptSection["contextRoot"]>["key"]): string {
-  return key;
+  return sectionTagName(key);
 }
 
 function sectionTagName(name: string): string {
