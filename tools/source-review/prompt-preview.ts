@@ -89,7 +89,7 @@ export async function createPromptPreview(
     async collect(assemblyInput: PromptAssemblyInput) {
       const collected = await provider.collect(assemblyInput);
       const contextRoot = provider.layer?.(assemblyInput) ?? undefined;
-      const sourceScope = contextRoot?.key === "role" ? account : contextRoot?.key === "user" ? "user" : "system";
+      const sourceScope = contextRoot?.key === "base" ? account : contextRoot?.key === "user" ? "user" : "system";
       for (const section of collected) {
         const path = `${sourceScope}/context.d/${section.name}`;
         const paths = catalog.some((source) => source.path === path) ? [path] : [];

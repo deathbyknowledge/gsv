@@ -42,7 +42,7 @@ onboarding/*.md         welcome responsibility briefs, never standing context
 Each standing Markdown file is one complete `context.d` entry. Its directory
 selects the scope; its filename supplies the stored name. The prompt groups
 standing context by file name, in name order, and renders each name's layers as
-system, role, agent, then user, so the owner's own `voice.md` follows the
+system, base, agent, then user, so the owner's own `voice.md` follows the
 Ship's.
 `context.ts` bundles the complete files in one catalogue shared by the system
 defaults and preview. Register a new standing source there; the preview derives

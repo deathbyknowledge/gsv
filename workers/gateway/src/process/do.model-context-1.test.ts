@@ -545,7 +545,7 @@ describe("model context", () => {
       return { epochA, epochB, epochs: process.store.epochs.listContextEpochs() };
     });
 
-    expect(result.epochA.systemPrompt).toMatch(/^role +\/sys\/config\/ai\/ship\/context\.d\/ +read-only$/m);
+    expect(result.epochA.systemPrompt).toMatch(/^base +\/sys\/config\/ai\/ship\/context\.d\/ +read-only$/m);
     expect(result.epochA.systemPrompt).toContain("voice alpha");
     expect(result.epochB.systemPrompt).toContain("voice beta");
     expect(result.epochs[0]).toMatchObject({ id: result.epochA.id, state: "closed", closeReason: "context.changed" });

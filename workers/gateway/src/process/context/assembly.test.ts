@@ -196,7 +196,7 @@ describe("assembleSystemPrompt", () => {
     expect(prompt.slice(0, prompt.indexOf("</context_layers>"))).toBe([
       ...LEGEND_HEAD,
       "system  /sys/config/ai/context.d/       read-only",
-      "role    /sys/config/ai/ship/context.d/  read-only",
+      "base    /sys/config/ai/ship/context.d/  read-only",
       "agent   /home/ship/context.d/           editable",
       "user    /home/hank/context.d/           editable",
       "",
@@ -409,7 +409,7 @@ describe("createSystemContextProvider", () => {
 });
 
 describe("createRoleContextProvider", () => {
-  it("renders the role's shipped files as the read-only layer after system", async () => {
+  it("renders the role's shipped files as the read-only base layer after system", async () => {
     const input = makeInput({
       identity: { ...OWNER_IDENTITY, uid: 1001, gid: 1001, username: "ship", home: "/home/ship", cwd: "/home/ship" },
       ownerIdentity: OWNER_IDENTITY,
@@ -423,7 +423,7 @@ describe("createRoleContextProvider", () => {
     expect(snapshot.prompt).toBe([
       ...LEGEND_HEAD,
       "system  /sys/config/ai/context.d/       read-only",
-      "role    /sys/config/ai/ship/context.d/  read-only",
+      "base    /sys/config/ai/ship/context.d/  read-only",
       "</context_layers>",
       "",
       "<environment.md>",
@@ -433,18 +433,18 @@ describe("createRoleContextProvider", () => {
       "</environment.md>",
       "",
       "<voice.md>",
-      "<role>",
+      "<base>",
       "Save preferences in /home/hank/context.d.",
-      "</role>",
+      "</base>",
       "</voice.md>",
     ].join("\n"));
     expect(snapshot.sources[1]).toMatchObject({
       provider: "role.context",
-      contextRoot: { key: "role", access: "read-only", location: "/sys/config/ai/ship/context.d" },
+      contextRoot: { key: "base", access: "read-only", location: "/sys/config/ai/ship/context.d" },
     });
   });
 
-  it("names whatever role location the Kernel gives in the legend", async () => {
+  it("names whatever base location the Kernel gives in the legend", async () => {
     const input = makeInput();
     input.config = {
       ...input.config,
@@ -453,13 +453,13 @@ describe("createRoleContextProvider", () => {
     const snapshot = await assembleSystemPromptSnapshot(input, [createRoleContextProvider()]);
     expect(snapshot.prompt).toBe([
       ...LEGEND_HEAD,
-      "role    /sys/config/ai/concierge/context.d/  read-only",
+      "base    /sys/config/ai/concierge/context.d/  read-only",
       "</context_layers>",
       "",
       "<00-role.md>",
-      "<role>",
+      "<base>",
       "Greet guests.",
-      "</role>",
+      "</base>",
       "</00-role.md>",
     ].join("\n"));
   });

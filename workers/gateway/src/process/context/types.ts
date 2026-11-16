@@ -31,7 +31,7 @@ export type PromptAssemblyInput = {
 };
 
 /** Standing context layers, in precedence order: a later layer refines an earlier one. */
-export const CONTEXT_LAYERS = ["system", "role", "agent", "user"] as const;
+export const CONTEXT_LAYERS = ["system", "base", "agent", "user"] as const;
 export type ContextLayer = typeof CONTEXT_LAYERS[number];
 
 /** Where a standing context layer lives and whether the process can change it. */

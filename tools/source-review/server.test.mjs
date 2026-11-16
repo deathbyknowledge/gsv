@@ -51,12 +51,12 @@ test("workspace listing includes allowed files and skips repository metadata", a
 test("previews assemble account-specific defaults with the runtime providers", async () => {
   const [ship, crew] = await Promise.all([loadPromptPreview("ship"), loadPromptPreview("crew")]);
   assert.match(ship.prompt, /^system  \/sys\/config\/ai\/context.d\/ +read-only$/m);
-  assert.match(ship.prompt, /^role    \/sys\/config\/ai\/ship\/context.d\/ +read-only$/m);
-  assert.match(ship.prompt, /<voice.md>\n<role>\n# Voice/);
+  assert.match(ship.prompt, /^base    \/sys\/config\/ai\/ship\/context.d\/ +read-only$/m);
+  assert.match(ship.prompt, /<voice.md>\n<base>\n# Voice/);
   assert.match(ship.prompt, /Crew account: `crew`/);
   assert.doesNotMatch(crew.prompt, /<voice.md>/);
   assert.doesNotMatch(crew.prompt, /<00-style.md>/);
-  assert.match(crew.prompt, /^role    \/sys\/config\/ai\/crew\/context.d\/ +read-only$/m);
+  assert.match(crew.prompt, /^base    \/sys\/config\/ai\/crew\/context.d\/ +read-only$/m);
   for (const preview of [ship, crew]) {
     assert.match(preview.prompt, /^user    \/home\/alex\/context.d\/ +editable$/m);
     assert.match(preview.prompt, /<personal.md>\n<user>\n/);

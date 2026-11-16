@@ -662,13 +662,13 @@ describe("handleAiConfig", () => {
     });
     expect(rendered.sources.filter((source) => source.contextRoot?.key !== "system").map((source) => `${source.contextRoot?.key}:${source.name}`))
       .toEqual([
-        "role:behaviour.md", "role:voice.md",
+        "base:behaviour.md", "base:voice.md",
         "agent:20-projects.md",
         "user:voice.md",
       ]);
     expect(rendered.prompt).not.toContain("An edited old copy.");
     // The owner's voice is the last layer of voice.md, right after the Ship's.
-    expect(rendered.prompt).toMatch(/<voice\.md>\n<role>\n[\s\S]*\n<\/role>\n<user>\nAlways answer in Dutch\.\n<\/user>\n<\/voice\.md>/);
+    expect(rendered.prompt).toMatch(/<voice\.md>\n<base>\n[\s\S]*\n<\/base>\n<user>\nAlways answer in Dutch\.\n<\/user>\n<\/voice\.md>/);
   });
 
   it("retries account memory reconciliation after a failed read", async () => {

@@ -7,8 +7,9 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Standing context comes from up to four layers, in precedence order:
 
 1. **system:** `config/ai/context.d/*.md`, for every process.
-2. **role:** `config/ai/ship/context.d/*.md` or `config/ai/crew/context.d/*.md`,
-   when the process runs as the personal agent or its Crew account.
+2. **base:** `config/ai/ship/context.d/*.md` or `config/ai/crew/context.d/*.md`,
+   when the process runs as the personal agent or its Crew account. These are
+   the release's defaults for that kind of agent.
 3. **agent:** the run-as agent's own `~/context.d/*.md`.
 4. **user:** the human owner's `~/context.d/*.md`. A person's own process
    reads its home as this layer and has no agent layer.
@@ -33,15 +34,15 @@ file then carries only its layer tag:
 <context_layers>
 Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.
 system  /sys/config/ai/context.d/       read-only
-role    /sys/config/ai/ship/context.d/  read-only
+base    /sys/config/ai/ship/context.d/  read-only
 agent   /home/ship/context.d/           editable
 user    /home/alex/context.d/           editable
 </context_layers>
 
 <voice.md>
-<role>
+<base>
 # Voice ...
-</role>
+</base>
 <user>
 Always answer in Dutch.
 </user>
@@ -69,7 +70,7 @@ The Ship's behaviour, which includes speaking for the owner and the name of
 its Crew account, the Ship's voice, and the Crew's behaviour ship with each
 release. The gateway serves
 them from `config/ai/ship/context.d` and `config/ai/crew/context.d` as the
-read-only role layer, readable at `/sys/config/ai/ship/context.d` and
+read-only base layer, readable at `/sys/config/ai/ship/context.d` and
 `/sys/config/ai/crew/context.d`. They
 change only with a deployment, or when an operator sets those keys, and a
 change reaches every Ship at its next context epoch.

@@ -24,7 +24,7 @@ export function createRoleContextProvider(): PromptContextProvider {
     name: "role.context",
     layer(input) {
       const role = input.config.roleContext;
-      return role ? { key: "role", access: "read-only", location: role.location } : null;
+      return role ? { key: "base", access: "read-only", location: role.location } : null;
     },
     async collect(input) {
       return renderContextFiles(input.config.roleContext?.files, input);
