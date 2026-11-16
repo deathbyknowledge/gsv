@@ -77,7 +77,6 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
             <dt>p</dt><dd>{t("shell.help.people")}</dd>
             <dt>s</dt><dd>{t("settings.title")}</dd>
             <dt>l</dt><dd>{t("shell.help.theme")}</dd>
-            <dt>x</dt><dd>{t("shell.help.textSize")}</dd>
             <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
             <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
           </dl>

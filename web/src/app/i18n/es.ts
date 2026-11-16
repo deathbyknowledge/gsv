@@ -1532,7 +1532,6 @@ export const es = {
   "shell.help.memory": "Memoria",
   "shell.help.people": "Personas",
   "shell.help.theme": "Cambiar entre claro y oscuro",
-  "shell.help.textSize": "Cambiar el tamaño del texto",
   "shell.help.toggle": "Mostrar u ocultar Ayuda",
   "shell.help.closePanel": "Cerrar este panel",
   "shell.help.chatBrowse": "Chat · navegación",

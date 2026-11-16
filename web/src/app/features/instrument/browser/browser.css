@@ -2,12 +2,12 @@
 .browser-request { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .6rem 0; border-bottom: 1px solid var(--border); }
 .browser-request span { display: block; font-size: .85em; color: var(--text-dim); margin-top: .3rem; }
 .browser-viewer {
-  width: min(1340px, calc(100vw / var(--type-scale, 1) - 48px), calc((100dvh / var(--type-scale, 1) - 140px) * 1.6));
-  max-width: none; max-height: calc(100dvh / var(--type-scale, 1) - 24px); padding: 0; margin: auto;
+  width: min(1340px, calc(100vw - 48px), calc((100dvh - 140px) * 1.6));
+  max-width: none; max-height: calc(100dvh - 24px); padding: 0; margin: auto;
   overflow: auto; color: var(--text); background: var(--panel); font: 12px/1.5 var(--gsv-font-mono);
   border: 1px solid var(--border-raised); border-radius: 0;
 }
-.browser-viewer.is-expanded { width: min(calc(100vw / var(--type-scale, 1) - 12px), calc((100dvh / var(--type-scale, 1) - 96px) * 1.6)); }
+.browser-viewer.is-expanded { width: min(calc(100vw - 12px), calc((100dvh - 96px) * 1.6)); }
 .browser-viewer::backdrop { background: rgba(0, 0, 0, .35); }
 .browser-viewer button, .browser-viewer summary { color: inherit; background: none; border: 0; cursor: pointer; font: inherit; text-underline-offset: 5px; }
 .browser-viewer button:disabled { opacity: .45; cursor: default; }
@@ -50,7 +50,7 @@
 .browser-actions { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem; }
 .zen-browser-open { color: var(--accent); font-size: 12px; }
 @media (max-width: 600px) {
-  .browser-viewer, .browser-viewer.is-expanded { width: calc(100vw / var(--type-scale, 1) - 12px); }
+  .browser-viewer, .browser-viewer.is-expanded { width: calc(100vw - 12px); }
   .browser-tabs button { min-width: 64px; padding: 0 10px; }
   .browser-window-actions { gap: 0; padding: 0 4px; }
   .browser-window-actions > button, .browser-menu > summary { padding: 0 6px; font-size: 11px; }

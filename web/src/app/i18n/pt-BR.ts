@@ -1537,7 +1537,6 @@ export const ptBR = {
   "shell.help.memory": "Memória",
   "shell.help.people": "Contatos",
   "shell.help.theme": "Alternar entre claro e escuro",
-  "shell.help.textSize": "Alternar o tamanho do texto",
   "shell.help.toggle": "Mostrar ou ocultar Ajuda",
   "shell.help.closePanel": "Fechar este painel",
   "shell.help.chatBrowse": "Chat · navegação",

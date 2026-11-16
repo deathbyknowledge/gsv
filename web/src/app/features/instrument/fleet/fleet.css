@@ -211,10 +211,10 @@
   position: fixed;
   inset: 0;
   box-sizing: border-box;
-  width: min(720px, calc(100vw / var(--type-scale) - 32px));
+  width: min(720px, calc(100vw - 32px));
   max-width: none;
-  height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px));
-  max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
+  height: min(680px, calc(var(--instrument-height) - 32px));
+  max-height: calc(var(--instrument-height) - 32px);
   margin: auto;
   padding: 0;
   border: 1px solid var(--border-raised);
