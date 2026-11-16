@@ -26,6 +26,18 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("allows only coarse owner country codes from the Gateway", () => {
+    const event = { stream: "product", name: "ship.owner.connected", properties: { country: "CH" } };
+    assert.equal(createTelemetryRecord({ ...INPUT, event }).event.properties.country, "CH");
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const country of ["XX", "T1", "ch", "Switzerland", "1.2.3.4", "", null]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { country } } }));
+    }
+    for (const field of ["ip", "email", "timezone", "latitude", "longitude"]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, [field]: "private" } } }));
+    }
+  });
+
   it("classifies custom inference transports without exporting their names", () => {
     for (const name of ["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]) {
       assert.equal(inferenceProviderFromName(name), name);
