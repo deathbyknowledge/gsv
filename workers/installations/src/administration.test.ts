@@ -5,6 +5,28 @@ import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationResetCoordinator } from "./reset-preparation";
 
+it("lists and searches the current owner without showing an issuing operator as the owner", async () => {
+  const db = env.INSTALLATIONS_DB;
+  const accounts = new AccountStore(db, "example.com");
+  const admin = new InstallationAdminStore(db);
+  const issuer = await accounts.createPrincipal({ email: "issuer-lookup@example.com", displayName: "Operator", verified: true });
+  const issued = await accounts.reserveInstallation({ principalId: issuer.id, operationId: "owner-lookup-issued", handle: "owner-lookup-issued" });
+  expect((await admin.listInstallations({ query: issued.handle, state: null, page: 1 })).installations[0].ownerEmail).toBeNull();
+  expect((await admin.listInstallations({ query: issuer.email, state: null, page: 1 })).total).toBe(0);
+
+  const original = await accounts.createPrincipal({ email: "original-lookup@example.com", displayName: "Owner", verified: true });
+  const space = await accounts.reserveInstallation({ principalId: original.id, operationId: "owner-lookup-signup", handle: "owner-lookup-signup", ownerSetup: true });
+  expect((await admin.listInstallations({ query: "ORIGINAL-LOOKUP@EXAMPLE.COM", state: null, page: 1 })).installations)
+    .toMatchObject([{ installationId: space.installationId, ownerEmail: original.email }]);
+
+  const current = await accounts.createPrincipal({ email: "current-lookup@example.com", displayName: "Current owner", verified: true });
+  await db.prepare("INSERT INTO memberships (installation_id, principal_id, role, state, created_at) VALUES (?, ?, 'owner', 'active', ?)")
+    .bind(space.installationId, current.id, Date.now()).run();
+  expect((await admin.listInstallations({ query: current.email, state: null, page: 1 })).installations)
+    .toMatchObject([{ installationId: space.installationId, ownerEmail: current.email }]);
+  expect((await admin.listInstallations({ query: original.email, state: null, page: 1 })).total).toBe(0);
+});
+
 it("administers installations and preserves reset isolation without commercial tables", async () => {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);

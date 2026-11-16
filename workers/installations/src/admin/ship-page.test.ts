@@ -113,7 +113,8 @@ describe("Ship page", () => {
 
     const body = await page(http, `/admin/installations/${installationId}`);
     // Operators contact owners from this page, so it shows the whole address.
-    expect(body).toContain('<a class="select-all" href="mailto:valentin@example.org">valentin@example.org</a>');
+    expect(body).toContain('data-copy-email="valentin@example.org"');
+    expect(body).toContain('aria-label="Copy email address valentin@example.org"');
     expect(body).toContain("email");
     expect(body).toContain("accounts.google.com");
     expect(body).toContain("valent@ship.space");

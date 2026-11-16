@@ -5,12 +5,14 @@ import type {
 } from "../administration";
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
 import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
-import type { AdminNavigationItem } from "./page";
+import type { AdminNavigationItem, AdminPageLink } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
 import { takedownSubjectKey, takedownSubjectKind, type ShipOpenNetwork, type TakedownSubjectKind } from "./takedowns";
 import {
   adminPageResponse,
+  copyEmailButton,
+  formatDateOnly,
   auditTable,
   errorNotice,
   escapeHtml,
@@ -33,6 +35,7 @@ export type InstallationAdminPresentation<
   Summary extends AdminInstallationSummary = AdminInstallationSummary,
 > = {
   navigation?: readonly AdminNavigationItem[];
+  overviewLinks?: readonly AdminPageLink[];
   summaryColumn?: { label: string; render: (installation: Summary) => string };
   overview?: (installation: Detail) => string;
   panel?: (installation: Detail) => string;
@@ -54,7 +57,12 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
     content: `<section class="stack">
       <div class="page-heading">
         <div><p class="eyebrow">OPERATOR</p><h1>Ships</h1></div>
-        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button secondary" href="/admin/installations/new">Create a Ship manually</a></div>
+        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button secondary" href="/admin/installations/new">Create a Ship manually</a>
+          <details class="column-picker" data-column-picker hidden><summary class="button secondary">Columns</summary>
+            <div class="column-picker-panel"><fieldset data-column-options><legend>Visible columns</legend></fieldset>
+              <button class="secondary" type="button" data-reset-columns>Show all columns</button><small class="muted">Saved in this browser.</small></div>
+          </details>
+        </div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
@@ -151,7 +159,7 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
     ? context.owner.operatorIssued
       ? "Not linked (issued by an operator)"
       : `${context.owner.email
-        ? `<a class="select-all" href="mailto:${escapeHtml(context.owner.email)}">${escapeHtml(context.owner.email)}</a>`
+        ? copyEmailButton(context.owner.email)
         : "Unknown"}${context.owner.signIn.length ? ` <small>${context.owner.signIn.map(escapeHtml).join(", ")}</small>` : ""}`
     : "";
   return `<section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
@@ -239,7 +247,7 @@ function hostOf(origin: string): string {
 
 function installationFilters(list: AdminInstallationList): string {
   return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
+    <label><span>Search handle, owner email or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="handle, email or inst_…"></label>
     <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
     <button type="submit">Search</button>
     <a class="button secondary" href="/admin/installations">Reset</a>
@@ -253,7 +261,7 @@ function installationTable<Summary extends AdminInstallationSummary>(
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  return `<div class="table-wrap"><table class="installations" data-user-table><thead><tr><th data-column="identity" data-column-label="Ship / owner">Ship / owner</th><th data-column="state" data-column-label="State">State</th>${column ? `<th data-column="operator" data-column-label="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>` : ""}<th data-column="created" data-column-label="Created">Created</th><th data-column="installation_id" data-column-label="Installation ID">Installation ID</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -263,10 +271,11 @@ function installationRow<Summary extends AdminInstallationSummary>(
 ): string {
   const href = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
   return `<tr>
-    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong><small>${escapeHtml(installation.installationId)}</small></td>
-    <td>${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
-    ${column ? `<td>${column.render(installation)}</td>` : ""}
-    <td>${formatDate(installation.createdAt)}</td>
+    <td data-column="identity"><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${copyEmailButton(installation.ownerEmail)}</small>` : ""}</td>
+    <td data-column="state">${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
+    ${column ? `<td data-column="operator">${column.render(installation)}</td>` : ""}
+    <td data-column="created">${formatDateOnly(installation.createdAt)}</td>
+    <td data-column="installation_id"><span class="ship-id select-all">${escapeHtml(installation.installationId)}</span></td>
   </tr>`;
 }
 
