@@ -37,36 +37,35 @@ type SiteVisits<T> = {
 
 /**
  * Visits every site on up to `pages` private pages. A failure stops later
- * visits, and every page is closed and released before this returns.
+ * visits. Every page is closed before this returns, and released once closed.
  */
 async function visitSites<T>(context: BrowserContext, sites: T[], { pages, prepare, visit, release, signal }: SiteVisits<T>): Promise<void> {
   const queue = [...sites], open = new Set<Page>();
   const close = () => { for (const page of open) void page.close().catch(() => {}); };
   signal?.addEventListener("abort", close, { once: true });
-  try {
-    const workers = await Promise.allSettled(Array.from({ length: Math.min(pages, queue.length) }, async () => {
-      try {
-        const page = await context.newPage();
-        open.add(page);
-        await prepare(page);
-        for (let site = queue.shift(); site !== undefined; site = queue.shift()) {
-          signal?.throwIfAborted();
-          await visit(page, site);
-        }
-      } catch (cause) {
-        queue.length = 0;
-        throw cause;
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(pages, queue.length) }, async () => {
+    try {
+      const page = await context.newPage();
+      open.add(page);
+      await prepare(page);
+      for (let site = queue.shift(); site !== undefined; site = queue.shift()) {
+        signal?.throwIfAborted();
+        await visit(page, site);
       }
-    }));
-    const failed = workers.find(result => result.status === "rejected");
-    if (failed) throw failed.reason;
-  } finally {
-    signal?.removeEventListener("abort", close);
-    await Promise.all([...open].map(async page => {
-      if (!page.isClosed()) await page.close().catch(() => {});
-      release?.(page);
-    }));
-  }
+    } catch (cause) {
+      queue.length = 0;
+      throw cause;
+    }
+  }));
+  signal?.removeEventListener("abort", close);
+  // A page that fails to close stays claimed, so it never surfaces as a tab and a
+  // reattached browser can still close it. A visit's failure is reported first.
+  const closed = await Promise.allSettled([...open].map(async page => {
+    if (!page.isClosed()) await page.close();
+    release?.(page);
+  }));
+  const failed = [...workers, ...closed].find(result => result.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 /** Disposable, intercepted pages own every IndexedDB handle opened by export. */

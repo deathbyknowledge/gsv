@@ -117,3 +117,24 @@ it("keeps site data in flight within the allowance and reads a larger site again
   expect(snapshot.state.origins.map(entry => entry.origin)).toEqual([...sizes.keys()].sort());
   expect(snapshot.usage.complete).toBe(true);
 });
+
+it("keeps an export page claimed when it fails to close, so it never surfaces as a tab", async () => {
+  const claims = new Map<string, boolean>(), targets = new Map<Page, string>();
+  const page = () => {
+    const targetId = `export-${targets.size + 1}`;
+    // SAFETY: Export needs only interception, navigation, evaluation and closing from its pages.
+    const value = { route: async () => {}, goto: async () => null, isClosed: () => false,
+      evaluate: async () => ({ summary: { origin: "https://a.example", bytes: 2, localStorageBytes: 2, indexedDBBytes: 0, localStorageEntries: 0, databases: 0, records: 0 }, json: JSON.stringify({ origin: "https://a.example", localStorage: [] }) }),
+      close: async () => { if (targetId === "export-1") throw new Error("Target close failed"); } } as Page;
+    targets.set(value, targetId);
+    return value;
+  };
+  // SAFETY: Export needs only cookies, new pages and their debugger sessions.
+  const context = { cookies: async () => [], newPage: async () => page(),
+    newCDPSession: async (target: Page) => ({ send: async () => ({ targetInfo: { targetId: targets.get(target) } }) }) as CDPSession } as BrowserContext;
+  const internal = new Set<Page>();
+  await expect(exportBrowserStorage(context, ["https://a.example", "https://b.example"], 10000, new AbortController().signal, internal,
+    (targetId, owned) => { claims.set(targetId, owned); })).rejects.toThrow();
+  expect([...internal].map(value => targets.get(value))).toEqual(["export-1"]);
+  expect(Object.fromEntries(claims)).toEqual({ "export-1": true, "export-2": false });
+});
