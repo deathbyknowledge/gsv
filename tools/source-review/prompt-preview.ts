@@ -16,7 +16,11 @@ type PromptPreview = PromptAssemblySnapshot & {
 
 // This fixture uses the production defaults and providers, with local sample identities.
 // It never contacts a space or reads customer context.
-export async function createPromptPreview(account: PreviewAccount): Promise<PromptPreview> {
+// ownerFiles adds sample files to the owner's context.d, such as a voice.md, to show how layers combine.
+export async function createPromptPreview(
+  account: PreviewAccount,
+  ownerFiles: Record<string, string> = {},
+): Promise<PromptPreview> {
   const systemContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
@@ -27,9 +31,10 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       name: key.slice(`config/ai/${account}/context.d/`.length),
       text: text.replaceAll("{{crew.username}}", "crew"),
     }));
-  const files = new Map<string, string>(
-    contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
-  );
+  const files = new Map<string, string>([
+    ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
+    ...Object.entries(ownerFiles).map(([name, text]) => [`home/alex/context.d/${name}`, text] as const),
+  ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
   });
@@ -82,8 +87,8 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
     async collect(assemblyInput: PromptAssemblyInput) {
       const collected = await provider.collect(assemblyInput);
       for (const section of collected) {
-        const root = section.contextRoot?.key;
-        const sourceScope = root === "ship" || root === "crew" || root === "user" ? root : "system";
+        const layer = section.contextRoot?.key;
+        const sourceScope = layer === "role" ? account : layer === "user" ? "user" : "system";
         const path = `${sourceScope}/context.d/${section.name}`;
         const paths = catalog.some((source) => source.path === path) ? [path] : [];
         sections.push({ ...section, paths, provider: provider.name });

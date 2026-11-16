@@ -34,15 +34,15 @@ system/context.d/environment.md   where every agent is and how things work there
 ship/context.d/behaviour.md       the Ship's job, including speaking for the owner
 ship/context.d/voice.md           how the Ship sounds
 crew/context.d/behaviour.md       the Crew's job
-user/context.d/10-personal.md     the owner's standing personal facts template
+user/context.d/personal.md        the owner's standing personal facts template
 tasks/*.md              standalone task instructions
 onboarding/*.md         welcome responsibility briefs, never standing context
 ```
 
 Each standing Markdown file is one complete `context.d` entry. Its directory
-selects the scope; its filename supplies the stored name. Roots render as
-system, then the account's role, then the account's home, then the owner, and
-files within a root in lexical order, so the owner's own `voice.md` follows the
+selects the scope; its filename supplies the stored name. The prompt groups
+standing context by file name, in name order, and renders each name's layers as
+system, role, agent, then user, so the owner's own `voice.md` follows the
 Ship's.
 `context.ts` bundles the complete files in one catalogue shared by the system
 defaults and preview. Register a new standing source there; the preview derives
@@ -50,7 +50,7 @@ its scope and source link from the path. There is no fragment concatenation or
 separate source-to-entry map. Standalone tasks retain their owning callers.
 
 Memory instructions live once in system context. Personal facts remain in the
-owner's `context.d/10-personal.md` and detailed memory in their `personal` wiki.
+owner's `context.d/personal.md` and detailed memory in their `personal` wiki.
 Ship has a public voice; Crew's role defines its report without imposing a voice.
 
 Write each rule in its owning entry. Keep shared mechanics in system context

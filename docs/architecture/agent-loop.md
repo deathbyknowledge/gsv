@@ -111,6 +111,9 @@ this order:
    `skills.d` directories. This is a compact command-oriented index only; full
    `SKILL.md` bodies are read explicitly with `skills show <skill>`.
 
+Standing context from the first four renders grouped by file name, with each
+name's layers in this order; see [Context Files](../reference/context-files.md).
+
 Skill discovery reads the read-only built-in skills, then the owning user's
 home `skills.d`, then the run-as agent's home `skills.d` when that account is
 distinct from the owner.

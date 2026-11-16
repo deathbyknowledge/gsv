@@ -1,5 +1,7 @@
-import type {
-  PromptAssemblyInput, PromptAssemblySnapshot, PromptContextProvider, PromptSection, PromptSourceRecord,
+import {
+  CONTEXT_LAYERS,
+  type ContextLayer, type PromptAssemblyInput, type PromptAssemblySnapshot, type PromptContextProvider, type PromptSection,
+  type PromptSourceRecord,
 } from "./types";
 import { resolvePromptProviders } from "./selection";
 
@@ -14,7 +16,7 @@ export async function assembleSystemPromptSnapshot(
   input: PromptAssemblyInput,
   providers: PromptContextProvider[] = resolvePromptProviders(),
 ): Promise<PromptAssemblySnapshot> {
-  const contextSections: PromptSection[] = [];
+  const contextSections: LayeredSection[] = [];
   const regularParts: string[] = [];
   const sources: PromptSourceRecord[] = [];
 
@@ -38,7 +40,7 @@ export async function assembleSystemPromptSnapshot(
       if (section.responsibilityBaseline === true) source.responsibilityBaseline = true;
       sources.push(source);
       if (section.contextRoot) {
-        contextSections.push({ ...section, text });
+        contextSections.push({ ...section, text, contextRoot: section.contextRoot });
       } else {
         regularParts.push(renderSection(section.name, text));
       }
@@ -65,40 +67,40 @@ function renderSection(name: string, text: string): string {
   return `<${tag}>\n${text}\n</${tag}>`;
 }
 
-function renderContextSections(sections: PromptSection[]): string {
-  const roots = new Map<string, { root: NonNullable<PromptSection["contextRoot"]>; sections: PromptSection[] }>();
-  for (const section of sections) {
+type LayeredSection = PromptSection & { contextRoot: NonNullable<PromptSection["contextRoot"]> };
+
+/**
+ * Standing context renders once per file name, in name order. Each name holds
+ * its layers in precedence order, so a later layer reads as a refinement of an
+ * earlier one; a legend names each layer's folder once.
+ */
+function renderContextSections(sections: LayeredSection[]): string {
+  const layerIndex = (section: LayeredSection) => CONTEXT_LAYERS.indexOf(section.contextRoot.key);
+  const roots = new Map<ContextLayer, LayeredSection["contextRoot"]>();
+  const files = new Map<string, LayeredSection[]>();
+  for (const section of [...sections].sort((left, right) => layerIndex(left) - layerIndex(right))) {
     const root = section.contextRoot;
-    if (!root) continue;
-    const existing = roots.get(root.key);
-    if (existing) {
-      existing.sections.push(section);
-    } else {
-      roots.set(root.key, { root, sections: [section] });
-    }
+    if (!roots.has(root.key)) roots.set(root.key, root);
+    files.set(section.name, [...(files.get(section.name) ?? []), section]);
   }
 
-  const lines: string[] = [];
-  for (const { root, sections: rootSections } of roots.values()) {
-    const tag = contextRootTagName(root.key);
-    lines.push(`<${tag} path="${escapeAttribute(normalizePromptPath(root.location))}">`);
-    for (const section of rootSections) {
-      lines.push(`<${section.name}>`, section.text.trim(), `</${section.name}>`, "");
+  const width = Math.max(...[...roots.values()].map((root) => normalizePromptPath(root.location).length));
+  const lines = [
+    "<context_layers>",
+    "Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.",
+    ...[...roots.values()].map((root) =>
+      `${root.key.padEnd(6)}  ${normalizePromptPath(root.location).padEnd(width)}  ${root.access}`),
+    "</context_layers>",
+  ];
+  for (const name of [...files.keys()].sort((left, right) => left.localeCompare(right))) {
+    lines.push("", `<${name}>`);
+    for (const section of files.get(name)!) {
+      const layer = section.contextRoot.key;
+      lines.push(`<${layer}>`, section.text.trim(), `</${layer}>`);
     }
-    while (lines[lines.length - 1] === "") {
-      lines.pop();
-    }
-    lines.push(`</${tag}>`, "");
+    lines.push(`</${name}>`);
   }
-  while (lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
   return lines.join("\n");
-}
-
-function contextRootTagName(key: NonNullable<PromptSection["contextRoot"]>["key"]): string {
-  return sectionTagName(key);
 }
 
 function sectionTagName(name: string): string {
@@ -111,12 +113,4 @@ function normalizePromptPath(location: string): string {
     return `${trimmed}/`;
   }
   return trimmed;
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }

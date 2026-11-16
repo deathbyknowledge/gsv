@@ -28,7 +28,7 @@ normal conversation text contract, without request-specific metadata.
 | Layer | Location | Purpose |
 |---|---|---|
 | Ship and Crew context | `config/ai/{ship,crew}/context.d/` | The release's read-only behaviour and voice for the personal agent and its Crew. |
-| Program context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
+| Agent context | `<agent home>/context.d/` | Role, voice, and standing state private to one agent account. |
 | User context | `<human home>/context.d/` | Compact standing context layered into every agent owned by that human. |
 | Personal wiki | `/src/repos/<human>/personal/` | Human-owned durable, searchable personal memory shared by all owned agents. |
 | Conversation | `message search`, `message history` | Every message exchanged with the human, searchable by Ship from when search was added; helpers can't read it. The record, not the memory. |
@@ -46,9 +46,9 @@ interaction:
 - standing instructions
 - durable identity or operating constraints
 
-The conventional shared file is `context.d/10-personal.md`. An owned agent sees
-it under the editable `<user>` prompt root; `~` still refers to that agent's own
-home. Keep shared context short and specific. The personal intelligence's behaviour
+The conventional shared file is `context.d/personal.md`. An owned agent sees
+it as the editable user layer in the prompt; `~` still refers to that agent's
+own home. Keep shared context short and specific. The personal intelligence's behaviour
 and voice ship with each release as read-only Ship context; a person's
 preferences about how they are spoken to go in their own `context.d/voice.md`,
 which renders after the Ship's voice and overrides it. Unresolved work belongs in the Kernel responsibility ledger rather

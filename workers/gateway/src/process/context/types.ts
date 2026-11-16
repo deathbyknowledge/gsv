@@ -30,14 +30,17 @@ export type PromptAssemblyInput = {
   ripgit: PromptRipgitClient | null;
 };
 
+/** Standing context layers, in precedence order: a later layer refines an earlier one. */
+export const CONTEXT_LAYERS = ["system", "role", "agent", "user"] as const;
+export type ContextLayer = typeof CONTEXT_LAYERS[number];
+
 export type PromptSection = {
   name: string;
   text: string;
   responsibilityBaseline?: boolean;
+  /** The layer a standing context file comes from; same-named files render together, in layer order. */
   contextRoot?: {
-    /** "system", "program", "user", or the name of the Kernel-selected role context. */
-    key: string;
-    label: string;
+    key: ContextLayer;
     access: "read-only" | "editable";
     location: string;
   };

@@ -13,7 +13,6 @@ export function createSystemContextProvider(): PromptContextProvider {
 
 const SYSTEM_ROOT: NonNullable<PromptSection["contextRoot"]> = {
   key: "system",
-  label: "SYSTEM",
   access: "read-only",
   location: "/sys/config/ai/context.d",
 };
@@ -26,8 +25,7 @@ export function createRoleContextProvider(): PromptContextProvider {
       const role = input.config.roleContext;
       if (!role) return [];
       return renderContextFiles(role.files, input, {
-        key: role.name,
-        label: role.name.toUpperCase(),
+        key: "role",
         access: "read-only",
         location: role.location,
       });

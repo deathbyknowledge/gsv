@@ -4,15 +4,14 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 
 ## Prompt Context Sources
 
-Prompt context is collected in provider order:
+Standing context comes from up to four layers, in precedence order:
 
-1. **System context** from `config/ai/context.d/*.md`.
-2. **Ship or Crew context** from `config/ai/ship/context.d/*.md` or
-   `config/ai/crew/context.d/*.md`, when the process runs as the personal
-   agent or its Crew account.
-3. **Program context** from the run-as agent's `~/context.d/*.md`.
-4. **User context** from the human owner's `~/context.d/*.md` when the
-   process runs as an owned agent account.
+1. **system:** `config/ai/context.d/*.md`, for every process.
+2. **role:** `config/ai/ship/context.d/*.md` or `config/ai/crew/context.d/*.md`,
+   when the process runs as the personal agent or its Crew account.
+3. **agent:** the run-as agent's own `~/context.d/*.md`.
+4. **user:** the human owner's `~/context.d/*.md`. A person's own process
+   reads its home as this layer and has no agent layer.
 
 GSV can also assemble a compact skill index from layered `skills.d`
 directories. `config/ai/skills/index_mode`, or the per-user override
@@ -23,11 +22,32 @@ discovery. Start unfamiliar tasks with
 `man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
 matching command, skill, target, or connected integration.
 
-The layers always render in that order: system, the account's role, the
-account itself, then its owner. Within a layer, files render in lexical order,
-include only non-empty `.md` files, and are bounded by
-`config/ai/max_context_bytes`. A later layer can refine an earlier one under
-the same name: the owner's `voice.md` follows the Ship's.
+The prompt groups standing context by file name, in name order. Each name
+renders its layers in precedence order, so a later layer refines an earlier
+one under the same name: the owner's `voice.md` follows the Ship's. A legend
+names each present layer's folder and access once, and each file then carries
+only its layer tag:
+
+```text
+<context_layers>
+Standing context is grouped by file name. Each file's layers appear in this order; a later layer takes precedence over an earlier one.
+system  /sys/config/ai/context.d/        read-only
+role    /sys/config/ai/ship/context.d/   read-only
+user    /home/alex/context.d/            editable
+</context_layers>
+
+<voice.md>
+<role>
+# Voice ...
+</role>
+<user>
+Always answer in Dutch.
+</user>
+</voice.md>
+```
+
+Only non-empty `.md` files load, and each account layer is bounded by
+`config/ai/max_context_bytes`.
 
 The shipped files are named by what they hold rather than numbered:
 
@@ -46,9 +66,9 @@ call returns its result as text to the caller and is told so for that run.
 The Ship's behaviour, which includes speaking for the owner and the name of
 its Crew account, the Ship's voice, and the Crew's behaviour ship with each
 release. The gateway serves
-them from `config/ai/ship/context.d` and `config/ai/crew/context.d` and they
-appear in the prompt under read-only `<ship>` and `<crew>` roots, readable at
-`/sys/config/ai/ship/context.d` and `/sys/config/ai/crew/context.d`. They
+them from `config/ai/ship/context.d` and `config/ai/crew/context.d` as the
+read-only role layer, readable at `/sys/config/ai/ship/context.d` and
+`/sys/config/ai/crew/context.d`. They
 change only with a deployment, or when an operator sets those keys, and a
 change reaches every Ship at its next context epoch.
 
@@ -62,8 +82,8 @@ The Ship's `behaviour.md` names the owner's Crew account; the gateway fills in
 the name for each Ship and leaves that line out until the Crew account exists.
 
 How a person wants to be spoken to belongs in their own `~/context.d/voice.md`.
-It renders under `<user>` after the Ship's shipped voice and overrides it.
-Facts about the person belong in their `10-personal.md`. Both are owner
+Its user layer renders after the Ship's shipped voice and overrides it.
+Facts about the person belong in their `personal.md`. Both are owner
 context, so every agent working for the person reads them.
 
 Ship and Crew homes used to receive copies of these files under numbered names
@@ -74,24 +94,23 @@ moves to `~/context.d/retired/`, where it stays readable but no longer loads.
 Files under any other name, including the current shipped names, are the
 account's own and stay.
 
-## Program and User Context
+## Agent and User Context
 
-An agent's own `~/context.d/*.md` is program context: the role and voice of an
+An agent's own `~/context.d/*.md` is its agent layer: the role and voice of an
 agent created with `account.create`, and any compact role-local working state
-an account keeps. The human owner's context is shared user
-context for every agent owned by that person. In an owned agent's assembled
-prompt, it appears under the editable `<user>` root even though `~` continues
-to refer to the agent's own home.
+an account keeps. The human owner's context is the user layer for every agent
+owned by that person; the legend gives its folder, since `~` continues to refer
+to the agent's own home.
 
 Conventional files include:
 
 ```text
 <agent home>/context.d/05-persona.md
-<human home>/context.d/10-personal.md
+<human home>/context.d/personal.md
 <human home>/context.d/voice.md
 ```
 
-Keep both layers short and stable. The shared `10-personal.md` is for explicit
+Keep both layers short and stable. The shared `personal.md` is for explicit
 facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
@@ -113,8 +132,9 @@ the user informed throughout. Its `behaviour.md` names the
 Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
 outcomes belong in `r12y` before delegation or yielding.
 
-The human owner's `10-personal.md` is an editable default, seeded once and then
-theirs. Home scaffolding retires generated local memory instructions now
+The human owner's `personal.md` is an editable default, seeded once and then
+theirs; an existing `10-personal.md` from before files were named by topic is
+moved to `personal.md` instead. Home scaffolding retires generated local memory instructions now
 supplied by system context; existing run-as and owner accounts also receive
 the memory cleanup before a Process requests context. Owner-edited files remain
 unchanged. Seeding checks the repository revision before committing, preserving
@@ -201,7 +221,7 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 Use the shipped Ship and Crew context for what every Ship shares, agent
 `~/context.d/` for concise role-local context, the human owner's
-`context.d/10-personal.md` for shared standing personal context, `skills.d/`
+`context.d/personal.md` for shared standing personal context, `skills.d/`
 for reusable procedures, and the human-owned `personal` wiki for durable,
 searchable personal memory.
 

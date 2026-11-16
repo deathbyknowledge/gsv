@@ -1,12 +1,12 @@
 import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
-import type { PromptAssemblyInput, PromptSection } from "../types";
+import type { ContextLayer, PromptAssemblyInput, PromptSection } from "../types";
 
 const TEXT_ENCODER = new TextEncoder();
 /** Context files read together; a directory larger than the budget stops after the batch that spends it. */
 const CONTEXT_READ_BATCH = 8;
 const TEXT_DECODER = new TextDecoder();
 
-type AccountContextRoot = "program" | "user";
+type AccountContextRoot = Extract<ContextLayer, "agent" | "user">;
 type AccountContextFile = {
   name: string;
   read: () => Promise<string | null>;
@@ -57,7 +57,6 @@ export async function collectAccountContext(
   const sections: PromptSection[] = [];
   const contextRoot = {
     key: root,
-    label: root.toUpperCase(),
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
