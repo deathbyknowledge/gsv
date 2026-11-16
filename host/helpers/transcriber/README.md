@@ -55,7 +55,8 @@ feature detection; AVX2 and AVX-512 are optional. Linux also includes its static
 BLAS settings. ARM64 uses its portable CPU backend.
 
 Cargo stages the shared libraries and backends in `gsv-transcribe-runtime` beside
-the helper. Release packaging, installers and macOS bundles include that directory;
+the helper. On Windows, `cargo test` and `cargo run` also put a copy of that directory
+on `PATH`, so test binaries find it wherever Cargo builds them. Release packaging, installers and macOS bundles include that directory;
 users do not select a backend or install these libraries separately. The helper
 locates its libraries relative to itself, including after installation elsewhere.
 The recorded-speech check runs from a temporary installation and, on x86-64,
