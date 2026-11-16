@@ -83,7 +83,7 @@ Initial responsibility snapshot:
 
 The owner's memory has three layers:
 
-- **Standing context** (`context.d/10-personal.md`) is always loaded: a few explicit facts and preferences that matter almost everywhere. All the owner's agents share it.
+- **Standing context** (`context.d/personal.md`) is always loaded: a few explicit facts and preferences that matter almost everywhere. All the owner's agents share it.
 - **The `personal` wiki** holds detail: people, places, projects, decisions. All the owner's agents share it; search it when the answer could depend on it.
 - **The conversation** with Ship holds everything said, and only Ship can read it. `message search "words"` finds earlier messages; `message history` reads around a match. Messages from before search existed are not indexed, so when a search finds nothing, page back with `message history` before concluding it was never said.
 

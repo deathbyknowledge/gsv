@@ -2,7 +2,7 @@ import environment from "./system/context.d/environment.md";
 import shipBehaviour from "./ship/context.d/behaviour.md";
 import shipVoice from "./ship/context.d/voice.md";
 import crewBehaviour from "./crew/context.d/behaviour.md";
-import personal from "./user/context.d/10-personal.md";
+import personal from "./user/context.d/personal.md";
 
 // The bundle and source editor share this catalogue. Every source is one complete entry.
 // System, Ship and Crew sources are the ConfigStore defaults under config/ai/{,ship/,crew/}context.d;
@@ -12,7 +12,7 @@ export const CONTEXT_SOURCES = {
   "ship/context.d/behaviour.md": shipBehaviour,
   "ship/context.d/voice.md": shipVoice,
   "crew/context.d/behaviour.md": crewBehaviour,
-  "user/context.d/10-personal.md": personal,
+  "user/context.d/personal.md": personal,
 } satisfies Record<string, string>;
 
 export type ContextScope = "system" | "ship" | "crew" | "user";

@@ -1,4 +1,4 @@
-import standingContext from "./user/context.d/10-personal.md";
+import standingContext from "./user/context.d/personal.md";
 
 // Used only to remove the exact generated context.d/00-boot.md during responsibility-ledger migration.
 export const RETIRED_BOOT_CONTEXT_TEMPLATE =

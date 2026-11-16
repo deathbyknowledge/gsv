@@ -268,7 +268,7 @@ describe("handleAccountCreate", () => {
     expect(bobOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/.dir" }),
     );
-    const personalContextOp = bobOps.find((op) => op.path === "context.d/10-personal.md");
+    const personalContextOp = bobOps.find((op) => op.path === "context.d/personal.md");
     expect(personalContextOp).toEqual(expect.objectContaining({ type: "put" }));
     expect(new TextDecoder().decode(new Uint8Array(personalContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_STANDING_CONTEXT);
@@ -404,6 +404,17 @@ describe("handleAccountCreate", () => {
     expect(state.passwd.filter((entry) => entry.gecos === "Crew")).toEqual([crew]);
     expect(state.ripgitApplyBodies.filter((body) => body.owner === "crew").flatMap((body) => body.ops))
       .not.toContainEqual(expect.objectContaining({ path: "context.d/00-role.md" }));
+  });
+
+  it("moves an owner's numbered personal context to personal.md instead of seeding a blank one", async () => {
+    const { ctxFor, ripgitApplyBodies, ripgitFiles } = createCtx();
+    ripgitFiles.set("alice:context.d/10-personal.md", "# Personal Context\n\nLikes tea.\n");
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
+    await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+
+    const ops = ripgitApplyBodies.filter((body) => body.owner === "alice").flatMap((body) => body.ops);
+    expect(ops).toContainEqual({ type: "move", from: "context.d/10-personal.md", to: "context.d/personal.md" });
+    expect(ops).not.toContainEqual(expect.objectContaining({ type: "put", path: "context.d/personal.md" }));
   });
 
   it("leaves existing personal agent context untouched during a hard cutover", async () => {

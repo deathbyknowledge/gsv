@@ -1008,7 +1008,7 @@ export function renderManualPage(topic: string): string | null {
         "",
         "PERSONAL MEMORY",
         "  Personal memory belongs to the human and is shared by every agent working for them.",
-        "  Use `personal` for durable notes; stable standing facts belong in the owner's context.d/10-personal.md.",
+        "  Use `personal` for durable notes; stable standing facts belong in the owner's context.d/personal.md.",
         "  Unresolved work belongs in the r12y ledger until its user-facing loop closes.",
         "  Examples:",
         "    wiki info personal",
