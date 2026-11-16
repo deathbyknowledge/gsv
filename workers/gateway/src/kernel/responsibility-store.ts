@@ -172,7 +172,11 @@ export type ResponsibilityChangesOutcome = {
 };
 
 export class ResponsibilityStore {
-  constructor(private readonly storage: DurableObjectStorage, private readonly onChange?: (ownerUid: number) => void) {}
+  /** `onChange` hears every committed change to an owner's ledger; an update also hands over the record as it now stands. */
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly onChange?: (ownerUid: number, updated?: ResponsibilityRecord) => void,
+  ) {}
 
   get(ownerUid: number, id: string): ResponsibilityRecord | null {
     const row = this.getRow(ownerUid, id);
@@ -596,7 +600,7 @@ export class ResponsibilityStore {
       outcome = { record, revision, changed: true };
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
-    if (outcome.changed) this.onChange?.(input.ownerUid);
+    if (outcome.changed) this.onChange?.(input.ownerUid, outcome.record);
     return outcome;
   }
 

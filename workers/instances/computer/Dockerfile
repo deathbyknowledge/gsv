@@ -5,8 +5,13 @@ RUN cargo build --manifest-path host/Cargo.toml --locked --release --package mac
 
 FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git python3 python3-pip build-essential pkg-config unzip \
+    bash ca-certificates curl git python3 python3-pip python3-venv build-essential pkg-config unzip zip xz-utils \
+    file jq sqlite3 poppler-utils qpdf ghostscript imagemagick \
     && rm -rf /var/lib/apt/lists/*
+# The computer is disposable: Python packages install system-wide, so a plain `pip install` works.
+ENV PIP_ROOT_USER_ACTION=ignore
+RUN rm -f /usr/lib/python3*/EXTERNALLY-MANAGED \
+    && pip install --no-cache-dir pandas openpyxl pypdf python-docx python-pptx matplotlib reportlab
 COPY --from=builder /build/host/target/release/gsvd /usr/local/bin/gsvd
 RUN mkdir /workspace
 WORKDIR /workspace

@@ -695,6 +695,7 @@ async function deliverAdapterInboundToProcess(input: {
             platform: shipPlatformFromAdapter(adapter),
             hasText: appendRequest.text.length > 0,
             hasMedia: Boolean(media),
+            ...appended.answered,
           },
         },
       });

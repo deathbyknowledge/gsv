@@ -59,12 +59,12 @@ it can't see, and it asks rather than guesses.
 
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and choose **Connect**. It opens a
-   chat with the official Ship bot. To message it manually instead, find the
+1. In Ship, open **Messengers → Telegram** and choose **Send message**. It opens
+   a chat with the official Ship bot. To message it manually instead, find the
    bot handle shown under the instructions.
 2. Send the bot any private message. It replies with a short-lived code.
-3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
-   and numeric ID that requested it.
+3. Enter that code in the **Telegram code** field and choose **Connect**. Ship
+   shows the Telegram display name, handle, and numeric ID that requested it.
 4. Confirm only if that is your Telegram account. The code alone cannot choose
    an installation or user; the signed-in Ship session supplies both.
 5. Send another message in Telegram. It reaches the same Ship conversation
@@ -148,14 +148,14 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Connect**.
-   It opens a chat with the Ship number, with the pairing message already filled
+1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Send
+   message**. It opens a chat with the Ship number, with the pairing message already filled
    in. To message Ship manually instead, send `/link` to the number shown under
    the instructions.
 2. Send that message. It replies with instructions and a separate code-only
    message you can copy. The code expires in 10 minutes.
-3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
-   masked number that requested it.
+3. Enter the code in the **WhatsApp code** field and choose **Connect**. Ship
+   shows the WhatsApp profile name and the masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
    Ship or user; your signed-in session supplies both.
 5. Send another message. It reaches the same Ship conversation you use in Ship.
@@ -215,8 +215,9 @@ and Indonesia (+62). A Ship number registered elsewhere cannot deliver the
 code to numbers in either country, and a number registered in one of
 them cannot reach the other. When your device's language points to one of
 those countries, such as Portuguese (Brazil) or Indonesian, the first-run screen
-and the WhatsApp page in **Settings → Messengers** warn that the Ship number
-cannot reach it; pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
+and the WhatsApp page in **Settings → Messengers** show a flagged note under
+the first step; open it to read that the Ship number cannot reach those numbers,
+and pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 

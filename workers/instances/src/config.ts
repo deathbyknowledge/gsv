@@ -24,11 +24,14 @@ export const computerLimitsSchema = limitsSchema.omit({ savedProfiles: true, pro
 export type ComputerLimits = z.infer<typeof computerLimitsSchema>;
 export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search", "fs.copy", "fs.transfer.stat", "fs.transfer.send", "fs.transfer.receive"] as const;
 export const COMPUTER_IMPLEMENTATIONS = [...IMPLEMENTATIONS, "shell.cancel", "net.fetch"] as const;
+/** A computer stays up this long after its last command or running job, within its maximum lifetime. */
+export const COMPUTER_IDLE_SECONDS = 1800;
+const COMPUTER_MAX_SECONDS = 14_400;
 export function computerTemplate(limits: ComputerLimits): InstanceTemplate {
   return {
     templateId: "computer", revision: "1", kind: "linux", label: "Cloud computer",
-    description: "An ephemeral Linux computer with Node.js, Python, Git, and build tools. Save source and outputs before stopping it.",
-    implements: [...COMPUTER_IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
+    description: "An ephemeral Linux computer with Node.js, Python, Git, build tools, and PDF, spreadsheet, document and image tools. It stays up while in use; stop it as soon as its work is done. Save source and outputs before stopping it.",
+    implements: [...COMPUTER_IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(COMPUTER_IDLE_SECONDS, limits.maxInstanceSeconds),
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };
 }
@@ -58,7 +61,7 @@ export class InstancePolicy {
     });
   }
   async computerLimits(): Promise<ComputerLimits> {
-    const disabled = { enabled: false, concurrentInstances: 0, periodSeconds: 0, maxInstanceSeconds: 1800 };
+    const disabled = { enabled: false, concurrentInstances: 0, periodSeconds: 0, maxInstanceSeconds: COMPUTER_MAX_SECONDS };
     if (!this.env.COMPUTERS) return disabled;
     if (!this.cache) return computerLimitsSchema.parse(this.env.COMPUTER_LIMITS ?? disabled);
     const { values } = await this.cache.get();
@@ -66,7 +69,7 @@ export class InstancePolicy {
       enabled: values["computer.enabled"] === true,
       concurrentInstances: values["computer.concurrent_instances"] ?? 0,
       periodSeconds: values["computer.period_seconds"] ?? 0,
-      maxInstanceSeconds: values["computer.max_instance_seconds"] ?? 1800,
+      maxInstanceSeconds: values["computer.max_instance_seconds"] ?? COMPUTER_MAX_SECONDS,
     });
   }
   async requireActive(): Promise<void> {
