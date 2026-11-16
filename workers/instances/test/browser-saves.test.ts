@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import type { Browser, BrowserContext, CDPSession, Frame, Page } from "@cloudflare/playwright";
+import type { Browser, BrowserContext, CDPSession, Frame, Page, Worker } from "@cloudflare/playwright";
 import { expect, it } from "vitest";
 import { CloudBrowser } from "../src/browser";
 import { exportBrowserStorage, restoreBrowserStorage } from "../src/browser-storage";
@@ -32,7 +32,7 @@ it("reads only sites with a page open since the last save, and rereads them afte
     // SAFETY: Target metadata identifies the attached context and the exporter's page.
     const cdp = { send: async () => ({ targetInfo: { targetId: "live", browserContextId: "context", title: "Account", url } }), detach: async () => {} } as CDPSession;
     // SAFETY: This context supplies attachment, tab enumeration and storage export.
-    const context = { pages: () => [tab], newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {}, cookies: async () => [], newPage: async () => exporter() } as BrowserContext;
+    const context = { serviceWorkers: () => [], pages: () => [tab], newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {}, cookies: async () => [], newPage: async () => exporter() } as BrowserContext;
     // SAFETY: The browser is already attached and only enumerates its existing contexts.
     const attach = () => CloudBrowser.fromConnection({ contexts: () => [context] } as Browser, record, store);
     let browser = await attach();
@@ -68,6 +68,47 @@ it("reads only sites with a page open since the last save, and rereads them afte
     expect(read).toEqual([b]);
     await save();
     expect(read).toEqual([]);
+  });
+});
+
+it("rereads a site whose service worker ran with no page open, and keeps it while the worker runs", async () => {
+  await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (_object, ctx) => {
+    const store = new InstanceStore(ctx.storage);
+    const record = store.admit({ ownerUid: 1000, human: true }, { requestId: "workers", templateId: "browser" }, limits);
+    const [a, b] = ["https://a.example", "https://b.example"];
+    store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", JSON.stringify({ contextId: "context", activeTabId: 1, nextTabId: 2, tabs: { "1": "live" }, origins: [a, b], unsaved: [] }), record.instanceId);
+    const read: string[] = [];
+    // SAFETY: Saving reads only each frame's URL.
+    const tab = { isClosed: () => false, frames: () => [{ url: () => "about:blank" } as Frame], on: () => {} } as Page;
+    const exporter = () => {
+      let current = "";
+      // SAFETY: Export needs only interception, navigation, evaluation and closing from its private pages.
+      return { route: async () => {}, goto: async (origin: string) => { current = origin; read.push(origin); return null; }, isClosed: () => false, close: async () => {},
+        evaluate: async () => ({ summary: { origin: current, bytes: 2, localStorageBytes: 2, indexedDBBytes: 0, localStorageEntries: 0, databases: 0, records: 0 }, json: JSON.stringify({ origin: current, localStorage: [] }) }) } as Page;
+    };
+    // SAFETY: Target metadata identifies the attached context and the exporter's page.
+    const cdp = { send: async () => ({ targetInfo: { targetId: "live", browserContextId: "context", title: "Blank", url: "about:blank" } }), detach: async () => {} } as CDPSession;
+    let workers: Worker[] = [];
+    let started: ((worker: Worker) => void) | undefined;
+    // SAFETY: This context supplies attachment, tab and service worker enumeration, and storage export.
+    const context = { pages: () => [tab], serviceWorkers: () => workers, newCDPSession: async () => cdp, addInitScript: async () => {}, cookies: async () => [], newPage: async () => exporter(),
+      on: (event: string, listener: (worker: Worker) => void) => { if (event === "serviceworker") started = listener; } } as BrowserContext;
+    // SAFETY: The browser is already attached and only enumerates its existing contexts.
+    const browser = await CloudBrowser.fromConnection({ contexts: () => [context] } as Browser, record, store);
+    const save = async () => { read.length = 0; await browser.save(10000, new AbortController().signal); return read.sort(); };
+    // SAFETY: Saving reads only a service worker's URL.
+    const worker = { url: () => `${a}/sw.js` } as Worker;
+
+    expect(await save()).toEqual([]);
+    // The site's worker woke with no page open, so it may have written the site's storage.
+    workers = [worker];
+    started?.(worker);
+    expect(await save()).toEqual([a]);
+    // A running worker can write again after the export reads its site.
+    expect(await save()).toEqual([a]);
+    workers = [];
+    expect(await save()).toEqual([a]);
+    expect(await save()).toEqual([]);
   });
 });
 

@@ -17,7 +17,7 @@ it("retires closed persisted targets on reattachment and later tab refreshes", a
     const page = { isClosed: () => false, frames: () => [], on: () => {} } as Page;
     let pages = [page];
     // SAFETY: This existing-context fixture exercises only attachment and tab enumeration.
-    const context = { pages: () => pages, newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {} } as BrowserContext;
+    const context = { serviceWorkers: () => [], pages: () => pages, newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {} } as BrowserContext;
     // SAFETY: The browser is already attached and only enumerates its existing contexts.
     const connection = { contexts: () => [context] } as Browser;
     const browser = await CloudBrowser.fromConnection(connection, record, store);
@@ -53,7 +53,7 @@ it("enters input in a known open tab without rereading every tab, and finds a ne
       }, detach: async () => {} } as CDPSession;
     };
     // SAFETY: This existing-context fixture exercises only attachment, tab enumeration and debugger sessions.
-    const context = { pages: () => pages, newCDPSession: async (page: Page) => debuggerFor(page), addInitScript: async () => {}, on: () => {} } as BrowserContext;
+    const context = { serviceWorkers: () => [], pages: () => pages, newCDPSession: async (page: Page) => debuggerFor(page), addInitScript: async () => {}, on: () => {} } as BrowserContext;
     // SAFETY: The browser is already attached and only enumerates its existing contexts.
     const browser = await CloudBrowser.fromConnection({ contexts: () => [context] } as Browser, record, store);
     lookups = 0;

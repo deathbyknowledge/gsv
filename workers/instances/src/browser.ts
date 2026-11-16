@@ -70,6 +70,13 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     };
     for (const page of context.pages()) observe(page);
     context.on("page", observe);
+    // A site's service worker can change its storage while none of its pages is open.
+    const wake = (worker: { url(): string }) => {
+      const origin = browserStorageOrigin(worker.url());
+      if (origin && this.addUnsaved([origin])) this.persist();
+    };
+    for (const worker of context.serviceWorkers()) wake(worker);
+    context.on("serviceworker", wake);
     const pageBackend: BrowserPageBackend = {
       activeTab: () => this.activeTab(), getTab: id => this.getTab(id), captureTabPng: id => this.captureTabPng(id),
       executeInTab: (id, func, args) => this.executeInTab(id, func, args),
@@ -258,15 +265,17 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   /** Reads only sites whose storage can differ from the last committed save. */
   async save(maxBytes: number, signal: AbortSignal): Promise<BrowserSnapshot> {
     const open = new Set<string>();
+    const running = (url: string) => {
+      const origin = browserStorageOrigin(url);
+      if (origin && this.state.origins!.includes(origin)) open.add(origin);
+    };
     for (const page of this.context.pages()) {
       if (this.storagePages.has(page)) continue;
-      for (const frame of page.frames()) {
-        const origin = browserStorageOrigin(frame.url());
-        if (origin && this.state.origins!.includes(origin)) open.add(origin);
-      }
+      for (const frame of page.frames()) running(frame.url());
     }
+    for (const worker of this.context.serviceWorkers()) running(worker.url());
     const origins = [...new Set([...this.state.unsaved!, ...open])];
-    // Pages that stay open can still change their site after the export reads it.
+    // Open pages and running service workers can still change their site after the export reads it.
     this.state.unsaved = [...open];
     this.state.saving = origins;
     this.persist();
