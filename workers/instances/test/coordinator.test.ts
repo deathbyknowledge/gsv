@@ -36,7 +36,8 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     watchTab: async (_id, frame) => { frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) }); return () => {}; },
     humanInput,
     documentId: async () => "document", runInput: async work => work(), focusTab: async () => ({ id: 1 }),
-    save: async () => ({ state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] } }),
+    save: async () => ({ state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] }, exported: [] }),
+    retrySave: () => {},
     // SAFETY: These coordinator tests exercise only shell execution and its idle barrier.
     shell: shell as CloudBrowser["shell"],
   };

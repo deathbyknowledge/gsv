@@ -544,11 +544,16 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       this.updatePersistence(id, { limitBytes: limits.profileStorageBytes });
       const browser = await this.browser(id);
       await this.#profileWork.save(async () => {
-        const { state, usage, failures } = await browser.save(limits.profileStorageBytes, abort.signal);
-        abort.signal.throwIfAborted();
-        const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
-        await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
-        abort.signal.throwIfAborted();
+        const { state, usage, failures, exported } = await browser.save(limits.profileStorageBytes, abort.signal);
+        try {
+          abort.signal.throwIfAborted();
+          const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
+          await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
+          abort.signal.throwIfAborted();
+        } catch (error) {
+          browser.retrySave(exported);
+          throw error;
+        }
       }, abort.signal);
     }, abort.signal);
     // Retain the actual operation after a timeout: deletion and later saves must

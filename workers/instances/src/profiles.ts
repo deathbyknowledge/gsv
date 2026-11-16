@@ -2,6 +2,7 @@ import type { BrowserPersistence, BrowserStorageIssue, BrowserStorageUsage, Clou
 import type { StorageState } from "./browser";
 import { profile, type InstanceStore, type ProfileRow } from "./store";
 import { BrowserStorageError, MAX_PROFILE_BYTES } from "./browser-storage";
+import { boundBrowserStorageUsage, summarizeBrowserStorage } from "./browser-storage-summary";
 import { within } from "./browser-operation";
 import { compressProfile, decodeProfile, encryptProfile } from "./profile-codec";
 
@@ -38,17 +39,24 @@ export class ProfileStorage {
     if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== instance.instanceId) return;
     const previous = profile(row);
     const savedAt = Date.now();
-    if (usage) usage = { ...usage, sites: usage.sites.map(site => ({ ...site, savedAt })) };
+    // A save reads only sites that may have changed. Every other saved site, and a
+    // site that could not be read, keeps its earlier data and save time.
+    const prior = await this.restore(row);
+    signal?.throwIfAborted();
+    const read = new Set(state.origins.map(site => site.origin));
+    const retained = prior?.origins.filter(site => !read.has(site.origin)) ?? [];
+    const savedSince = (origin: string) => previous.usage?.sites.find(site => site.origin === origin)?.savedAt ?? previous.savedAt;
+    if (usage) {
+      const earlier = retained.map(site => ({ ...summarizeBrowserStorage(site, new TextEncoder().encode(JSON.stringify(site)).byteLength), savedAt: savedSince(site.origin) }));
+      usage = boundBrowserStorageUsage({
+        ...usage, bytes: usage.bytes + earlier.reduce((bytes, site) => bytes + site.bytes + 1, 0),
+        sites: [...usage.sites.map(site => ({ ...site, savedAt })), ...earlier], siteCount: (usage.siteCount ?? usage.sites.length) + earlier.length,
+      });
+    }
     if (issues.length) {
-      const prior = await this.restore(row);
-      signal?.throwIfAborted();
-      const failed = new Set(issues.map(issue => issue.origin));
-      const retained = prior?.origins.filter(site => failed.has(site.origin)) ?? [];
       issues = issues.map(issue => {
         const earlier = previous.issues?.find(old => old.origin === issue.origin);
-        const retainedAt = retained.some(site => site.origin === issue.origin)
-          ? earlier ? earlier.retainedAt : previous.usage?.sites.find(site => site.origin === issue.origin)?.savedAt ?? previous.savedAt
-          : undefined;
+        const retainedAt = retained.some(site => site.origin === issue.origin) ? earlier ? earlier.retainedAt : savedSince(issue.origin) : undefined;
         return { ...issue, retainedAt };
       });
       const hosts = issues.map(issue => new URL(issue.origin).hostname);
@@ -56,11 +64,9 @@ export class ProfileStorage {
       // domain cookies may also be shared by that site's other subdomains.
       const affected = (cookie: StorageState["cookies"][number]) => hosts.some(host => cookie.domain.startsWith(".")
         ? host === cookie.domain.slice(1) || host.endsWith(cookie.domain) : host === cookie.domain);
-      state = {
-        cookies: [...state.cookies.filter(cookie => !affected(cookie)), ...(prior?.cookies.filter(affected) ?? [])],
-        origins: [...state.origins.filter(site => !failed.has(site.origin)), ...retained].sort((a, b) => a.origin.localeCompare(b.origin)),
-      };
+      state = { ...state, cookies: [...state.cookies.filter(cookie => !affected(cookie)), ...(prior?.cookies.filter(affected) ?? [])] };
     }
+    state = { ...state, origins: [...state.origins, ...retained].sort((a, b) => a.origin.localeCompare(b.origin)) };
     // SAFETY: Playwright's storage codec has already converted website values to JSON records.
     const compressed = await compressProfile(state as JsonValue, Math.min(maxBytes, MAX_PROFILE_BYTES), signal).catch(error => {
       if (error instanceof BrowserStorageError) throw new BrowserStorageError(error.message, usage, { cause: error });

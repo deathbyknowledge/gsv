@@ -12,6 +12,8 @@ export type BrowserSnapshot = {
   state: StorageState;
   usage: BrowserStorageUsage;
   failures?: { issue: BrowserStorageIssue; cause: unknown }[];
+  /** Origins this export read; every other saved site keeps its earlier data. */
+  exported: string[];
 };
 
 export class BrowserStorageError extends Error {
@@ -29,6 +31,7 @@ export async function exportBrowserStorage(
   ownTarget: (targetId: string, owned: boolean) => void = () => {},
 ): Promise<BrowserSnapshot> {
   signal.throwIfAborted();
+  const exported = [...new Set(origins)].sort();
   const cookies = await context.cookies();
   const bytes = (value: StorageState | StorageState["cookies"]) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
   const state: StorageState = { cookies, origins: [] };
@@ -48,7 +51,7 @@ export async function exportBrowserStorage(
     ownTarget(targetId, true);
     await cdp.send("Network.setBypassServiceWorker", { bypass: true });
     await page.route("**/*", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Browser storage</title>" }));
-    for (const origin of [...new Set(origins)].sort()) {
+    for (const origin of exported) {
       signal.throwIfAborted();
       try {
         await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 5000 });
@@ -96,7 +99,7 @@ export async function exportBrowserStorage(
     if (usage.bytes > Math.min(maxBytes, MAX_PROFILE_BYTES)) {
       throw new BrowserStorageError(`Saved browser data needs ${usage.bytes} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes`, usage);
     }
-    return { state, usage: boundBrowserStorageUsage(usage), failures };
+    return { state, usage: boundBrowserStorageUsage(usage), failures, exported };
   } catch (cause) {
     if (cause instanceof BrowserStorageError) throw cause;
     if (signal.aborted) throw new BrowserStorageError("Saving browser data timed out. The previous saved state is intact.", usage);
