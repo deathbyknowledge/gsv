@@ -76,7 +76,6 @@
 @container instrument (max-width: 720px) {
   .zen .zen-jump-bottom { left: auto; right: 18px; transform: none; width: 44px; min-height: 44px; padding: 0; font-size: 20px; }
   .zen-jump-bottom > span { display: none; }
-  .receipt.is-quiet:not(.is-open) { display: none; }
 }
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
@@ -160,22 +159,31 @@
   color: var(--accent);
   text-wrap: wrap;
 }
-.zen-message-actions { position: absolute; inset-inline-end: 0; bottom: 4px; }
-.zen-copy-message {
-  padding: 2px 0 2px 8px;
-  color: var(--text-dim);
-  font: 400 10px/1.4 var(--gsv-font-mono);
+/* a message's own controls in a quiet row under it, glyphs aligned with the text's edge: shown on hover, focus or
+   under the browse cursor, and while its receipt is open; the row keeps its room, so showing it moves nothing,
+   and that room stands in for the message's bottom padding */
+.zen-moment:has(> .zen-message-actions) { padding-bottom: 0; }
+.zen-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  margin: 2px 0 0 -8px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast);
 }
-.zen-moment.is-focus .zen-copy-message,
-.zen-moment:focus-within .zen-copy-message,
-.zen-copy-message:focus-visible { opacity: 1; pointer-events: auto; }
+.zen-moment.is-human .zen-message-actions { flex-direction: row-reverse; margin-inline: 0 -8px; }
+.zen-moment.is-focus .zen-message-actions,
+.zen-moment:focus-within .zen-message-actions,
+.zen-message-actions.is-open { opacity: 1; pointer-events: auto; }
+.zen-message-action.is-copied { color: var(--accent); }
+.zen-message-action.is-failed { color: var(--error); }
+.zen-message-status { padding-inline: 4px; color: var(--text-dim); font: 400 10px/1.4 var(--gsv-font-mono); }
 /* Touch browsers emulate hover before click; revealing controls there consumes the first tap. */
 @media (hover: hover) {
   .zen-moment:hover > .who .when { opacity: 1; }
-  .zen-moment:hover .zen-copy-message { opacity: 1; pointer-events: auto; }
+  .zen-moment:hover .zen-message-actions { opacity: 1; pointer-events: auto; }
 }
 .zen-moment.is-ship.is-older .text {
   font-size: clamp(17px, 1.6vw, 22px);
@@ -184,6 +192,7 @@
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment { padding-block: 6px; }
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment.is-approval { padding-block: 0; }
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment > .who { margin-bottom: 3px; font-size: 14px; letter-spacing: .08em; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-message-actions { height: 22px; margin-top: 0; }
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment:is(.is-human, .is-ship) .text { font-size: 20px; line-height: 1.4; }
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment.is-older { opacity: .85; }
 .instrument:is(.is-scale-065, .is-scale-075) .zen-moment .text p { margin-bottom: .35em; }
@@ -351,7 +360,6 @@
 .zen .work-link { text-decoration: underline; text-underline-offset: 3px; }
 .receipt em { font-style: normal; color: var(--path); }
 .receipt .n { color: var(--faint); }
-.receipt .is-failed { color: var(--warn); }
 .receipt .now { color: var(--text); }
 .receipt .pulse {
   display: inline-block;
@@ -363,6 +371,9 @@
   margin-right: 8px;
 }
 .receipt .detail { margin-top: 8px; }
+/* a message's receipt opens beneath the message and its controls */
+.receipt.is-message { margin: 6px 0 12px; }
+.receipt.is-message .detail { margin-top: 0; }
 .receipt-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text-dim); }
 .receipt-meta:empty { display: none; }
 .receipt-reply, .receipt .memory-references { margin: 10px 0; }
@@ -379,7 +390,6 @@
 .tl-row .dot { width: 6px; height: 6px; display: block; margin-top: 8px; }
 .tl-row .dot { background: var(--idle); }
 .tl-row .dot.is-done { background: var(--online); }
-.tl-row .dot.is-failed { background: var(--error); }
 .tl-row .dot.is-running { background: var(--live); box-shadow: 0 0 8px var(--live); }
 .tl-row .dot.is-waiting { background: var(--warn); }
 .tl-thought { margin: 6px 0; font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.5; color: var(--text-dim); text-wrap: pretty; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -389,7 +399,6 @@
 .tl-state { color: var(--text-dim); font-size: 11px; line-height: 21px; }
 .tl-row.is-running .tl-state { color: var(--live); }
 .tl-row.is-waiting .tl-state { color: var(--warn); }
-.tl-row.is-failed .tl-state, .tl-row.is-failed .work-output { color: var(--error); }
 .tl-meta { color: var(--text-dim); }
 .tl-label { margin: 10px 0 4px; color: var(--faint); font-size: 11px; }
 .tl-body .work-call { margin: 6px 0; padding: 0; border: 0; }

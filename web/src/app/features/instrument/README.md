@@ -185,11 +185,15 @@ Their text uses balanced wrapping while preserving explicit line breaks. Ship's 
 align left with ordinary line wrapping.
 
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
-On phones, closed completed receipts with a reply are hidden. Live work, failures, fallbacks,
-approvals and receipts the reader has already opened remain visible. Action records are also
-inspectable in Settings → Logs. The latest-message button becomes a right-aligned down arrow.
+A receipt with a reply sits behind that message's receipt control, beside copy in the icon row under the
+message. The control's hint is the receipt's summary, which never grades the steps; opening it shows the
+receipt beneath the message and scrolls it into view. Live work, a pending approval and a run that stopped
+on an error without a reply remain a line in the transcript, counting the errors Ship did not try again
+(`unresolvedErrors` in `runReceipts.ts`). A run that finished cleanly without a reply is left out of the
+transcript (`silentWork`); action records remain inspectable in Settings → Logs. On phones, the
+latest-message button becomes a right-aligned down arrow.
 
-The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and connections. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, connection, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by connection, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
+The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and connections. There is no thinking label, elapsed counter or timing annotation inside the receipt. Steps carry no verdict: a call's `ending` (`zenModel.ts`) reads a command that ran as done whatever its exit code, which ends its output as `exit N`, and a call that gave no answer as an error whose reason is its output, with a neutral dot rather than a red one. Only a step the person declined or stopped is labelled. Retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, connection, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by connection, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
 Work owns Connections and the Ship-and-helpers table, with files opened from a connection. Chat owns contextual responsibilities and routines. Connections offers Connect, subject to the signed-in account's permissions. A new connection can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
@@ -278,8 +282,8 @@ text selection. Wheel and touch scrolling update the same selected
 message used by keyboard navigation: the message nearest the visible transcript's center,
 with the first/latest selected at either end. Its highlight stays visible while the prompt
 has focus; browse shortcuts become available again after leaving the input.
-On touchscreens, one tap selects a message and reveals its timestamp and copy
-action. Hover reveals these controls only on devices with a hover-capable pointer.
+On touchscreens, one tap selects a message and reveals its timestamp and icon
+row. Hover reveals these controls only on devices with a hover-capable pointer.
 
 Process history synchronization keeps its historical page boundary separate from revision deltas. Late companions and media replacements remain available without moving that boundary past unloaded messages; a delayed page cannot advance a different window established by reconnect.
 
@@ -381,7 +385,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | Prompt | Scenario |
 | --- | --- |
 | `/run` | Three steps with purposes, notes, outputs and a reply. |
-| `/run-long` | Nine steps across two connections, including a failure and a corrected command. |
+| `/run-long` | Nine steps across two connections, including a command that exits non-zero and its corrected rerun. |
 | `/run-updates` | The long run with two progress messages separating three receipts, followed by a final reply. |
 | `/run-old` | The short run without purposes, using generated descriptions. |
 | `/think`, then `/reply` or `/stream` | Hold a tool open, then finish with a plain or streamed reply. |

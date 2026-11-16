@@ -70,6 +70,13 @@ export function defaultPlace(): string {
 
 /* ---------- activity along the target axis ---------- */
 
+/**
+ * How a finished call ended, as a person reads it. A command that ran is `done` whatever its exit code: the code is its
+ * answer, and it shows in the call's output. `error` is a call that gave no answer: it could not run, timed out or
+ * raised an error. `declined` and `stopped` are the person's own doing.
+ */
+export type CallEnding = "done" | "error" | "declined" | "stopped";
+
 export type ActivityCall = {
   callId: string;
   syscall: string;
@@ -80,7 +87,8 @@ export type ActivityCall = {
   retryKey?: string;
   output: string;
   finished: boolean;
-  failed: boolean;
+  /** How the call ended, once it has. */
+  ending?: CallEnding;
   operation?: { label: string; subject: string; detail?: string };
   /** The original structured Read path, before display shortening. */
   filePath?: string;
@@ -214,9 +222,10 @@ export function argumentThatMatters(syscall: string, args: ChatTranscriptValue |
   return input ?? path ?? url ?? "";
 }
 
-const shellResultSchema = z.object({ stdout: z.string().optional(), stderr: z.string().optional(), exitCode: z.number().nullable().optional() })
-  .refine((value) => value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
-const commandResultSchema = z.object({ status: z.string().optional(), output: z.string() });
+const shellResultSchema = z.object({
+  output: z.string().optional(), stdout: z.string().optional(), stderr: z.string().optional(),
+  exitCode: z.number().nullable().optional(), error: z.string().optional(),
+}).refine((value) => value.output !== undefined || value.stdout !== undefined || value.stderr !== undefined || value.exitCode !== undefined);
 const codeModeResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("completed"), result: z.json(), logs: z.array(z.string()).optional() }),
   z.object({ status: z.literal("failed"), error: z.string(), logs: z.array(z.string()).optional() }),
@@ -278,15 +287,16 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
     }
   }
   if (syscall === "shell.exec") {
-    const command = commandResultSchema.safeParse(output);
-    if (command.success) return command.data.output;
     const shell = shellResultSchema.safeParse(output);
     if (shell.success) {
-      const stdout = shell.data.stdout ?? "";
-      const stderr = shell.data.stderr ?? "";
-      const text = stderr ? (stdout ? `${stdout}\n${stderr}` : stderr) : stdout;
-      const exit = shell.data.exitCode;
-      return text.trim() ? text : exit === 0 || exit === null || exit === undefined ? "" : t("chat.output.exit", { code: exit });
+      const { stdout = "", stderr = "", exitCode, error } = shell.data;
+      const streams = shell.data.output ?? (stderr ? (stdout ? `${stdout}\n${stderr}` : stderr) : stdout);
+      /* like a terminal, the output ends on a non-zero exit code; a command that never exited says why it stopped */
+      const why = error !== undefined && error !== stderr.trim() && error !== `Command exited with code ${exitCode}` ? error : "";
+      const code = exitCode ?? 0;
+      const exit = code !== 0 ? t("chat.output.exit", { code }) : "";
+      if (!why && !exit) return streams.trim() ? streams : "";
+      return [streams.trim() ? streams.replace(/\n+$/, "") : "", why, exit].filter(Boolean).join("\n");
     }
   }
   if (syscall === "fs.write") {
@@ -321,6 +331,15 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   return fallback;
 }
 
+/** The outcome the Process recorded, except that a command which ran and exited non-zero gave its answer. */
+function callEnding(syscall: string, row: ChatTranscriptRow): CallEnding {
+  if (row.toolOutcome === "denied") return "declined";
+  if (row.toolOutcome === "cancelled") return "stopped";
+  if (row.isError !== true && row.status !== "error" && (row.toolOutcome === undefined || row.toolOutcome === "completed")) return "done";
+  const shell = syscall === "shell.exec" ? shellResultSchema.safeParse(row.toolOutput) : null;
+  return shell?.success && (shell.data.exitCode ?? 0) !== 0 ? "done" : "error";
+}
+
 /** Some rows carry the result as a JSON string in their text; read it as the result it is.
  * TODO: remove once process history stores tool results structured (typed history records) instead of the model-facing text. */
 function callFromRow(row: ChatTranscriptRow): ActivityCall {
@@ -346,7 +365,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     filePath: syscall === "fs.read" ? stringField(row.toolArgs, "path") ?? undefined : undefined,
     output: finished ? outputText(syscall, row.toolOutput, row.text) : "",
     finished,
-    failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
+    ending: finished ? callEnding(syscall, row) : undefined,
   };
   const fields: Array<[key: string, label: TextKey]> = syscall === "fs.write" ? [["content", "chat.field.content"]]
     : syscall === "fs.edit" ? [["oldString", "chat.field.before"], ["newString", "chat.field.after"]]
@@ -363,9 +382,9 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   }
   const verb = filesystemOperationVerbs.get(syscall);
   if (!verb) return call;
-  const completed = finished && !call.failed && row.toolOutcome === "completed";
+  const completed = call.ending === "done" && row.toolOutcome === "completed";
   const path = stringField(row.toolArgs, "path") ?? "";
-  call.operation = { label: t(!finished && !call.failed && row.status === "running" ? verb[1] : completed && syscall === "fs.read" ? verb[2] : verb[0]), subject: path };
+  call.operation = { label: t(!finished && row.status === "running" ? verb[1] : completed && syscall === "fs.read" ? verb[2] : verb[0]), subject: path };
   if (syscall === "fs.search") {
     const query = stringField(row.toolArgs, "query") ?? "";
     call.operation.subject = query && path ? t("chat.op.queryIn", { query, path }) : path ? t("chat.op.inPath", { path }) : query;
@@ -486,7 +505,7 @@ export function memoryPagesForMoment(moment: Moment, collections: readonly Libra
   for (const activity of moment.activities) {
     if (activity.you || activity.target !== CLOUD_PLACE_ID) continue;
     for (const call of activity.calls) {
-      if (call.syscall !== "fs.read" || !call.finished || call.failed || !call.filePath) continue;
+      if (call.syscall !== "fs.read" || call.ending !== "done" || !call.filePath) continue;
       const path = call.filePath;
       if (!path.startsWith("/src/repos/") || path.includes("\0") || path.split("/").slice(1).some((part) => !part || part === "." || part === "..")) continue;
       const matches = collections.filter((collection) => path.startsWith(`/src/repos/${collection.repo}/`));
@@ -934,8 +953,8 @@ function toolRowOf(entry: WorkEntry): ChatTranscriptRow {
 }
 
 /**
- * The run in order: each note as its paragraphs, each call with its place and timing. A call that repeats
- * a failed one (same kind, same place, same command or path) is marked as its retry. Sends are the reply, not work.
+ * The run in order: each note as its paragraphs, each call with its place and timing. A call that repeats one that
+ * gave no answer (same kind, same place, same command or path) is marked as its retry. Sends are the reply, not work.
  */
 function timelineForWork(work: readonly WorkEntry[], runKey: string, active: boolean): MomentEvent[] {
   const events: MomentEvent[] = [];
@@ -957,11 +976,11 @@ function timelineForWork(work: readonly WorkEntry[], runKey: string, active: boo
 export function linkReceiptRetries(source: readonly MomentEvent[]): MomentEvent[] {
   const events: MomentEvent[] = source.map((event) => event.kind === "call" ? { ...event, retryOf: null } : event);
   const calls = events.filter((event): event is CallEvent => event.kind === "call");
-  calls.forEach((failed, index) => {
-    if (!failed.call.failed || failed.call.retryKey === undefined) return;
-    const retry = calls.slice(index + 1).find((later) => later.retryOf === null && later.call.syscall === failed.call.syscall
-      && later.target === failed.target && later.call.retryKey === failed.call.retryKey);
-    if (retry) retry.retryOf = failed.call.callId;
+  calls.forEach((attempt, index) => {
+    if (!attempt.call.ending || attempt.call.ending === "done" || attempt.call.retryKey === undefined) return;
+    const retry = calls.slice(index + 1).find((later) => later.retryOf === null && later.call.syscall === attempt.call.syscall
+      && later.target === attempt.target && later.call.retryKey === attempt.call.retryKey);
+    if (retry) retry.retryOf = attempt.call.callId;
   });
   return events;
 }
@@ -972,7 +991,7 @@ export function timelineCalls(moment: Moment): CallEvent[] {
   return (moment.timeline ?? []).filter((event): event is CallEvent => event.kind === "call");
 }
 
-export type SummaryPart = { text: string; tone?: "place" | "failed" };
+export type SummaryPart = { text: string; tone?: "place" };
 
 /** A translated message as summary parts, with each {name} slot replaced by the parts given for it. */
 function fillParts(message: string, slots: Readonly<Record<string, readonly SummaryPart[]>>): SummaryPart[] {
@@ -982,17 +1001,11 @@ function fillParts(message: string, slots: Readonly<Record<string, readonly Summ
   });
 }
 
-function failureText(failed: number, retried: number): string {
-  if (retried === failed) return t("chat.receipt.failedRetried", { count: failed });
-  if (retried === 0) return t("chat.receipt.failed", { count: failed });
-  return t("chat.receipt.someRetried", { failed: t("chat.receipt.failed", { count: failed }), retried: t("chat.receipt.retried", { count: retried }) });
-}
-
 /**
  * The receipt's one line while folded: the current purpose, or the actions and places in this message interval.
- * Related calls retain retry relationships across messages without adding their work to this receipt.
+ * It says what Ship did, never how each step went: a step's ending is for whoever opens the receipt.
  */
-export function receiptSummary(moment: Moment, places: readonly Place[], relatedCalls?: readonly CallEvent[]): SummaryPart[] {
+export function receiptSummary(moment: Moment, places: readonly Place[]): SummaryPart[] {
   const calls = timelineCalls(moment);
   if (calls.length === 0) {
     const processWork = moment.activities.filter((activity) => !activity.you && activity.target === null);
@@ -1000,26 +1013,23 @@ export function receiptSummary(moment: Moment, places: readonly Place[], related
     return [{ text: t(moment.narration ? "chat.receipt.notes" : "chat.receipt.details") }];
   }
   const label = (target: string | null) => target === null ? t("chat.receipt.process") : placeLabel(target, places);
-  const failed = calls.filter((event) => event.call.failed);
-  const retried = failed.filter((event) => (relatedCalls ?? calls).some((later) => later.retryOf === event.call.callId)).length;
-  const failures: SummaryPart[] = failed.length > 0 ? [{ text: ` · ${failureText(failed.length, retried)}`, tone: "failed" }] : [];
   if (moment.thinking) {
     const running = calls.find((event) => !event.call.finished);
-    if (running) return [{ text: running.call.description }, ...failures];
+    if (running) return [{ text: running.call.description }];
   }
   const named = [...new Set(calls.map((event) => event.target))].map(label);
   const list = named.slice(1).reduce<SummaryPart[]>((joined, name, index) => fillParts(
     t(index === named.length - 2 ? "chat.list.and" : "chat.list.comma"),
     { list: joined, item: [{ text: name, tone: "place" }] },
   ), [{ text: named[0], tone: "place" }]);
-  return [...fillParts(t("chat.receipt.actions", { count: calls.length }), { places: list }), ...failures];
+  return fillParts(t("chat.receipt.actions", { count: calls.length }), { places: list });
 }
 
-export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {
+export function receiptTargets(moment: Moment): { target: string; live: boolean; error: boolean }[] {
   return moment.activities.filter((activity): activity is Activity & { target: string } => !activity.you && activity.target !== null).map((activity) => ({
     target: activity.target,
     live: activity.live,
-    failed: activity.calls.some((call) => call.failed),
+    error: activity.calls.some((call) => call.ending === "error"),
   }));
 }
 

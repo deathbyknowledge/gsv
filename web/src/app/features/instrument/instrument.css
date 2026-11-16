@@ -47,7 +47,7 @@
   text-decoration: underline;
   text-underline-offset: 0.25em;
 }
-.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .zen-copy-message, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
+.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: .25em;
