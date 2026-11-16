@@ -129,9 +129,36 @@ it("restores several sites at once and skips sites with nothing stored", async (
   // SAFETY: Restore needs only cookies and new pages from a fresh context.
   const context = { addCookies: async () => {}, newPage: async () => page() } as BrowserContext;
   const sites = Array.from({ length: 8 }, (_, n) => ({ origin: `https://${n}.example`, localStorage: [{ name: "session", value: `${n}` }] }));
-  await restoreBrowserStorage(context, { cookies: [], origins: [...sites, { origin: "https://empty.example", localStorage: [] }] });
+  expect(await restoreBrowserStorage(context, { cookies: [], origins: [...sites, { origin: "https://empty.example", localStorage: [] }] })).toBe(8);
   expect(most).toBeGreaterThan(1);
   expect(visited.sort()).toEqual(sites.map(value => value.origin).sort());
+});
+
+it("times restoring a saved profile into a fresh browser, counting only the sites it wrote", async () => {
+  await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (_object, ctx) => {
+    const store = new InstanceStore(ctx.storage);
+    const record = store.admit({ ownerUid: 1000, human: true }, { requestId: "restore", templateId: "browser" }, limits);
+    const pages: Page[] = [];
+    const page = () => {
+      let closed = false;
+      // SAFETY: Restore and the first tab need only interception, navigation, evaluation, frames and closing from pages.
+      const value = { route: async () => {}, goto: async () => null, evaluate: async () => undefined, frames: () => [], on: () => {}, isClosed: () => closed, close: async () => { closed = true; } } as Page;
+      pages.push(value);
+      return value;
+    };
+    // SAFETY: Target metadata identifies the fresh context and its first tab.
+    const cdp = { send: async () => ({ targetInfo: { targetId: "first", browserContextId: "fresh", title: "", url: "about:blank" } }), detach: async () => {} } as CDPSession;
+    // SAFETY: A fresh context needs cookies, pages, debugger sessions, init scripts and events.
+    const context = { addCookies: async () => {}, newPage: async () => page(), pages: () => pages.filter(value => !value.isClosed()), serviceWorkers: () => [], newCDPSession: async () => cdp, addInitScript: async () => {}, on: () => {} } as BrowserContext;
+    const saved = { cookies: [], origins: [
+      { origin: "https://a.example", localStorage: [{ name: "session", value: "1" }] },
+      { origin: "https://b.example", localStorage: [{ name: "theme", value: "dark" }] },
+      { origin: "https://cookies.example", localStorage: [] },
+    ] };
+    // SAFETY: A new browser only creates the fresh context.
+    const browser = await CloudBrowser.fromConnection({ newContext: async () => context } as Browser, record, store, saved);
+    expect(browser.restored).toEqual({ restoreMs: expect.any(Number), sitesRestored: 2 });
+  });
 });
 
 it("keeps site data in flight within the allowance and reads a larger site again alone", async () => {

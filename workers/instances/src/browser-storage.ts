@@ -176,11 +176,12 @@ export async function exportBrowserStorage(
   }
 }
 
-/** Restore into a fresh context before exposing any tab to humans or agents. */
-export async function restoreBrowserStorage(context: BrowserContext, state: StorageState): Promise<void> {
+/** Restore into a fresh context before exposing any tab to humans or agents. Returns how many sites it wrote. */
+export async function restoreBrowserStorage(context: BrowserContext, state: StorageState): Promise<number> {
   await context.addCookies(state.cookies);
   // A site with nothing stored needs no visit.
-  await visitSites(context, state.origins.filter(hasBrowserStorage), {
+  const sites = state.origins.filter(hasBrowserStorage);
+  await visitSites(context, sites, {
     pages: STORAGE_PAGES,
     prepare: page => page.route("**/*", route => route.fulfill({ contentType: "text/html", body: "<!doctype html>" })),
     async visit(page, origin) {
@@ -193,4 +194,5 @@ export async function restoreBrowserStorage(context: BrowserContext, state: Stor
       })()`);
     },
   });
+  return sites.length;
 }

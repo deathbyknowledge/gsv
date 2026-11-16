@@ -113,6 +113,7 @@ export const telemetryComponentSchema = z.enum([
   "search",
   "mail",
   "ripgit",
+  "instances",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -468,6 +469,46 @@ const delegationCompletedSchema = z.strictObject({
   }),
 });
 
+// Cloud browser timings carry durations and counts only: never a site, URL, input or profile.
+const browserSaveFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.save.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["saved", "failed"]),
+    trigger: z.enum(["handoff", "stop", "expiry", "request"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present once the save has read its sites.
+    sitesRead: z.optional(nonNegativeIntegerSchema),
+    sitesKept: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserStartFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.start.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["ready", "stopped", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present when the start restored a saved profile.
+    restoreMs: z.optional(nonNegativeIntegerSchema),
+    sitesRestored: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserHandoffFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.handoff.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["completed", "cancelled", "expired", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Absent when a coordinator restart lost the handoff's input counts.
+    inputs: z.optional(nonNegativeIntegerSchema),
+    inputFailures: z.optional(nonNegativeIntegerSchema),
+    inputMedianMs: z.optional(nonNegativeIntegerSchema),
+    inputMaxMs: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("memory.review.admission.failed"),
@@ -592,6 +633,9 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   adapterConnectedSchema,
   integrationConnectedSchema,
   delegationCompletedSchema,
+  browserSaveFinishedSchema,
+  browserStartFinishedSchema,
+  browserHandoffFinishedSchema,
 ]);
 
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
@@ -629,6 +673,9 @@ export const telemetryEventComponents = {
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
   "delegation.completed": ["gateway"],
+  "browser.save.finished": ["instances"],
+  "browser.start.finished": ["instances"],
+  "browser.handoff.finished": ["instances"],
 } satisfies TelemetryEventOwnership;
 
 export const telemetryRecordSchema = z.strictObject({
