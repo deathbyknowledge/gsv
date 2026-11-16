@@ -102,8 +102,10 @@ such as `00-role.md` and `05-voice.md`. The first time a process loads its
 prompt after an upgrade, the gateway clears the copies from its home in one
 commit: a copy that matches a shipped revision is deleted, and an edited copy
 moves to `~/context.d/retired/`, where it stays readable but no longer loads.
-Files under any other name, including the current shipped names, are the
-account's own and stay.
+An edited copy may hold what the owner asked for, so the Ship also gets one
+responsibility to carry that into the account's own `voice.md` or
+`behaviour.md` and then delete the retired file. Files under any other name,
+including the current shipped names, are the account's own and stay.
 
 ## Agent and User Context
 

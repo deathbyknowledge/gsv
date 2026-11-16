@@ -4,7 +4,7 @@ import type { RipgitClient, RipgitRepoRef } from "../../fs";
 import { contextFiles } from "../../prompts/context";
 import { SYSTEM_CONFIG_DEFAULTS } from "../config";
 import type { KernelContext } from "../context";
-import { seededRoleContextCleanupOps, shippedRoleContext } from "./shipped-context";
+import { seededRoleContextCleanup, shippedRoleContext } from "./shipped-context";
 
 // Frozen input fixture: the Ship role copy homes received from 383632989.
 const COPIED_SHIP_ROLE = `# Ship
@@ -112,7 +112,7 @@ describe("copied role context cleanup", () => {
   const shipRole = (): AiRoleContext => shippedRoleContext(kernel({ crew: CREW }), SHIP, OWNER_UID)!;
 
   it("deletes copies that match a shipped revision", async () => {
-    const ops = await seededRoleContextCleanupOps(home({
+    const { ops, retired } = await seededRoleContextCleanup(home({
       "context.d/00-role.md": COPIED_SHIP_ROLE,
       "context.d/10-delegation.md": "Crew account: `crew`\n",
       "context.d/10-personal-notes.md": "Not a shipped file.",
@@ -121,31 +121,36 @@ describe("copied role context cleanup", () => {
       { type: "delete", path: "context.d/00-role.md" },
       { type: "delete", path: "context.d/10-delegation.md" },
     ]);
+    expect(retired).toEqual([]);
   });
 
   it("moves an edited copy out of the prompt without overwriting an earlier one", async () => {
-    const ops = await seededRoleContextCleanupOps(home({
+    const { ops, retired } = await seededRoleContextCleanup(home({
       "context.d/05-voice.md": "# Voice\n\nAlways answer in Dutch.\n",
       "context.d/retired/05-voice.md": "An earlier edited copy.",
     }), REPO, shipRole());
     expect(ops).toEqual([{ type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice-2.md" }]);
+    // Both copies wait for the Ship to carry them over.
+    expect(retired).toEqual(["05-voice-2.md", "05-voice.md"]);
   });
 
   it("leaves the account's own files alone, even under a name the release now uses", async () => {
-    const ops = await seededRoleContextCleanupOps(home({
+    const { ops, retired } = await seededRoleContextCleanup(home({
       "context.d/voice.md": "# Voice\n\nThe Ship's own notes.",
       "context.d/behaviour.md": shipRole().files.find((file) => file.name === "behaviour.md")!.text,
     }), REPO, shipRole());
     expect(ops).toEqual([]);
+    expect(retired).toEqual([]);
   });
 
   it("touches only the names of the home's own role", async () => {
     const crew = shippedRoleContext(kernel({ crew: CREW }), CREW, OWNER_UID)!;
     // The Crew's role text is unchanged since homes received it as 00-role.md.
-    const ops = await seededRoleContextCleanupOps(home({
+    const { ops, retired } = await seededRoleContextCleanup(home({
       "context.d/00-role.md": contextFiles("crew")[0]!.text,
       "context.d/05-voice.md": "A Crew file that only shares a Ship name.",
     }), { ...REPO, owner: "crew" }, crew);
     expect(ops).toEqual([{ type: "delete", path: "context.d/00-role.md" }]);
+    expect(retired).toEqual([]);
   });
 });

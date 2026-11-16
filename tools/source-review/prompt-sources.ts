@@ -5,6 +5,7 @@ import contextRunwayTask from "../../workers/gateway/src/prompts/tasks/context-r
 import delegatedTask from "../../workers/gateway/src/prompts/tasks/delegated.md";
 import memoryReviewTask from "../../workers/gateway/src/prompts/tasks/memory-review.md";
 import operatorUpdateTask from "../../workers/gateway/src/prompts/tasks/operator-update.md";
+import retiredContextTask from "../../workers/gateway/src/prompts/tasks/retired-context.md";
 import setupTask from "../../workers/gateway/src/prompts/tasks/setup-assist.md";
 import yieldTask from "../../workers/gateway/src/prompts/tasks/yield-correction.md";
 
@@ -25,6 +26,7 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "tasks/delegated.md", text: delegatedTask, scope: "task" },
   { path: "tasks/memory-review.md", text: memoryReviewTask, scope: "task" },
   { path: "tasks/operator-update.md", text: operatorUpdateTask, scope: "task" },
+  { path: "tasks/retired-context.md", text: retiredContextTask, scope: "task" },
   { path: "tasks/setup-assist.md", text: setupTask, scope: "task" },
   { path: "tasks/yield-correction.md", text: yieldTask, scope: "task" },
 ];
