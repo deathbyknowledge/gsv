@@ -176,9 +176,13 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     this.debuggers.set(page, cdp);
     return cdp;
   }
+  /** A known open tab is used as is; only an unknown or closed tab rereads every tab. */
   private async page(id: number): Promise<Page> {
-    await this.refreshTabs();
-    const page = this.tabs.get(id);
+    let page = this.tabs.get(id);
+    if (!page || page.isClosed()) {
+      await this.refreshTabs();
+      page = this.tabs.get(id);
+    }
     if (!page || page.isClosed()) throw new Error(`Browser tab ${id} is closed`);
     return page;
   }
