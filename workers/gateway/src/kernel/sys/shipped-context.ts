@@ -55,9 +55,9 @@ function roleFiles(ctx: Pick<KernelContext, "config">, role: ShippedRole): Conte
  * names in SHIPPED_CONTEXT_SHA256S; the Kernel now serves it. Once per account
  * and Kernel lifetime, a copy that matches a shipped revision is deleted, and
  * any other file under one of those names is moved to `context.d/retired/`,
- * where it stays readable but no longer loads. An edited copy may hold what the
- * owner asked for, so the Ship gets one responsibility to carry that into the
- * account's own context.
+ * where it stays readable but no longer loads. A retired copy may hold what the
+ * owner asked for, so while any remain the Ship gets one responsibility to
+ * carry that into the account's own context; the responsibility is the receipt.
  */
 export async function retireSeededRoleContext(
   ctx: Pick<KernelContext, "env" | "auth" | "responsibilities" | "reconcileResponsibilityWake" | "defer">,
@@ -65,15 +65,17 @@ export async function retireSeededRoleContext(
   role: AiRoleContext,
   ownerUid: number,
 ): Promise<void> {
-  // Only the call whose cleanup ran sees the files it moved.
+  // Only the call whose cleanup ran sees the retired copies.
   let retired: string[] = [];
   await reconcileHomeOnce(ctx, identity, "gsv: retire copied role context", async (client, repo) => {
-    const ops = await seededRoleContextCleanupOps(client, repo, role);
-    retired = ops.flatMap((op) => op.type === "move" ? [`${identity.home}/${op.to}`] : []);
-    return ops;
+    const cleanup = await seededRoleContextCleanup(client, repo, role);
+    const moved = cleanup.ops.filter((op) => op.type === "move").length;
+    if (moved > 0) console.warn(`[Prompt] moved ${moved} edited ${role.name} context copies to context.d/retired`);
+    retired = cleanup.retired.map((name) => `${identity.home}/context.d/retired/${name}`);
+    return cleanup.ops;
   });
-  if (retired.length === 0) return;
-  console.warn(`[Prompt] moved ${retired.length} edited ${role.name} context copies to context.d/retired`);
+  const dedupeKey = `shipped-context.retired:${identity.uid}`;
+  if (retired.length === 0 || ctx.responsibilities.getByDedupeKey(ownerUid, dedupeKey)) return;
   const source = { kind: "system", component: "shipped-context" } as const;
   ctx.responsibilities.create({
     ownerUid,
@@ -89,7 +91,7 @@ export async function retireSeededRoleContext(
     assignee: { kind: "ship" },
     state: "open",
     priority: "low",
-    dedupeKey: `shipped-context.retired:${identity.uid}`,
+    dedupeKey,
     observedByShip: false,
     now: Date.now(),
   });
@@ -98,21 +100,26 @@ export async function retireSeededRoleContext(
   }));
 }
 
-export async function seededRoleContextCleanupOps(
+/**
+ * The cleanup for one home, and every retired copy it leaves there afterwards:
+ * those it moves now and any an earlier cleanup moved.
+ */
+export async function seededRoleContextCleanup(
   client: Pick<RipgitClient, "readPath">,
   repo: RipgitRepoRef,
   role: AiRoleContext,
-): Promise<RipgitApplyOp[]> {
+): Promise<{ ops: RipgitApplyOp[]; retired: string[] }> {
   const [root, retired] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/retired"),
   ]);
-  if (root.kind !== "tree") return [];
+  if (root.kind !== "tree") return { ops: [], retired: [] };
   // Only names that were once copied into homes; an account's own file never shares one.
   const names = new Set([...SHIPPED_REVISIONS.keys()]
     .filter((key) => key.startsWith(`${role.name}/`))
     .map((key) => key.slice(role.name.length + 1)));
   const taken = new Set(retired.kind === "tree" ? retired.entries.map((entry) => entry.name) : []);
+  const kept = [...taken].filter((name) => names.has(name.replace(/-\d+\.md$/, ".md")));
   const copies = root.entries.filter((entry) => entry.type === "blob" && names.has(entry.name)).map((entry) => entry.name).sort();
   const ops: RipgitApplyOp[] = [];
   for (const name of copies) {
@@ -122,11 +129,12 @@ export async function seededRoleContextCleanupOps(
       ops.push({ type: "delete", path: `context.d/${name}` });
       continue;
     }
-    const kept = retiredName(name, taken);
-    taken.add(kept);
-    ops.push({ type: "move", from: `context.d/${name}`, to: `context.d/retired/${kept}` });
+    const retiredAs = retiredName(name, taken);
+    taken.add(retiredAs);
+    kept.push(retiredAs);
+    ops.push({ type: "move", from: `context.d/${name}`, to: `context.d/retired/${retiredAs}` });
   }
-  return ops;
+  return { ops, retired: kept.sort() };
 }
 
 function retiredName(name: string, taken: ReadonlySet<string>): string {
