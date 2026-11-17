@@ -2,10 +2,10 @@ import { Fragment, type VNode } from "preact";
 import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
-import { OwnerWelcome, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
+import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage, signupMessenger } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
@@ -23,7 +23,12 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const candidate = new OwnerWelcome(snapshot, storage, accountsOrigin);
     await captureContactInvitation(candidate, contactInvitation);
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
+    // The signup link names where it was clicked and which campaign brought it; that rides along until the Ship is reserved.
+    const attribution = signupAttributionFromLink(new URL(window.location.href));
     if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create" });
+    // A link's own origin replaces the stored one. A load without one keeps it, because the page has
+    // already taken it off the URL: a reload, or a tab the phone restores, must not report the signup as direct.
+    if (attribution) await candidate.save({ attribution });
     client = candidate;
     load = async () => candidate;
   } catch (error) {
@@ -36,7 +41,13 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   // Old signup links remain useful destinations, but their codes no longer authorize creation.
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
-  if (fragment.has("invite")) { fragment.delete("invite"); url.hash = fragment.toString(); window.history.replaceState(null, "", url); }
+  const carried = SIGNUP_LINK_SLUGS.filter((slug) => (slug.part === "fragment" ? fragment : url.searchParams).has(slug.name));
+  if (fragment.has("invite") || carried.length) {
+    fragment.delete("invite");
+    for (const slug of carried) (slug.part === "fragment" ? fragment : url.searchParams).delete(slug.name);
+    url.hash = fragment.toString();
+    window.history.replaceState(null, "", url);
+  }
   const leave = async (destination: string) => {
     try {
       if (contactInvitation && client) await client.save({ contactInvite: null });
@@ -46,7 +57,9 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     }
   };
   const connect = async (origin: string, onboardingToken?: string | null) => {
-    const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
+    // Someone a messenger sent here finds its connection open on their new Ship.
+    const messenger = signupMessenger(client?.state.attribution?.utmSource);
+    const destination = onboardingToken ? signupDestination(origin, onboardingToken, { contact: contactInvitation, messenger })
       : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
     await leave(destination);
   };

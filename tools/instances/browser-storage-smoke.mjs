@@ -203,7 +203,8 @@ export async function checkRestoredBrowserStorage(shell, client, instance) {
   })()`);
   assert.deepEqual(result, { big: 8 * 1024 * 1024, bytes: [0, 4, 255], buffer: [7, 8], view: 10, map: 42, set: ["one", "two"], date: "2026-01-01T00:00:00.000Z", bigint: "12345678901234567890", cycle: true, empty: "", zero: 0, no: false, nothing: null, specialNumbers: true });
   const { profile: metadata } = await client.sys.browser.profile.get({ profileId: instance.profileId });
-  assert.equal(metadata.saveStatus, "saved");
+  // Saves run only when use ends, so restoring keeps the status of the stop's partial save.
+  assert.equal(metadata.saveStatus, "partial", "Starting a browser saved its profile");
   assert.ok(metadata.usage.sites.some(site => site.indexedDBBytes > 8 * 1024 * 1024));
   console.log("PASS: restored binary values, maps, sets, dates, bigints, cycles, special numbers, false/zero/null, and saved-profile usage");
 }

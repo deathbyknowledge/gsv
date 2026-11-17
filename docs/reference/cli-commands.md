@@ -622,14 +622,16 @@ The Ship's shell exposes messenger pairing to Ship and signed-in users:
 ```bash
 messenger list
 messenger setup whatsapp
-messenger inspect whatsapp < code.txt
-messenger connect whatsapp < code.txt
+messenger inspect slack < code.txt
+messenger connect slack < code.txt
 ```
 
-`setup` returns adapter-owned instructions for getting a code. The user can
-paste it into their conversation and let Ship connect it for them. Save the
-code to a file with Write, read it through stdin, then remove the file; avoid
-putting it in logged shell command text. `connect` returns `paired: true` only
+`setup` returns adapter-owned instructions. When it reports `pairingLinks: true`,
+as for WhatsApp and Telegram, send the user its `setupUrl`: they connect on that
+page in Settings, and there is no code for Ship to collect. Otherwise the user can
+paste the code they get into their conversation and let Ship connect it for them.
+Save the code to a file with Write, read it through stdin, then remove the file;
+avoid putting it in logged shell command text. `connect` returns `paired: true` only
 after redemption completes. Processes link their human owner's account, subject
 to their capabilities and tool policy. See [Connect a messenger](/how-to/messengers).
 
@@ -822,7 +824,7 @@ connected adapters, and adapter authentication loss.
 cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
 cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
 cal cancel PATH [--occurrence WHEN]
-cal show PATH [--timezone ZONE] [--next COUNT]
+cal show PATH [--timezone ZONE] [--next COUNT | --from WHEN [--until WHEN]]
 ```
 
 `add` gives a new event a fresh UID, the account's managed mail address as its
@@ -835,6 +837,15 @@ place with the same UID and the next SEQUENCE, so a calendar that already has
 the event replaces it. Only the event's organizer can change it. `show` prints
 any calendar file, one field per line, with a repeating event's next dates.
 Send a new or changed event to its guests with `mail send --invite PATH`.
+
+`show --from WHEN --until WHEN` lists what a calendar file holds between two
+times instead, such as a whole calendar fetched from a private calendar link:
+each event, and each date of a repeating one, that overlaps the range, in the
+order they start. A date stands for its whole day in the owner's time zone, so
+`--from 2026-11-16 --until 2026-11-22` is that week; `--from` alone shows one
+day. An event already under way at `--from` is included. A range covers at most
+366 days and 500 events; skipped dates are left out and moved ones appear at
+their new time, with the date they replace as `occurrence=`.
 
 `--repeat` takes an RFC 5545 RRULE in the forms calendar apps offer: daily,
 weekly on given days, monthly on a day of the month (`-1` for the last) or a
@@ -1026,7 +1037,7 @@ remote confirmation; use `message delivery show` with its delivery id.
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
 associate replies with that open Ship responsibility. A reply continues the same
 work without enabling permanent handling of that contact. Acceptance and new
-messages stay in People unless the person chooses **Let Ship handle them**.
+messages stay in People unless the person chooses **Let Ship answer their messages**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

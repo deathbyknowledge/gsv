@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import { exceptionDiagnosticProperties } from "./diagnostics.js";
+import { MESSAGE_CHOICE_LIMIT } from "./protocol/message-choices.js";
 export { exceptionDiagnostics, sanitizeExceptionDiagnostics, redactDiagnosticText, type ExceptionDiagnostics } from "./diagnostics.js";
 
 export const GSV_TELEMETRY_MARKER = "gsv.telemetry";
@@ -112,6 +113,7 @@ export const telemetryComponentSchema = z.enum([
   "search",
   "mail",
   "ripgit",
+  "instances",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -285,6 +287,16 @@ const installationActivatedSchema = z.strictObject({
   properties: z.strictObject({}),
 });
 
+// Cloudflare's coarse IP country only; XX means unknown and T1 means Tor.
+// Never accept an address, location coordinates or a client-supplied label.
+export const ipCountrySchema = z.string().check(z.regex(/^(?!XX$)[A-Z]{2}$/));
+
+const shipOwnerConnectedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("ship.owner.connected"),
+  properties: z.strictObject({ country: ipCountrySchema }),
+});
+
 // Closed allowlist so product analytics can break Ship replies down by the
 // surface that will receive them without ever carrying a raw peer platform
 // string or adapter name. Unknown clients and adapters classify as "other".
@@ -301,6 +313,10 @@ export const shipPlatformSchema = z.enum([
   "other",
 ]);
 
+// A count of the replies a message offers, or the position of one of them
+// counted from 1. The words of a choice never leave the Kernel.
+const messageChoicePositionSchema = z.number().check(z.int(), z.gte(1), z.lte(MESSAGE_CHOICE_LIMIT));
+
 const shipMessageCommittedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("ship.message.committed"),
@@ -312,6 +328,8 @@ const shipMessageCommittedSchema = z.strictObject({
     // Present only on the first message a run commits after the person's own
     // message: the time from Process receipt to that commit.
     replyMs: z.optional(nonNegativeIntegerSchema),
+    // Present only when the message offers replies to tap: how many.
+    choicesOffered: z.optional(messageChoicePositionSchema),
   }),
 });
 
@@ -325,6 +343,11 @@ const shipMessageReceivedSchema = z.strictObject({
     platform: shipPlatformSchema,
     hasText: z.boolean(),
     hasMedia: z.boolean(),
+    // Present only when the message answers one that offered replies: how many
+    // were on offer, and the position of the one taken. A message that offers
+    // them and gets other words back carries the count alone.
+    choicesOffered: z.optional(messageChoicePositionSchema),
+    choiceTaken: z.optional(messageChoicePositionSchema),
   }),
 });
 
@@ -375,6 +398,52 @@ const onboardingWelcomeDeliveredSchema = z.strictObject({
   }),
 });
 
+// How the welcome ended, as a closed class of the outcome Ship or the person
+// recorded. Anything outside the outcomes the welcome names classifies as
+// "other", so a record never carries the words of a resolution.
+export const onboardingWelcomeOutcomeSchema = z.enum([
+  "connected",
+  "messenger_declined",
+  "declined",
+  "cancelled",
+  "other",
+]);
+
+// The welcome responsibility reaching its end, once per owner, with the time
+// since it opened.
+const onboardingWelcomeFinishedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.finished"),
+  properties: z.strictObject({
+    outcome: onboardingWelcomeOutcomeSchema,
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+// Where a signup came from, as closed classes of the website's Try Ship links,
+// never a visitor identity. The signup link carries free-form slugs; only these
+// allowlist values leave the classifier, and anything else becomes "other".
+export const attributionSlugSchema = z.string().check(z.regex(/^[a-z0-9-]{1,32}$/));
+export const attributionPlacementSchema = z.enum(["hero", "final-call", "example", "other"]);
+// Extend this list when the website adds an example; unknown ids classify as "other".
+export const attributionExampleSchema = z.enum([
+  "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
+]);
+
+// Campaign tags are the operator's own names for an ad or a post, bounded to the
+// same slug shape; the visitor's click id and anything else on the link stay out.
+const installationAttributedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("installation.attributed"),
+  properties: z.strictObject({
+    origin: z.enum(["website", "campaign", "direct"]),
+    placement: z.optional(attributionPlacementSchema),
+    example: z.optional(attributionExampleSchema),
+    utmSource: z.optional(attributionSlugSchema),
+    utmCampaign: z.optional(attributionSlugSchema),
+  }),
+});
+
 const targetConnectedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("target.connected"),
@@ -421,6 +490,46 @@ const delegationCompletedSchema = z.strictObject({
   name: z.literal("delegation.completed"),
   properties: z.strictObject({
     durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+// Cloud browser timings carry durations and counts only: never a site, URL, input or profile.
+const browserSaveFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.save.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["saved", "failed"]),
+    trigger: z.enum(["handoff", "stop", "expiry", "request"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present once the save has read its sites.
+    sitesRead: z.optional(nonNegativeIntegerSchema),
+    sitesKept: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserStartFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.start.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["ready", "stopped", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present when the start restored a saved profile.
+    restoreMs: z.optional(nonNegativeIntegerSchema),
+    sitesRestored: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserHandoffFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.handoff.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["completed", "cancelled", "expired", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Absent when a coordinator restart lost the handoff's input counts.
+    inputs: z.optional(nonNegativeIntegerSchema),
+    inputFailures: z.optional(nonNegativeIntegerSchema),
+    inputMedianMs: z.optional(nonNegativeIntegerSchema),
+    inputMaxMs: z.optional(nonNegativeIntegerSchema),
   }),
 });
 
@@ -537,15 +646,21 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceRequestFinishedSchema,
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
+  installationAttributedSchema,
+  shipOwnerConnectedSchema,
   shipMessageCommittedSchema,
   shipMessageReceivedSchema,
   conversationReplyFailedSchema,
   onboardingWelcomeActivatedSchema,
   onboardingWelcomeDeliveredSchema,
+  onboardingWelcomeFinishedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
   delegationCompletedSchema,
+  browserSaveFinishedSchema,
+  browserStartFinishedSchema,
+  browserHandoffFinishedSchema,
 ]);
 
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
@@ -572,15 +687,21 @@ export const telemetryEventComponents = {
   "inference.request.finished": ["inference"],
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
+  "installation.attributed": ["accounts"],
+  "ship.owner.connected": ["gateway"],
   "ship.message.committed": ["gateway"],
   "ship.message.received": ["gateway"],
   "conversation.reply.failed": ["gateway"],
   "onboarding.welcome.activated": ["gateway"],
   "onboarding.welcome.delivered": ["gateway"],
+  "onboarding.welcome.finished": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
   "delegation.completed": ["gateway"],
+  "browser.save.finished": ["instances"],
+  "browser.start.finished": ["instances"],
+  "browser.handoff.finished": ["instances"],
 } satisfies TelemetryEventOwnership;
 
 export const telemetryRecordSchema = z.strictObject({
@@ -606,7 +727,52 @@ export type InferenceFailureStage = z.infer<
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
+export type AttributionPlacement = z.infer<typeof attributionPlacementSchema>;
+export type AttributionExample = z.infer<typeof attributionExampleSchema>;
+/** The slugs a signup link carried, already bounded to the slug shape by whoever read the link. */
+export type SignupLinkSlugs = { placement?: string; example?: string; utmSource?: string; utmCampaign?: string };
+/** A signup's origin after classification: only allowlist values and bounded campaign tags, reported as such. */
+export type SignupAttribution = {
+  placement?: AttributionPlacement; example?: AttributionExample; utmSource?: string; utmCampaign?: string;
+};
+export type InstallationAttributedProperties = z.infer<typeof installationAttributedSchema>["properties"];
+
+/**
+ * Classify the slugs a signup link carried into the closed attribution
+ * allowlists. The website names its hero and final-call sections and its
+ * example panels (`details-<id>`); anything else is "other", and the raw slugs
+ * never enter a record. Campaign tags pass through only in the slug shape.
+ */
+export function signupAttributionFromSlugs(slugs: SignupLinkSlugs): SignupAttribution {
+  const classified: SignupAttribution = {};
+  if (slugs.placement !== undefined) {
+    const place = slugs.placement.trim().toLowerCase();
+    classified.placement = place === "hero" || place === "hero-heading"
+      ? "hero"
+      : place === "final-call" || place === "early-access"
+        ? "final-call"
+        : place === "example" || place.startsWith("details-")
+          ? "example"
+          : "other";
+  }
+  if (slugs.example !== undefined) {
+    const parsed = attributionExampleSchema.safeParse(slugs.example.trim().toLowerCase());
+    classified.example = parsed.success ? parsed.data : "other";
+  }
+  for (const key of ["utmSource", "utmCampaign"] as const) {
+    const parsed = attributionSlugSchema.safeParse(slugs[key]);
+    if (parsed.success) classified[key] = parsed.data;
+  }
+  return classified;
+}
+
+/** The record for one signup: the website's placement wins, then a campaign tag, otherwise the signup was direct. */
+export function installationAttributedProperties(attribution?: SignupAttribution): InstallationAttributedProperties {
+  const origin = attribution?.placement ? "website" : attribution?.utmSource || attribution?.utmCampaign ? "campaign" : "direct";
+  return { origin, ...attribution };
+}
 export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
+export type OnboardingWelcomeOutcome = z.infer<typeof onboardingWelcomeOutcomeSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]

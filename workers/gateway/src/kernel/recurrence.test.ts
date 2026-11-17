@@ -198,6 +198,20 @@ describe("a series and its changed dates", () => {
     expect(next[1].id).toEqual(zoned("2027-01-04T09:00:00", AMSTERDAM));
   });
 
+  it("stops at an end time instead of expanding up to the limit", () => {
+    if (!series.event?.recurrence) throw new Error("expected a repeating event");
+    const rule = parseRepeatRule(series.event.recurrence);
+
+    const next = nextOccurrences({ ...series, event: series.event }, rule, AMSTERDAM, Date.parse("2026-12-20T00:00:00Z"), 500,
+      Date.parse("2027-01-12T00:00:00Z"));
+
+    expect(next.map((occurrence) => occurrence.start)).toEqual([
+      zoned("2026-12-21T09:00:00", AMSTERDAM),
+      zoned("2027-01-05T10:00:00", AMSTERDAM),
+      zoned("2027-01-11T09:00:00", AMSTERDAM),
+    ]);
+  });
+
   it("leaves out a start that has passed in the hour a change to winter time repeats", () => {
     const [nightly] = calendarSeries(calendarEvents(parseCalendar([
       "BEGIN:VCALENDAR",

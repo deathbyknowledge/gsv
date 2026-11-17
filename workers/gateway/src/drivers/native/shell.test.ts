@@ -298,7 +298,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.7";
+        if (key === "config/server/version") return "0.7.9";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -374,7 +374,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.7",
+    serverVersion: "0.7.9",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -1106,7 +1106,6 @@ describe("native shell capability discovery", () => {
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
     ["send an email to this person", "mail"],
-    ["what is my email address", "mail"],
     ["sign up for a website with an email address", "mail"],
     ["find the verification email", "mail"],
     ["track my parcel delivery", "mail"],

@@ -28,10 +28,7 @@
 .desktop-welcome-invitation p { margin: 0; line-height: 1.6; }
 .desktop-welcome-invitation .desktop-welcome-detail { font-size: 12px; }
 .desktop-welcome-inviter { color: var(--accent-bright); font-weight: 500; }
-.desktop-welcome-address-disclosure { margin-top: 28px; }
-.desktop-welcome-address-disclosure summary { color: var(--text-dim); cursor: pointer; font-size: 12px; }
-.desktop-welcome-address-disclosure[open] summary { margin-bottom: 20px; }
-.desktop-welcome-address-disclosure summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.desktop-welcome-address-below { margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--border); }
 .gsv-owner-consent { font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.55; }
 .gsv-owner-consent-row { display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
 .gsv-owner-consent label { cursor: pointer; }

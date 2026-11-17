@@ -2,8 +2,12 @@
 
 **People** holds conversations with people on other Ships. Open it with `p`.
 It opens **Recent**, your conversations newest first; older ones load as you scroll.
-The search icon beside the heading filters the list by name or handle; **Escape**
-or the close button puts the heading back. The icons at the bottom of the list, beside
+The search icon beside the heading searches all of People by name or handle,
+whichever list it opens from: recent and archived conversations, pending requests
+you received or sent, and blocked people. When nothing matches and what you typed
+is a handle or profile address, People looks it up and shows that public profile,
+with **open your conversation** or **send a message request**. **Escape** or the
+close button puts the heading back. The icons at the bottom of the list, beside
 your handle, open **archived**, **contacts**, **requests** and **add contact**. Requests are first messages from new people; the count on its icon
 shows the loaded active requests, with `+` when more remain. Each list has a
 **← recent** action to return to Recent.
@@ -23,23 +27,39 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **add contact**, choose who should handle new messages, then **create invitation
+Choose **add contact** to open **Add a contact**. Type their handle, such as `esteve`
+or `esteve.ship.space`. People shows your matching contacts as you type and, once
+the handle names a public profile, that person. **Message** opens a conversation
+you already have, or a first message request to someone new. When nothing matches,
+People says no public profile matches: the handle may be mistyped, or their profile
+may be private.
+
+The request has **Also add them as a contact** ticked, so they join Contacts once they
+accept; untick it to keep them out of Contacts. Choose **Let Ship answer their messages**
+or **I’ll read and reply to their messages myself**, then send.
+
+For someone without a Ship, choose **Don’t have a Ship? Invite them to connect.**,
+choose who should handle new messages, then **create invitation
 link**. Share it wherever you already talk. The same link works for someone new
 to Ship or someone who already has a Ship. It connects one person and lasts seven
 days; you can cancel it before acceptance.
 
 On a managed deployment, the link opens a centered invitation showing who invited you.
-Choose **Continue**. Existing users select their Ship; new users verify their
-email and create one. The contact invitation stays with them through signup and
+Choose **Continue**, then enter your email under **Sign in or create your Ship**.
+After the emailed code, existing users select their Ship and new users create one.
+The contact invitation stays with them through signup and
 activation. In their Ship, they choose who handles new messages and accept the connection.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
-The recipient can also enter their handle or address, including a Ship hosted by another
+The recipient can also enter their handle or address below the email, including a Ship hosted by another
 operator. This remains available if the browser cannot load or save signup state.
 Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
 paste it in People.
+
+When the inviting Ship refuses an invitation, because it was cancelled, already used or
+isn't available any more, accepting it again shows the same reason. Ask for a new link.
 
 Ship can create or accept these same invitations when asked, after you choose
 who handles new messages. The built-in `contacts` skill covers inviting people,
@@ -56,8 +76,8 @@ tracks the email, while `contact invite list --all` shows whether the invitation
 accepted. There are no signup-place reservations or registration codes. Ordinary
 contact expiry, cancellation and rate limits still apply.
 
-Choose **connect → use a profile address** to find a saved contact by name or enter
-a handle such as `esteve` or `@esteve`, or someone's public profile address.
+**Add a contact** also takes a handle with `@` or someone's public profile address.
+**I have an invitation**, under the handle field, accepts an invitation someone sent you.
 Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; overlapping domains use the most specific match. Full addresses still reach other operators.
 In Shell, `contact find @esteve` (or a full address) shows the same public profile,
 and `contact connect @esteve --message TEXT --handling manual|ship` sends the same
@@ -138,8 +158,8 @@ that scroll boundary.
 
 ## Decide who handles it
 
-When connecting in People, both people explicitly choose **I’ll handle them** or
-**Let Ship handle them** for their own side. Neither option is preselected. The
+When connecting in People, both people explicitly choose **Let Ship answer their
+messages** or **I’ll read and reply to their messages myself** for their own side. Neither option is preselected. The
 choice stays with the invitation or request, even if acceptance happens later.
 Existing contacts keep their settings. Ship-led invitations use the same explicit
 choice; creating or accepting one does not silently choose automatic handling.

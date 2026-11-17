@@ -13,8 +13,8 @@ const RETIRED_NAMES = [
   "30-process-orchestration.md",
 ];
 
-export const KERNEL_V095_RETIRE_NUMBERED_SYSTEM_CONTEXT: SqlMigration = {
-  id: 95,
+export const KERNEL_V097_RETIRE_NUMBERED_SYSTEM_CONTEXT: SqlMigration = {
+  id: 97,
   name: "retire_numbered_system_context",
   statements: [
     `DELETE FROM config_kv WHERE key IN (${RETIRED_NAMES.map((name) => `'config/ai/context.d/${name}'`).join(", ")})`,

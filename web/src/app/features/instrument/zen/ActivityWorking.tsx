@@ -9,12 +9,12 @@ export function ActivityWorking({ activity, who }: { activity: Activity; who: st
       {activity.calls.map((call) => {
         const loading = activity.terminal
           ? activity.terminal.status === "starting" || activity.terminal.status === "running"
-          : !call.finished && !call.failed && !call.operation;
+          : !call.finished && !call.operation;
         const state: TextKey | undefined = activity.terminal ? activity.terminal.action === "stop" ? "chat.work.stopping"
           : activity.terminal.status === "unavailable" ? "chat.work.unavailable"
           : loading || activity.terminal.status === "completed" ? undefined
           : activity.terminal.status === "stopped" ? "chat.work.stopped" : "chat.work.failed"
-          : call.failed ? "chat.work.failed" : undefined;
+          : call.ending === "error" ? "chat.work.failed" : call.ending === "stopped" ? "chat.work.stopped" : undefined;
         return <CallWorking key={call.callId} call={call} who={who} target={activity.target} state={state} loading={loading} />;
       })}
     </div>
@@ -35,7 +35,7 @@ export function CallWorking({ call, who, target, state, loading = false }: {
   const stateText = state ? t(state) : "";
   const progress = loading ? <span class="work-pending" role="status" aria-label={stateText || t("chat.work.runningCommand")}><Spinner size={16} /></span> : null;
   return (
-    <div class={`work-call machine-rail${shell ? " work-shell" : code ? " work-code" : " work-operation"}${call.failed ? " is-failed" : ""}`}>
+    <div class={`work-call machine-rail${shell ? " work-shell" : code ? " work-code" : " work-operation"}${state === "chat.work.failed" ? " is-failed" : ""}`}>
       {shell ? (
         <pre class="work-command">{commandLine(who, target === UNKNOWN_TARGET ? t("chat.place.unknown") : target, call.summary)}</pre>
       ) : (

@@ -1,5 +1,5 @@
 import * as deployedAdapter from "../src/managed";
-import { env, SELF } from "cloudflare:test";
+import { createExecutionContext, env, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 
@@ -15,6 +15,7 @@ type TelegramApiMessage = {
     reply_parameters?: { message_id: number };
     reply_markup?: {
       inline_keyboard?: Array<Array<{ text?: string; callback_data?: string; url?: string }>>;
+      keyboard?: Array<Array<{ text: string }>>;
     };
   };
   result: { ok?: boolean; message_id?: number } | Array<{ message_id: number }> | boolean;
@@ -38,7 +39,7 @@ type GatewayCall = {
     decision?: string;
     remember?: boolean;
   };
-  input?: { accountId?: string; actorId?: string; expectedGeneration?: string };
+  input?: { accountId?: string; actorId?: string; expectedGeneration?: string; code?: string };
   bodyBytes?: number[];
 };
 type ManagedOperationResult = { ok?: boolean };
@@ -197,19 +198,41 @@ function typedStub<T, V>(value: V): T {
   return value as T;
 }
 
+/** Makes a link as the Kernel does for uid 1000; tapping Start in its chat sends `/start CODE`. */
+async function mintLink(installationId = "installation_test", canonicalOrigin = "https://test.gsv.space"): Promise<{ code: string; url: string }> {
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31]).join("");
+  const channel = new deployedAdapter.ManagedTelegramChannel(createExecutionContext(),
+    typedStub<ConstructorParameters<typeof deployedAdapter.ManagedTelegramChannel>[1]>(env));
+  const { url } = await channel.adapterPairingLink({ installationId }, {
+    code, localUid: 1000, canonicalOrigin, expiresAt: Date.now() + 10 * 60_000,
+  });
+  return { code, url };
+}
+
+/** Waits for the adapter to hand a link's code to the Kernel that minted it. */
+async function redeemed(code: string, installationId = "installation_test"): Promise<void> {
+  await vi.waitFor(async () => {
+    expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+      call: "redeemAdapterPairing", installation: { installationId }, input: { code },
+    }));
+  });
+}
+
 describe("managed Telegram clean-instance flow", () => {
   it("pairs a bot-first identity and routes later messages to the selected installation", async () => {
     expect((await SELF.fetch(update(1, 1, "hello"))).status).toBe(200);
-    const pairingMessages = await vi.waitFor(async () => {
+    await vi.waitFor(async () => {
       const messages = (await telegramMessages()).filter((message) => message.body.text);
-      expect(messages).toHaveLength(2);
-      return messages;
+      expect(messages.map((message) => message.body.text)).toEqual([
+        "Hi! To talk to Ship here, click on this link:\nhttps://signup.gsv.test/?utm_source=telegram\n\nAlready have a Ship? Ask it how to connect.",
+      ]);
     }, { timeout: 3_000 });
-    expect(pairingMessages[0]?.body.text).toBe("In GSV, open Settings → Messengers → Telegram and paste the code below.\nExpires in 10 minutes.");
-    const code = pairingMessages[1]?.body.text;
-    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
-    expect(pairingMessages[1]!.sentAt - pairingMessages[0]!.sentAt).toBeGreaterThanOrEqual(1_000);
-    const normalizedCode = code!.replaceAll("-", "");
+
+    const link = await mintLink();
+    expect(link.url).toBe(`https://t.me/official_gsv_bot?start=${link.code}`);
+    expect((await SELF.fetch(update(101, 101, `/start ${link.code}`))).status).toBe(200);
+    await redeemed(link.code);
+    const normalizedCode = link.code;
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const namespace = env.MANAGED_TELEGRAM_PAIRING as DurableObjectNamespace;
     const pairing = typedStub<ManagedPairingStub>(namespace.get(
@@ -426,17 +449,17 @@ describe("managed Telegram clean-instance flow", () => {
         }),
       }));
     });
+    // Opening the bot again on a linked account says which Ship it talks to.
     const messagesBeforePairCommand = (await telegramMessages()).length;
     expect((await SELF.fetch(update(6, 5, "/start"))).status).toBe(200);
     await vi.waitFor(async () => {
       const messages = (await telegramMessages()).slice(messagesBeforePairCommand).filter((message) => message.body.text);
-      expect(messages).toHaveLength(2);
-      expect(messages.at(-1)?.body.text).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+      expect(messages.map((message) => message.body.text)).toEqual([expect.stringContaining("talks to the Ship at test.gsv.space")]);
     }, { timeout: 3_000 });
-    const relinkText = (await telegramMessages()).at(-1)?.body.text ?? "";
-    const relinkCode = relinkText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
-    expect(relinkCode).toBeTruthy();
-    const normalizedRelinkCode = relinkCode!.replaceAll("-", "");
+    const relink = await mintLink();
+    expect((await SELF.fetch(update(106, 106, `/start ${relink.code}`))).status).toBe(200);
+    await redeemed(relink.code);
+    const normalizedRelinkCode = relink.code;
     const relinking = typedStub<ManagedPairingStub>(namespace.get(
       namespace.idFromName(`pair:${normalizedRelinkCode}`),
     ));
@@ -635,6 +658,46 @@ describe("managed Telegram clean-instance flow", () => {
     // The delivery reports the first message's id, sent before the rate limit.
     expect((await telegramMessages()).find((message) => message.body.text === partA))
       .toMatchObject({ result: { message_id: Number(retry.messageId) } });
+  });
+
+  it("asks before moving the linked account to another Ship, with the answers as a reply keyboard", async () => {
+    const before = (await telegramMessages()).length;
+    const other = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(update(201, 201, `/start ${other.code}`))).status).toBe(200);
+    const prompt = await vi.waitFor(async () => {
+      const prompt = (await telegramMessages()).slice(before).find((message) => message.body.reply_markup?.keyboard);
+      expect(prompt).toBeDefined();
+      return prompt!;
+    }, { timeout: 3_000 });
+    expect(prompt.body.text).toBe("This Telegram account talks to the Ship at test.gsv.space. Move it to other.gsv.space?");
+    expect(prompt.body.reply_markup?.keyboard).toEqual([[{ text: "Move it" }], [{ text: "Keep it" }]]);
+
+    expect((await SELF.fetch(update(202, 202, "Keep it"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await telegramMessages()).slice(before).map((message) => message.body.text))
+        .toContain("Kept. This Telegram account still talks to test.gsv.space.");
+    }, { timeout: 3_000 });
+    const calls = await gatewayCalls();
+    expect(calls.filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === other.code)).toEqual([]);
+    expect(calls.filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Keep it")).toEqual([]);
+  });
+
+  it("keeps the answer to move through a lost redemption, and moves on the retry", async () => {
+    const before = (await telegramMessages()).length;
+    const other = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(update(203, 203, `/start ${other.code}`))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await telegramMessages()).slice(before).some((message) => message.body.reply_markup?.keyboard)).toBe(true);
+    }, { timeout: 3_000 });
+    const redemptions = async () => (await gatewayCalls()).filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === other.code);
+
+    // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
+    const gateway = env.GATEWAY as Fetcher;
+    await gateway.fetch("https://gateway.test/fail-next-redeem");
+    expect((await SELF.fetch(update(204, 204, "Move it"))).status).toBe(200);
+    // The retried delivery still answers the question, so the other Ship gets the code again.
+    await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); }, { timeout: 3_000 });
+    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
   });
 });
 

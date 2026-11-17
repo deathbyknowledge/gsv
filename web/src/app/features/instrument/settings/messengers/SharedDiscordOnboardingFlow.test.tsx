@@ -21,6 +21,8 @@ it("opens server installation and requires explicit confirmation of the Discord 
       expect(adapter).toBe("discord");
       return { data: { adapter, accountId: "application:1000", configured: true, installUrl: "https://discord.com/oauth2/authorize?client_id=1000" }, isError: false, error: null };
     },
+    useCreateConsoleAdapterPairingLink: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useDisconnectConsoleAdapterPairing: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useInspectConsoleAdapterPairing: () => ({ mutateAsync: inspect, isPending: false }),
     useConfirmConsoleAdapterPairing: () => ({ mutateAsync: confirm, isPending: false }),
   };

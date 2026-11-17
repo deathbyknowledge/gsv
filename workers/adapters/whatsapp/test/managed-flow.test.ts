@@ -16,6 +16,7 @@ type GraphRecord = {
   phoneNumberId?: string;
   body: {
     to?: string;
+    recipient?: string;
     type?: string;
     text?: { body: string };
     audio?: { id?: string; link?: string };
@@ -51,13 +52,13 @@ type GatewayCall = {
   call?: string;
   args?: {
     routeGeneration?: string;
-    message?: { text?: string; media?: Array<{ type: string }> };
+    message?: { text?: string; media?: Array<{ type: string }>; actor?: { id?: string } };
     pid?: string;
     requestId?: string;
     decision?: string;
     remember?: boolean;
   };
-  input?: { accountId?: string; actorId?: string; expectedGeneration?: string };
+  input?: { accountId?: string; actorId?: string; expectedGeneration?: string; code?: string };
   bodyBytes?: number[];
 };
 type ManagedOperationResult = { ok?: boolean };
@@ -288,21 +289,46 @@ function typedStub<T, V>(value: V): T {
   return value as T;
 }
 
+/** Makes a link as the Kernel does for uid 1000: the platform holds its code until a sender sends it. */
+async function mintLink(installationId = "installation_test", canonicalOrigin = "https://test.gsv.space"): Promise<{ code: string; message: string }> {
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31]).join("");
+  const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+    typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+  const { url } = await channel.adapterPairingLink({ installationId }, {
+    code, localUid: 1000, canonicalOrigin, expiresAt: Date.now() + 10 * 60_000,
+  });
+  return { code, message: new URL(url).searchParams.get("text") ?? "" };
+}
+
+/** Waits for the adapter to hand a link's code to the Kernel that minted it. */
+async function redeemed(code: string, installationId = "installation_test"): Promise<void> {
+  await vi.waitFor(async () => {
+    expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+      call: "redeemAdapterPairing", installation: { installationId }, input: { code },
+    }));
+  });
+}
+
 describe("managed WhatsApp clean-instance flow", () => {
   it("pairs a number-first identity and routes later messages to the selected installation", async () => {
     expect((await SELF.fetch(await text("wamid.in.1", "hello"))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect(await sentMessages()).toHaveLength(2);
+      expect(await sentMessages()).toHaveLength(1);
     });
-    const pairingMessage = (await sentMessages())[0]!;
-    expect(pairingMessage.body.to).toBe(ACTOR);
-    expect(pairingMessage.body.context).toEqual({ message_id: "wamid.in.1" });
-    const pairingText = pairingMessage.body.text?.body ?? "";
-    expect(pairingText).toContain("Settings → Messengers → WhatsApp");
-    const code = (await sentMessages())[1]!.body.text?.body;
-    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
-    expect(code).toBeTruthy();
-    const normalizedCode = code!.replaceAll("-", "");
+    const hint = (await sentMessages())[0]!;
+    expect(hint.body.to).toBe(ACTOR);
+    expect(hint.body.context).toEqual({ message_id: "wamid.in.1" });
+    // A stranger can get a Ship from here; signup then knows WhatsApp sent them.
+    expect(hint.body.text?.body).toContain("click on this link:\nhttps://signup.gsv.test/?utm_source=whatsapp\n");
+    expect(hint.body.text?.body).toContain("Already have a Ship? Ask it how to connect.");
+    // A stranger hears how to connect once in a while, not after every message.
+    expect((await SELF.fetch(await text("wamid.in.1b", "anyone there?"))).status).toBe(200);
+
+    const link = await mintLink();
+    expect(link.message).toMatch(/^Connect my Ship [A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+    expect((await SELF.fetch(await text("wamid.in.1c", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const normalizedCode = link.code;
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
     const pairing = typedStub<ManagedPairingStub>(namespace.get(
@@ -342,6 +368,8 @@ describe("managed WhatsApp clean-instance flow", () => {
         body: expect.objectContaining({ text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
       }));
     });
+    expect((await sentMessages()).filter((record) => record.body.context?.message_id !== "wamid.in.1").map((record) => record.body.text?.body))
+      .toEqual(["Connected to https://test.gsv.space"]);
 
     expect((await SELF.fetch(await text("wamid.in.2", "what is new?"))).status).toBe(200);
     await vi.waitFor(async () => {
@@ -505,17 +533,18 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
     });
 
+    // Asked on a linked account, the platform says which Ship it talks to.
     const messagesBeforePairCommand = (await sentMessages()).length;
-    expect((await SELF.fetch(await text("wamid.in.7", "/link"))).status).toBe(200);
+    expect((await SELF.fetch(await text("wamid.in.7a", "/link"))).status).toBe(200);
     await vi.waitFor(async () => {
       const messages = await sentMessages();
       expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
-      expect(messages.at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+      expect(messages.at(-1)?.body.text?.body).toContain("talks to the Ship at test.gsv.space");
     });
-    const relinkText = (await sentMessages()).at(-1)?.body.text?.body ?? "";
-    const relinkCode = relinkText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
-    expect(relinkCode).toBeTruthy();
-    const normalizedRelinkCode = relinkCode!.replaceAll("-", "");
+    const relink = await mintLink();
+    expect((await SELF.fetch(await text("wamid.in.7", relink.message))).status).toBe(200);
+    await redeemed(relink.code);
+    const normalizedRelinkCode = relink.code;
     const relinking = typedStub<ManagedPairingStub>(namespace.get(
       namespace.idFromName(`pair:${normalizedRelinkCode}`),
     ));
@@ -762,7 +791,6 @@ describe("managed WhatsApp clean-instance flow", () => {
       name: "gsv_message", language: { code: "en" },
       components: [
         { type: "body", parameters: [{ type: "text", text: "outside window marker quick note" }] },
-        { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: "gsvt:show" }] },
       ],
     });
     expect((await SELF.fetch(await text("wamid.in.8", "back again"))).status).toBe(200);
@@ -773,7 +801,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(await heldKeys(stub)).toEqual([]);
   });
 
-  it("delivers each closed-window message or preview and forwards button replies once to Ship", async () => {
+  it("delivers each closed-window message or preview and forwards an earlier template's button tap once to Ship", async () => {
     const { stub, peer, route } = await linkedPeer("closed");
     const templatesBefore = (await templateMessages()).length;
     const surface = { kind: "dm" as const, id: ACTOR };
@@ -851,18 +879,13 @@ describe("managed WhatsApp clean-instance flow", () => {
       expect((await rejectedSends()).some((record) => record.status === 429 && record.body.context?.message_id === "wamid.in.13")).toBe(true);
     });
 
-    // A pair command is attempted ahead of the queue, so the pending reply does not hold it up.
-    expect((await SELF.fetch(await text("wamid.in.14", "/link"))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
-    });
-    const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
-    expect(code).toBeTruthy();
-    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
-    const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
-    const pairing = typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code!.replaceAll("-", "")}`)));
+    // A link is attempted ahead of the queue, so the pending reply does not hold it up.
+    const link = await mintLink(previous.installationId);
+    expect((await SELF.fetch(await text("wamid.in.14", link.message))).status).toBe(200);
+    await redeemed(link.code, previous.installationId);
+    const pairing = pairingFor(link.code);
     const operation = {
-      code: code!.replaceAll("-", ""),
+      code: link.code,
       installationId: previous.installationId,
       localUid: 1000,
       operationId: "operation_relink_2",
@@ -1331,14 +1354,10 @@ describe("managed WhatsApp clean-instance flow", () => {
     const reactions = async () => (await sentMessages())
       .filter((record) => record.body.type === "reaction")
       .map((record) => record.body.reaction);
-    expect((await SELF.fetch(await text("wamid.in.successor.1", "/link"))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
-    });
-    const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").replaceAll("-", "");
-    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
-    const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
-    const pairing = typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code}`)));
+    const { code, message } = await mintLink(previous.installationId);
+    expect((await SELF.fetch(await text("wamid.in.successor.1", message))).status).toBe(200);
+    await redeemed(code, previous.installationId);
+    const pairing = pairingFor(code);
     const operation = {
       code, installationId: previous.installationId, localUid: 1000,
       operationId: "operation_relink_successor", canonicalOrigin: "https://test.gsv.space",
@@ -1359,9 +1378,343 @@ describe("managed WhatsApp clean-instance flow", () => {
 
 });
 
+type SenderIdentity = { name: string; phoneNumber?: string; userId?: string; username?: string };
+type SenderContact = { profile: { name: string; username?: string }; wa_id?: string; user_id?: string };
+type SenderContent =
+  | { type: "text"; text: { body: string } }
+  | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } };
+type SenderMessage = SenderContent & { id: string; timestamp: string; from?: string; from_user_id?: string };
+
+/** A text from a sender Meta identifies by number, by business-scoped user ID, or both. */
+async function textFrom(sender: SenderIdentity, messageId: string, body: string): Promise<Request> {
+  return await messageFrom(sender, messageId, { type: "text", text: { body } });
+}
+
+/** A tap on a reply button of `prompt`, the platform's message to the sender. */
+async function tapFrom(sender: SenderIdentity, messageId: string, prompt: GraphRecord, title: string): Promise<Request> {
+  const button = prompt.body.interactive!.action.buttons.find((candidate) => candidate.reply.title === title)!;
+  return await messageFrom(sender, messageId, {
+    type: "interactive",
+    context: { from: "34600000000", id: prompt.result.id! },
+    interactive: { type: "button_reply", button_reply: { id: button.reply.id, title } },
+  });
+}
+
+async function messageFrom(sender: SenderIdentity, messageId: string, content: SenderContent): Promise<Request> {
+  const contact: SenderContact = { profile: { name: sender.name } };
+  const message: SenderMessage = { id: messageId, timestamp: String(Math.floor(Date.now() / 1000)), ...content };
+  if (sender.username) contact.profile.username = sender.username;
+  if (sender.phoneNumber) {
+    contact.wa_id = sender.phoneNumber;
+    message.from = sender.phoneNumber;
+  }
+  if (sender.userId) {
+    contact.user_id = sender.userId;
+    message.from_user_id = sender.userId;
+  }
+  const payload = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [{
+      id: "9876543210",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: { display_phone_number: "34600000000", phone_number_id: PHONE_NUMBER_ID },
+          contacts: [contact],
+          messages: [message],
+        },
+      }],
+    }],
+  });
+  return new Request("https://whatsapp.test/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-Hub-Signature-256": await sign(payload) },
+    body: payload,
+  });
+}
+
+function pairingFor(code: string): ManagedPairingStub {
+  // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+  const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
+  return typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code}`)));
+}
+
+/** Connects a redeemed link's sender, as the Kernel does, and returns the route generation. */
+async function confirmPairing(code: string, operationId: string, installationId = "installation_test"): Promise<string> {
+  const pairing = pairingFor(code);
+  const canonicalOrigin = "https://test.gsv.space";
+  const prepared = await pairing.prepare({ code, installationId, localUid: 1000, operationId, canonicalOrigin });
+  await pairing.activate({ code, operationId, route: prepared.route, canonicalOrigin });
+  await pairing.finalize({ code, operationId, route: prepared.route, canonicalOrigin });
+  return prepared.route.generation;
+}
+
+describe("WhatsApp usernames", () => {
+  it("pairs a username sender whose number Meta withholds and replies to their user ID", async () => {
+    const userId = "US.13491208655302741918";
+    const sheena: SenderIdentity = { name: "Sheena Nelson", userId, username: "realsheenanelson" };
+    const { code, message } = await mintLink();
+    expect((await SELF.fetch(await textFrom(sheena, "wamid.username.1", message))).status).toBe(200);
+    await redeemed(code);
+    await expect(pairingFor(code).inspect()).resolves.toMatchObject({
+      actorId: userId,
+      surfaceId: userId,
+      actorName: "Sheena Nelson",
+      actorHandle: "@realsheenanelson",
+      linked: false,
+    });
+    const generation = await confirmPairing(code, "operation_username");
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ recipient: userId, text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
+      }));
+    });
+
+    expect((await SELF.fetch(await textFrom(sheena, "wamid.username.2", "what is new?"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "what is new?", actor: expect.objectContaining({ id: userId }) }),
+        }),
+      }));
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ recipient: userId, text: expect.objectContaining({ body: "Personal received what is new?" }) }),
+      }));
+    });
+    // A user ID is never sent as a phone number.
+    expect((await sentMessages()).filter((record) => record.body.to === userId)).toEqual([]);
+  });
+
+  it("keeps a number-paired person on their route once Meta adds a user ID and later withholds the number", async () => {
+    const phoneNumber = "34622222289";
+    const userId = "ES.55555555555555555555";
+    const mia: SenderIdentity = { name: "Mia Number", phoneNumber };
+    const link = await mintLink();
+    expect((await SELF.fetch(await textFrom(mia, "wamid.legacy.1", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const generation = await confirmPairing(link.code, "operation_legacy");
+
+    expect((await SELF.fetch(await textFrom({ ...mia, userId }, "wamid.legacy.2", "still me"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "still me", actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+    });
+
+    const hidden: SenderIdentity = { name: "Mia Number", userId, username: "mia" };
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.legacy.3", "number hidden"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "number hidden", actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ to: phoneNumber, text: expect.objectContaining({ body: "Personal received number hidden" }) }),
+      }));
+    });
+    // Nothing went to the user ID as if it were a stranger asking to pair.
+    expect((await sentMessages()).filter((record) => record.body.recipient === userId)).toEqual([]);
+  });
+
+  it("moves a number-paired person back onto their route once Meta ties a user ID that came alone to the number", async () => {
+    const phoneNumber = "34677777789";
+    const userId = "ES.77777777777777777777";
+    const ana: SenderIdentity = { name: "Ana Quiet", phoneNumber };
+    const link = await mintLink();
+    expect((await SELF.fetch(await textFrom(ana, "wamid.quiet.1", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const generation = await confirmPairing(link.code, "operation_quiet");
+
+    // After a quiet month Meta sends only the user ID, so nothing ties it to the number yet.
+    const hidden: SenderIdentity = { name: "Ana Quiet", userId, username: "ana" };
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.quiet.2", "anyone there?"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).some((record) => record.body.recipient === userId)).toBe(true);
+    });
+
+    const reachedShip = async (text: string) => await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text, actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+    });
+    expect((await SELF.fetch(await textFrom({ ...ana, userId }, "wamid.quiet.3", "it is me"))).status).toBe(200);
+    await reachedShip("it is me");
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.quiet.4", "number hidden again"))).status).toBe(200);
+    await reachedShip("number hidden again");
+  });
+
+  it("keeps a person connected under their user ID there when Meta later shares a number another peer knows", async () => {
+    const phoneNumber = "34688888889";
+    const userId = "ES.88888888888888888888";
+    // The number messaged once without connecting, then the person connected under their user ID.
+    expect((await SELF.fetch(await textFrom({ name: "Teo Two", phoneNumber }, "wamid.two.1", "hello"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).some((record) => record.body.to === phoneNumber)).toBe(true);
+    });
+    const teo: SenderIdentity = { name: "Teo Two", userId, username: "teo" };
+    const link = await mintLink();
+    expect((await SELF.fetch(await textFrom(teo, "wamid.two.2", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const generation = await confirmPairing(link.code, "operation_two");
+
+    expect((await SELF.fetch(await textFrom({ ...teo, phoneNumber }, "wamid.two.3", "both ids"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "both ids", actor: expect.objectContaining({ id: userId }) }),
+        }),
+      }));
+    });
+  });
+});
+
 it("does not export the retired linked-device entrypoints", async () => {
   expect(deployedAdapter).not.toHaveProperty("WhatsAppChannel");
   expect(deployedAdapter).not.toHaveProperty("WhatsAppAccount");
   expect(deployedAdapter).not.toHaveProperty("WhatsAppChannelEntrypoint");
   expect((await SELF.fetch("https://fixture/webhook/default", { method: "POST", body: "{}" })).status).toBe(404);
+});
+
+describe("WhatsApp links", () => {
+  it("connects the sender of a link while the Kernel reads its claim back during redemption", async () => {
+    const lena: SenderIdentity = { name: "Lena Link", phoneNumber: "34633333389" };
+    const { code, message } = await mintLink();
+    // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
+    const gateway = env.GATEWAY as Fetcher;
+    await gateway.fetch("https://gateway.test/hold-redeem");
+    let generation = "";
+    try {
+      const delivered = SELF.fetch(await textFrom(lena, "wamid.link.1", message));
+      await redeemed(code);
+      // The adapter still waits on the Kernel, which connects the sender through the claim.
+      await expect(pairingFor(code).inspect()).resolves.toMatchObject({ actorId: "34633333389", actorName: "Lena Link", linked: false });
+      generation = await confirmPairing(code, "operation_link_held");
+      await gateway.fetch("https://gateway.test/release-redeem");
+      expect((await delivered).status).toBe(200);
+    } finally {
+      await gateway.fetch("https://gateway.test/release-redeem");
+    }
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).filter((record) => record.body.to === "34633333389").map((record) => record.body.text?.body))
+        .toEqual(["Connected to https://test.gsv.space"]);
+    });
+    // The code connected one sender; sending it again from another account finds no link.
+    const mia: SenderIdentity = { name: "Mia Number", phoneNumber: "34622222289" };
+    expect((await SELF.fetch(await textFrom(mia, "wamid.link.reuse", message))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.link.reuse").map((record) => record.body.text?.body))
+        .toEqual([expect.stringContaining("expired or was already used")]);
+    });
+
+    expect((await SELF.fetch(await textFrom(lena, "wamid.link.2", "hello Ship"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({ routeGeneration: generation, message: expect.objectContaining({ text: "hello Ship" }) }),
+      }));
+    });
+  });
+
+  it("asks before moving a linked sender to another Ship and keeps them when told to", async () => {
+    const milo: SenderIdentity = { name: "Milo Move", phoneNumber: "34644444489" };
+    const first = await mintLink();
+    expect((await SELF.fetch(await textFrom(milo, "wamid.move.1", first.message))).status).toBe(200);
+    await redeemed(first.code);
+    const generation = await confirmPairing(first.code, "operation_move_first");
+    const prompts = async () => (await sentMessages()).filter((record) => record.body.to === "34644444489" && record.body.type === "interactive");
+
+    const kept = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(await textFrom(milo, "wamid.move.2", kept.message))).status).toBe(200);
+    await vi.waitFor(async () => { expect(await prompts()).toHaveLength(1); });
+    const keepPrompt = (await prompts())[0]!;
+    expect(keepPrompt.body.interactive!.body.text).toBe("This WhatsApp account talks to the Ship at test.gsv.space. Move it to other.gsv.space?");
+    expect(keepPrompt.body.interactive!.action.buttons.map((button) => button.reply.title)).toEqual(["Move it", "Keep it"]);
+    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.3", keepPrompt, "Keep it"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.move.3").map((record) => record.body.text?.body))
+        .toEqual(["Kept. This WhatsApp account still talks to test.gsv.space."]);
+    });
+
+    const moved = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(await textFrom(milo, "wamid.move.4", moved.message))).status).toBe(200);
+    await vi.waitFor(async () => { expect(await prompts()).toHaveLength(2); });
+    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.5", (await prompts())[1]!, "Move it"))).status).toBe(200);
+    await redeemed(moved.code, "installation_other");
+
+    const calls = await gatewayCalls();
+    expect(calls.filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === kept.code)).toEqual([]);
+    // The answers were the platform's question, not messages for the Ship.
+    expect(calls.filter((call) => call.call === "adapter.inbound" && call.args?.routeGeneration === generation
+      && ["Move it", "Keep it"].includes(call.args?.message?.text ?? ""))).toEqual([]);
+  });
+
+  it("keeps the answer to move through a lost redemption, and moves on the retry though the move replaced the route", async () => {
+    const nora: SenderIdentity = { name: "Nora Retry", phoneNumber: "34655555589" };
+    const first = await mintLink();
+    expect((await SELF.fetch(await textFrom(nora, "wamid.retry.1", first.message))).status).toBe(200);
+    await redeemed(first.code);
+    await confirmPairing(first.code, "operation_retry_first");
+    const prompts = async () => (await sentMessages()).filter((record) => record.body.to === "34655555589" && record.body.type === "interactive");
+    const moved = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(await textFrom(nora, "wamid.retry.2", moved.message))).status).toBe(200);
+    await vi.waitFor(async () => { expect(await prompts()).toHaveLength(1); });
+    const redemptions = async () => (await gatewayCalls()).filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === moved.code);
+
+    // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
+    const gateway = env.GATEWAY as Fetcher;
+    await gateway.fetch("https://gateway.test/hold-redeem");
+    await gateway.fetch("https://gateway.test/fail-next-redeem");
+    try {
+      const answered = SELF.fetch(await tapFrom(nora, "wamid.retry.3", (await prompts())[0]!, "Move it"));
+      await redeemed(moved.code, "installation_other");
+      // The other Ship moves the sender's route through the claim, then its answer is lost.
+      const pairing = pairingFor(moved.code);
+      const canonicalOrigin = "https://other.gsv.space";
+      const operation = { code: moved.code, operationId: "operation_retry_move", canonicalOrigin };
+      const prepared = await pairing.prepare({ ...operation, installationId: "installation_other", localUid: 1000 });
+      await pairing.activate({ ...operation, route: prepared.route });
+      // A second tap while the first connects changes nothing.
+      expect((await SELF.fetch(await tapFrom(nora, "wamid.retry.4", (await prompts())[0]!, "Move it"))).status).toBe(200);
+      await gateway.fetch("https://gateway.test/release-redeem");
+      expect((await answered).status).toBe(200);
+    } finally {
+      await gateway.fetch("https://gateway.test/release-redeem");
+    }
+    // The retried delivery still answers the question, so the other Ship gets the code again.
+    await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); });
+    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
+  });
+
+  it("answers a code that is no live link", async () => {
+    const stranger: SenderIdentity = { name: "Mia Number", phoneNumber: "34622222289" };
+    expect((await SELF.fetch(await textFrom(stranger, "wamid.stale.1", "Connect my Ship ABCD-EFGH-JKLM"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.stale.1").map((record) => record.body.text?.body))
+        .toEqual(["This link expired or was already used. Make a new one on your Ship in Settings → Messengers → WhatsApp."]);
+    });
+    expect((await gatewayCalls()).some((call) => call.call === "redeemAdapterPairing" && call.input?.code === "ABCDEFGHJKLM")).toBe(false);
+
+    // In other words, a code-shaped string is the linked person's business with their Ship.
+    expect((await SELF.fetch(await textFrom(stranger, "wamid.stale.2", "my licence key is ABCD-EFGH-JKLM, is it valid?"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.stale.2").map((record) => record.body.text?.body))
+        .toEqual(["Personal received my licence key is ABCD-EFGH-JKLM, is it valid?"]);
+    });
+  });
 });

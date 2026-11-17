@@ -42,8 +42,8 @@ export async function acceptMessageRequest(call: ShipCall, ctx: KernelContext): 
       ownerUid: current.ownerUid, remoteDid: current.summary.peerDid, remoteName: input.name,
       ...(current.summary.peerHandle ? { remoteHandle: current.summary.peerHandle } : undefined),
       generation, threadId: current.threadId,
-      preferredContactId: current.contactId, preferredConversationId: current.summary.conversationId, saved: false,
-      shipHandlesMessages: current.shipHandlesMessages,
+      preferredContactId: current.contactId, preferredConversationId: current.summary.conversationId,
+      saved: current.saveContact, shipHandlesMessages: current.shipHandlesMessages,
     }, ctx);
     if (contact.id !== current.contactId || contact.conversationId !== current.summary.conversationId) {
       throw new PublicFederationError(409, "Message request conversation changed");

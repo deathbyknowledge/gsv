@@ -201,6 +201,7 @@ const labels = {
   "adapter.status": "fleet.ledger.adapterStatus",
   "adapter.list": "fleet.ledger.adapterList",
   "adapter.pair.info": "fleet.ledger.adapterPairInfo",
+  "adapter.pair.create": "fleet.ledger.adapterPairCreate",
   "adapter.pair.inspect": "fleet.ledger.adapterPairInspect",
   "adapter.pair.confirm": "fleet.ledger.adapterPairConfirm",
   "adapter.pair.disconnect": "fleet.ledger.adapterPairDisconnect",

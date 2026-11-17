@@ -180,6 +180,9 @@ function normalizeIdentityLink(value: ConsoleWireValue): ConsoleIdentityLink | n
     return null;
   }
 
+  const actorName = nonEmptyString(record.actorName);
+  const actorHandle = nonEmptyString(record.actorHandle);
+  const linkedAt = numberOrNull(record.linkedAt);
   return {
     adapter,
     accountId,
@@ -187,6 +190,9 @@ function normalizeIdentityLink(value: ConsoleWireValue): ConsoleIdentityLink | n
     uid: numberOrNull(record.uid) ?? 0,
     createdAt: numberOrNull(record.createdAt),
     linkedByUid: numberOrNull(record.linkedByUid),
+    ...(actorName ? { actorName } : undefined),
+    ...(actorHandle ? { actorHandle } : undefined),
+    ...(linkedAt !== null ? { linkedAt } : undefined),
   };
 }
 

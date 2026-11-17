@@ -321,6 +321,27 @@ describe("Kernel service peer identity", () => {
   });
 });
 
+describe("Kernel messenger link redemption", () => {
+  it("admits a code only for an active space and a well-formed adapter identity", async () => {
+    const kernel = bareKernel();
+    const get = vi.fn(() => null);
+    kernel.buildKernelContext = vi.fn(() => ({ installationId: TEST_INSTALLATION_ID, adapters: { pairingLinks: { get } } }));
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    await expect(kernel.redeemAdapterPairing("WhatsApp", { code: "ABCD-EFGH-JKLM" })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+    expect(get).toHaveBeenCalledWith("whatsapp", expect.any(String));
+    await expect(kernel.redeemAdapterPairing("not an adapter", { code: "ABCD-EFGH-JKLM" })).rejects.toThrow("identity is invalid");
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "A".repeat(65) })).rejects.toThrow();
+
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: false, code: 403, message: "This space is paused" }));
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "ABCD-EFGH-JKLM" }))
+      .resolves.toEqual({ paired: false, reason: "refused", message: "This space is paused" });
+    // A gate that cannot answer now leaves the code for the adapter's retry.
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: false, code: 503, message: "Space status is unavailable" }));
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "ABCD-EFGH-JKLM" })).rejects.toThrow("Space status is unavailable");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Kernel managed adapter unlink", () => {
   it("cleans the exact revoked generation after a peer moves without deleting a successor", async () => {
     await runWithRealKernelSql(async (sql) => {
@@ -1684,6 +1705,36 @@ describe("Kernel canonical message commits", () => {
       expect(properties).toMatchObject({ delivery: "client", platform: "phone", hasMedia: false });
       expect(properties.replyMs).toBe(expected);
     }
+  });
+
+  it("reports how many choices a Ship message offered, never their words", async () => {
+    const kernel = buildCommitKernel(null);
+    getConversationByIdMock.mockReset();
+    const stub = conversationStub();
+    // The Conversation returns the stored message, which carries the choices it accepted.
+    getConversationByIdMock.mockReturnValue({
+      ...stub,
+      append: vi.fn(async (input: any) => {
+        const appended = await stub.append(input);
+        return input.choices ? { ...appended, message: { ...appended.message, choices: input.choices } } : appended;
+      }),
+    });
+    const telemetry = captureTelemetry(kernel);
+    try {
+      await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "Hi, I'm Ship." });
+      await kernel.processOutput.commitProcessMessage("proc-1", {
+        runId: "run-1", actionId: "send-2", conversationId: conversation.id, text: "Where do we start?",
+        choices: ["Plan my weekend", "Find the best deal", "Don't let me forget"],
+      });
+    } finally {
+      telemetry.restore();
+    }
+    // SAFETY: the filter keeps only records whose event name matched, so the event is present.
+    const committed = telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed").map((record: any) => record.event.properties);
+    expect(committed).toHaveLength(2);
+    expect(committed[0]).not.toHaveProperty("choicesOffered");
+    expect(committed[1]).toMatchObject({ delivery: "background", choicesOffered: 3 });
+    expect(JSON.stringify(telemetry.emitted)).not.toContain("weekend");
   });
 
   it("reports the welcome once, from first sign-in to the first Ship message", async () => {

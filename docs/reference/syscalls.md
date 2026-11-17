@@ -934,7 +934,11 @@ type ConversationMessage = {
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
-  /** Replies a Process message offers; tapping one sends its text as the person's next message. */
+  /**
+   * Replies a Process message offers; tapping one sends its text as the person's next message.
+   * `messageChoiceTaken` in the protocol package tells which one a reply takes, counted from 1:
+   * the choice's own words, or its number where a messenger wrote the choices as a list.
+   */
   choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -1265,7 +1269,10 @@ the profile as Bluesky shows it, an `app.bsky.actor.profile` record (record key 
 deletes both. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
-owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
+owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Its optional
+`saveContact` keeps the person in the sender's contacts once the request is accepted; without it they stay unsaved. Like
+`shipHandlesMessages`, it is the sender's own choice, retained with the request and never sent to the other Ship; a replay
+must repeat both. The person who accepts a request decides separately and starts unsaved. Incoming requests, publishing a
 profile and every decision stay with the signed-in human; a process reading or listing an incoming
 request is rejected.
 
@@ -1311,6 +1318,7 @@ type ProfileAndApproachSyscalls = {
       text: string;
       idempotencyKey: string;
       shipHandlesMessages?: boolean;
+      saveContact?: boolean;
     };
     result: { approach: ApproachSummary };
   };
@@ -2220,7 +2228,7 @@ Runtime behavior:
 | `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. An invitation is paired only while the machine credential it issued is live; forgetting the machine makes it cancelled. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
-| `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
+| `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. A link made through a shared messenger also carries the name and handle that messenger reported and when it connected. |
 
 `sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -2410,7 +2418,7 @@ type SystemSyscalls = {
 
   "sys.link.list": {
     args: { uid?: number };
-    result: { links: Array<{ adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }> };
+    result: { links: Array<{ adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number; actorName?: string; actorHandle?: string; linkedAt?: number }> };
   };
 
   "account.create": {
@@ -2644,9 +2652,10 @@ Runtime behavior:
 | `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and linking authority (`canLink`). Shared pairing requires the advertised capability, configured application, and an active signed-in human or an authorized process owned by one. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions for obtaining a code, and the calling codes the provider keeps the account from messaging. |
-| `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
-| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions, and the calling codes the provider keeps the account from messaging. `pairingLinks: true` means the messenger connects from a link made with `adapter.pair.create`; `setupUrl` is the Settings page where the owner makes one, which a process sends instead of collecting a code. |
+| `adapter.pair.create` | `handleAdapterPairCreate` | Direct signed-in human only, for an adapter that advertises `pairingLinks`. Mints a single-use 12-character code, keeps only its hash with the owner and credential epoch for ten minutes, and asks the adapter to hold the code and return the link that sends it: a prefilled WhatsApp message, or a Telegram Start link. Returns the link and the dashed code for typing by hand. A sixth unused code retires the owner's oldest for that messenger, connecting one retires the rest, and a credential change cancels them all. When the code arrives, the adapter redeems it through its Gateway binding; the Kernel takes the owner from its own record of the code and runs the same confirmation as `adapter.pair.confirm`. |
+| `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. Refused for an adapter that advertises `pairingLinks`. |
+| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. Refused for an adapter that advertises `pairingLinks`. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
@@ -2688,7 +2697,12 @@ type AdapterSyscalls = {
 
   "adapter.pair.info": {
     args: { adapter: string };
-    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string; unreachableCallingCodes?: string[] };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string; unreachableCallingCodes?: string[]; pairingLinks?: boolean; setupUrl?: string };
+  };
+
+  "adapter.pair.create": {
+    args: { adapter: string };
+    result: { adapter: string; code: string; url: string; createdAt: number; expiresAt: number };
   };
 
   "adapter.pair.inspect": {

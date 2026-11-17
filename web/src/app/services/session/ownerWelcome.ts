@@ -10,7 +10,31 @@ export type WelcomeState = {
   operationId: string | null;
   handle: string | null;
   contactInvite?: string | null;
+  /** The slugs the signup link carried: the website's placement and example, and the campaign tags; reported when the Ship is reserved. */
+  attribution?: SignupAttribution | null;
 };
+export type SignupAttribution = { placement?: string; example?: string; utmSource?: string; utmCampaign?: string };
+const ATTRIBUTION_SLUG = /^[a-z0-9-]{1,32}$/;
+/** The parameters a signup link may carry, and the field each one reports as. */
+export const SIGNUP_LINK_SLUGS = [
+  { key: "placement", name: "from", part: "fragment" }, { key: "example", name: "example", part: "fragment" },
+  { key: "utmSource", name: "utm_source", part: "query" }, { key: "utmCampaign", name: "utm_campaign", part: "query" },
+] as const satisfies ReadonlyArray<{ key: keyof SignupAttribution; name: string; part: "fragment" | "query" }>;
+
+/**
+ * Read the website's `from` and `example` from a signup URL's fragment and the campaign's
+ * `utm_source` and `utm_campaign` from its query; anything outside the slug shape is dropped,
+ * and a tag is lowercased first so an ad's own casing does not lose it.
+ */
+export function signupAttributionFromLink(url: URL): SignupAttribution | null {
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const attribution: SignupAttribution = {};
+  for (const slug of SIGNUP_LINK_SLUGS) {
+    const value = (slug.part === "fragment" ? fragment : url.searchParams).get(slug.name)?.trim().toLowerCase();
+    if (value && ATTRIBUTION_SLUG.test(value)) attribution[slug.key] = value;
+  }
+  return Object.keys(attribution).length ? attribution : null;
+}
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
@@ -19,7 +43,7 @@ type OwnerFetch = (url: string, init: {
 export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-26"; locale: "en" | "es" | "pt-BR" };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { operationId: string; handle: string; productEmails?: ProductEmailChoice } | Record<string, never>;
+  | { operationId: string; handle: string; attribution?: SignupAttribution; productEmails?: ProductEmailChoice } | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
 const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
@@ -95,7 +119,9 @@ export class OwnerWelcome {
 
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID(), productEmails?: ProductEmailChoice): Promise<PreparedSpace> {
     await this.save({ flow: "create", operationId, handle });
-    const prepared = await this.request("/spaces", preparationSchema, { operationId, handle, productEmails });
+    const attribution = this.state.attribution ?? undefined;
+    const prepared = await this.request("/spaces", preparationSchema,
+      attribution ? { operationId, handle, attribution, productEmails } : { operationId, handle, productEmails });
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;
   }

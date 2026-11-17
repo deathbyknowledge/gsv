@@ -21,6 +21,7 @@ import { Zen } from "./Zen";
 import { BrowserRequests } from "../browser/BrowserControl";
 import { ChatPanels } from "./ChatPanels";
 import { ZenText } from "./ZenText";
+import { MomentActions } from "./MomentActions";
 import { ThinkingMark } from "./ThinkingMark";
 import { WakingUp } from "./WakingUp";
 import { ApprovalCard } from "../shared/ApprovalCard";
@@ -700,6 +701,89 @@ describe("Zen conversation entry", () => {
       expect(stopPropagation).toHaveBeenCalledOnce();
       await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: true }); });
       expect(offered()).toHaveLength(0);
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps a Ship message's replies on offer while Ship works on after sending it, then leaves that work to Work", async () => {
+    const runId = "welcome-run";
+    activeRunId = runId;
+    const envelope = (id: number) => ({ id, messageId: id, index: 0, generation: 1, runId, createdAt: id, source: "typed" as const });
+    const question = "Where do we start?";
+    messages = [{ ...message("process", question, 1), origin: { kind: "process", pid: shipPid, runId },
+      processId: shipPid, runId, choices: ["Plan my weekend", "Find the best deal"] }];
+    processRecords = [
+      { ...envelope(1), kind: "message", payload: { direction: "out", text: question, media: [], origin: {}, conversationMessageId: "process-1" } },
+      { ...envelope(2), kind: "call", payload: { callId: "wait", tool: "Shell", syscall: "shell.exec", target: "gsv",
+        args: { input: "r12y update 1 --json '{\"state\":\"waiting\"}'" }, runId } },
+      { ...envelope(3), kind: "result", payload: { callId: "wait", tool: "Shell", outcome: "completed", output: "updated", media: [], resources: [] } },
+    ];
+    const zen = await mountedZen();
+    const offered = () => zen.nodes().filter((node) => node.type === "button" && node.props.class === "zen-choice");
+    const working = () => zen.nodes().some((node) => String(node.props.class).split(" ").includes("is-work"));
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ZenText && node.props.text === question)).toBe(true));
+      // the welcome marks itself waiting after asking: while the run lasts, that step shows as its own textless work moment
+      await vi.waitFor(() => expect(working()).toBe(true));
+      // the work after the question is not writing, so the question keeps its replies
+      await vi.waitFor(() => expect(offered().map((node) => collectText(node))).toEqual(["Plan my weekend", "Find the best deal"]));
+      // the run ends without another word: the step was clean, so it is Work's to show, and the replies stay on offer
+      activeRunId = null;
+      await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId, status: "completed", queuedCount: 0 }); });
+      await vi.waitFor(() => expect(working()).toBe(false));
+      expect(offered().map((node) => collectText(node))).toEqual(["Plan my weekend", "Find the best deal"]);
+    } finally { await zen.unmount(); }
+  });
+
+  it("puts a reply's work behind the receipt control under it rather than a line above it", async () => {
+    const runId = "reply-run";
+    const envelope = (id: number) => ({ id, messageId: id, index: 0, generation: 1, runId, createdAt: id, source: "typed" as const });
+    const answer = "The studio drive is 95% full.";
+    messages = [{ ...message("process", answer, 1), origin: { kind: "process", pid: shipPid, runId }, processId: shipPid, runId }];
+    processRecords = [
+      { ...envelope(1), kind: "call", payload: { callId: "df", tool: "Shell", syscall: "shell.exec", target: "gsv", args: { input: "df -h" }, runId } },
+      { ...envelope(2), kind: "result", payload: { callId: "df", tool: "Shell", outcome: "completed", output: "95%", media: [], resources: [] } },
+      { ...envelope(3), kind: "message", payload: { direction: "out", text: answer, media: [], origin: {}, conversationMessageId: "process-1" } },
+    ];
+    const zen = await mountedZen();
+    const actions = () => zen.props(MomentActions);
+    const order = () => zen.nodes().flatMap((node) => node.type === ZenText ? ["text"] : node.type === MomentActions ? ["actions"]
+      : "receipt" in node.props && "line" in node.props ? [node.props.line ? "line" : "receipt"] : []);
+    try {
+      await vi.waitFor(() => expect(actions().receipt?.label).toBe("1 action on Ship’s home"));
+      expect(actions()).toMatchObject({ text: answer, receipt: { open: false } });
+      expect(order()).toEqual(["text", "actions", "receipt"]);
+      await act(() => actions().receipt!.onToggle());
+      await vi.waitFor(() => expect(actions().receipt?.open).toBe(true));
+      expect(order()).toEqual(["text", "actions", "receipt"]);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not call a command that exited non-zero a failure", async () => {
+    const runId = "grep-run";
+    const envelope = (id: number) => ({ id, messageId: id, index: 0, generation: 1, runId, createdAt: id, source: "typed" as const });
+    const answer = "Your notes don't mention the standup.";
+    const exited = { status: "failed", output: "", exitCode: 1, error: "Command exited with code 1", stdout: "", stderr: "" };
+    messages = [{ ...message("process", answer, 1), origin: { kind: "process", pid: shipPid, runId }, processId: shipPid, runId }];
+    processRecords = [
+      { ...envelope(1), kind: "call", payload: { callId: "grep", tool: "Shell", syscall: "shell.exec", target: "gsv", args: { input: "grep -q standup notes.md" }, runId } },
+      { ...envelope(2), kind: "result", payload: { callId: "grep", tool: "Shell", outcome: "failed", output: exited, media: [], resources: [] } },
+      { ...envelope(3), kind: "message", payload: { direction: "out", text: answer, media: [], origin: {}, conversationMessageId: "process-1" } },
+    ];
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.props(MomentActions).receipt).toEqual({ label: "1 action on Ship’s home", open: false, onToggle: expect.any(Function) }));
+      expect(zen.text()).not.toMatch(/fail/i);
+    } finally { await zen.unmount(); }
+  });
+
+  it("says in the composer that they can write their own answer while replies are on offer", async () => {
+    messages = [{ ...message("process", "What fills most of your days?", 1), origin: { kind: "process", pid: shipPid, runId: "ask" },
+      processId: shipPid, runId: "ask", choices: ["Work", "Studies", "Family & home"] }];
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === "button" && node.props.class === "zen-choice")).toHaveLength(3));
+      // the replies are shortcuts, not the only way to answer
+      expect(zen.props(PromptLine).placeholder).toBe("Pick one, or write your own");
     } finally { await zen.unmount(); }
   });
 

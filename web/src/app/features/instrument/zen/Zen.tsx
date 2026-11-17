@@ -53,7 +53,8 @@ import { textLinkRow } from "./fileReferences";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
-import { receiptsForMoments, type RunReceipt } from "./runReceipts";
+import { receiptPlacement, receiptsForMoments, silentWork, unresolvedErrors, type RunReceipt } from "./runReceipts";
+import { MomentActions } from "./MomentActions";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
 import { ZenLinkCards } from "./ZenLinkCard";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
@@ -140,20 +141,13 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online, kind: target.kind }));
 }
 
-function MomentCopyButton({ text }: { text: string }) {
-  const t = useT();
-  const [status, setStatus] = useState<TextKey | null>(null);
-  useEffect(() => { setStatus(null); }, [text]);
-  return <div class="zen-message-actions">
-    <button type="button" class="zen-copy-message" aria-label={t(status ?? "chat.copy.label")} aria-live="polite" onClick={async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setStatus("chat.copy.done");
-      } catch {
-        setStatus("chat.copy.failed");
-      }
-    }}>{t(status ?? "chat.copy.action")}</button>
-  </div>;
+/** How far the transcript must scroll to show an opened receipt, or as much of it as fits below its message. */
+function openedOverflow(element: HTMLElement | null): number {
+  const transcript = element?.closest<HTMLElement>(".zen-moments");
+  if (!element || !transcript) return 0;
+  const view = transcript.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  return Math.max(0, Math.min(box.bottom - view.bottom + 24, box.top - view.top - 96));
 }
 
 const ActivityLine = memo(function ActivityLine({
@@ -204,7 +198,7 @@ const ActivityLine = memo(function ActivityLine({
     </>
   );
   const stopped = activity.terminal?.status === "stopped";
-  const failed = !stopped && (activity.terminal?.status === "failed" || activity.calls.some((call) => call.failed));
+  const failed = !stopped && (activity.terminal?.status === "failed" || activity.calls.some((call) => call.ending === "error"));
   const state: TextKey | null = unavailable ? "chat.work.unavailable" : stopped ? "chat.work.stopped"
     : failed ? "chat.work.failed" : activity.live ? "chat.work.running" : null;
   return (
@@ -241,40 +235,56 @@ const ActivityLine = memo(function ActivityLine({
   );
 });
 
-/** One line under a ship's message: what it did, in words; the run opens beneath in the order it happened. */
-const Receipt = memo(function Receipt({ receipt, who, places, collections, open, onMemory, onFleet, expanded, onToggleDetail, waitingCallId }: {
+/**
+ * What Ship did for a message. While it works, waits on the person, or stops on an error with nothing said, the
+ * receipt is a line in the conversation; once a message carries it, it opens from that message's receipt control
+ * and its run shows beneath the message. Either way the run opens in the order it happened.
+ */
+const Receipt = memo(function Receipt({ receipt, who, places, collections, line, open, onMemory, onFleet, expanded, onToggleDetail, onReveal, waitingCallId }: {
   receipt: RunReceipt;
   who: string;
   places: readonly Place[];
   collections: readonly LibraryCollection[];
+  /** Whether the receipt is its own line in the conversation rather than a message's control. */
+  line: boolean;
   open: boolean;
   onMemory: ZenProps["onMemory"];
   onFleet: ZenProps["onFleet"];
   expanded: ReadonlySet<string>;
   onToggleDetail: (key: string) => void;
+  /** Scroll the transcript down by this much, through its own scroll keeping. */
+  onReveal: (delta: number) => void;
   waitingCallId?: string;
 }) {
   const t = useT();
   const moment = receipt.work;
   const live = moment.thinking;
-  let summary = receiptSummary(moment, places, receipt.relatedCalls);
-  if (waitingCallId) summary = [{ text: t("chat.receipt.waiting") }, ...summary.filter((part) => part.tone === "failed")];
+  const summary = waitingCallId ? [{ text: t("chat.receipt.waiting") }] : receiptSummary(moment, places);
+  /* a line that stays because Ship stopped on errors with nothing said says how many */
+  const errors = line && !live && !waitingCallId ? unresolvedErrors(receipt) : 0;
   const running = live && !waitingCallId && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   const replies = receipt.replies.filter((reply) => reply.attribution);
-  const fallback = replies.some((reply) => reply.attribution?.fallbacks.length);
-  const quiet = receipt.replies.length > 0 && !live && !waitingCallId && !fallback && !summary.some((part) => part.tone === "failed");
+  /* a message's receipt opens beneath it, often under the fold at the end of the conversation: bring its start into view */
+  const element = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(open);
+  useLayoutEffect(() => {
+    const overflow = open && !wasOpen.current && !line ? openedOverflow(element.current) : 0;
+    if (overflow > 0) onReveal(overflow);
+    wasOpen.current = open;
+  }, [open, line, onReveal]);
+  if (!line && !open) return null;
   return (
-    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}${quiet ? " is-quiet" : ""}`}>
-      <div class="line">
+    <div ref={element} class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}${line ? "" : " is-message"}`}>
+      {line ? <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={() => onToggleDetail(receipt.key)}>
           <span class="receipt-chevron" aria-hidden="true">›</span>
           {running ? <span class="pulse blink" /> : null}
-          {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-          {fallback ? <span class="is-failed"> · {t("chat.receipt.fallbackUsed")}</span> : null}
+          {summary.map((part, index) => part.tone ? <span key={index} class="place">{part.text}</span> : part.text)}
+          {errors > 0 ? ` · ${t("chat.receipt.errors", { count: errors })}` : null}
         </button>
-      </div>
+      </div> : null}
       {open ? (
         <div class="detail">
           {RECEIPT_LAYOUT === "timeline" ? (
@@ -599,8 +609,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         },
       ],
     }));
-    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
+    const all = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    const receipts = receiptsForMoments(all, runtime.activeRunId, pid);
+    /* the conversation is what was said and what is under way; work that ended cleanly without a word stays in Work */
+    return { moments: all.filter((moment) => !silentWork(moment, receipts.get(moment.id))), receipts };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
 
   /* a Ship that has never spoken: the owner's own chat, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
@@ -639,7 +651,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   }, [active, ready, moments.length === 0, momentsRef]);
   const hasMemoryRead = useMemo(() => [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
-      call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
+      call.syscall === "fs.read" && call.ending === "done" && call.filePath?.startsWith("/src/repos/"),
     ),
   )), [receipts]);
   const memoryCollections = useQuery({
@@ -990,11 +1002,12 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [onFleet],
   );
 
-  /* the ship's latest message keeps its replies on offer until anyone writes again */
+  /* the ship's latest message keeps its replies on offer until anyone writes again; work it does afterwards is not writing */
   const offered = useMemo(() => {
     for (let index = moments.length - 1; index >= 0; index -= 1) {
       const moment = moments[index];
       if (moment.role === "note") continue;
+      if (moment.role === "ship" && !moment.text && !moment.media?.length && !moment.streaming) continue;
       return moment.role === "ship" && !moment.streaming && moment.choices?.length ? moment.id : null;
     }
     return null;
@@ -1014,6 +1027,26 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return moments.map((moment) => {
       if (moment.role === "note") return null;
       const receipt = receipts.get(moment.id);
+      const waitingCallId = receipt && pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
+        && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined;
+      const placement = receipt ? receiptPlacement(receipt, waitingCallId !== undefined) : null;
+      const receiptOpen = receipt ? openActivities.has(receipt.key) : false;
+      const receiptView = receipt && placement !== "work" ? (
+        <Receipt
+          receipt={receipt}
+          who={who}
+          places={places}
+          collections={memoryCollections.data ?? EMPTY_COLLECTIONS}
+          onMemory={onMemory}
+          onFleet={onFleet}
+          line={placement === "line"}
+          open={receiptOpen}
+          expanded={receiptOpen ? openActivities : EMPTY_EXPANDED}
+          onToggleDetail={toggleActivity}
+          onReveal={scrolling.move}
+          waitingCallId={waitingCallId}
+        />
+      ) : null;
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
           {moment.role === "human" ? who : "Ship"}
@@ -1037,21 +1070,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               onFleet={onFleet}
             />
           ))}
-        {receipt?.anchorId === moment.id ? (
-          <Receipt
-            receipt={receipt}
-            who={who}
-            places={places}
-            collections={memoryCollections.data ?? EMPTY_COLLECTIONS}
-            onMemory={onMemory}
-            onFleet={onFleet}
-            open={openActivities.has(receipt.key)}
-            expanded={openActivities.has(receipt.key) ? openActivities : EMPTY_EXPANDED}
-            onToggleDetail={toggleActivity}
-            waitingCallId={pendingHil?.runId === receipt.work.runId && pendingHil.pid === receipt.work.processId
-              && receipt.work.activities.some((activity) => activity.calls.some((call) => call.callId === pendingHil.callId)) ? pendingHil.callId : undefined}
-          />
-        ) : null}
+        {placement === "line" ? receiptView : null}
         {moment.role === "human" ? (
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
@@ -1074,7 +1093,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             ))}
           </div>
         ) : null}
-        {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
           <ul class="zen-draft-attachments" aria-label={t("chat.message.attachments")}>
             {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
@@ -1089,10 +1107,19 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>{t("chat.message.dismiss")}</button>
           </div>
         ) : null}
+        {/* the message's own controls end it; its receipt opens beneath them */}
+        {!moment.streaming && (moment.text || placement === "message") ? (
+          <MomentActions text={moment.text} receipt={receipt && placement === "message" ? {
+            label: receiptSummary(receipt.work, places).map((part) => part.text).join(""),
+            open: receiptOpen,
+            onToggle: () => toggleActivity(receipt.key),
+          } : undefined} />
+        ) : null}
+        {placement === "message" ? receiptView : null}
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages, canReadFiles,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, scrolling.move, streamed, receivedMessages, canReadFiles,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking, offered, choose]);
 
   /* the status line */
@@ -1255,7 +1282,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={t(pendingHil ? "chat.composer.placeholderApproval" : "chat.composer.placeholder")}
+              placeholder={t(pendingHil ? "chat.composer.placeholderApproval"
+                : offered && !settling.has(offered) ? "chat.composer.placeholderChoices" : "chat.composer.placeholder")}
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}

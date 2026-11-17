@@ -119,7 +119,7 @@ export class AccountStore {
     ownerSetup?: boolean;
     /** Trusted operator allocation only; public request bodies never supply this. */
     allowReservedHandle?: boolean;
-  }): Promise<InstallationReservation> {
+  }): Promise<InstallationReservation & { created: boolean }> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
@@ -128,7 +128,7 @@ export class AccountStore {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
         throw new Error("operationId was already used for a different reservation");
       }
-      return existing;
+      return { ...existing, created: false };
     }
 
     const identity = installationIdentity(
@@ -191,7 +191,7 @@ export class AccountStore {
         if (replay.ownerPrincipalId !== principalId || replay.handle !== handle) {
           throw new Error("operationId was already used for a different reservation");
         }
-        return replay;
+        return { ...replay, created: false };
       }
       const claimed = await this.db.prepare(
         "SELECT id FROM installations WHERE handle = ? OR canonical_origin = ? LIMIT 1",
@@ -213,7 +213,7 @@ export class AccountStore {
     if (!reservation) {
       throw new Error("installation reservation was not committed");
     }
-    return reservation;
+    return { ...reservation, created: true };
   }
 
   async resetInstallation(input: {

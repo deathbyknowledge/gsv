@@ -3,6 +3,7 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   AdapterConnectResult,
   AdapterPairConfirmResult,
+  AdapterPairCreateResult,
   AdapterPairInfoResult,
   AdapterPairInspectResult,
   AiTextGenerateConfig,
@@ -214,6 +215,7 @@ export type InspectConsoleAdapterPairingInput = {
 export type ConsoleAdapterPairingInfo = AdapterPairInfoResult;
 export type ConsoleAdapterPairingCandidate = AdapterPairInspectResult;
 export type ConsoleAdapterPairingResult = AdapterPairConfirmResult;
+export type ConsoleAdapterPairingLink = AdapterPairCreateResult;
 
 export type AddConsoleMcpServerInput = {
   name: string;
@@ -610,6 +612,14 @@ export async function loadConsoleAdapterPairingInfo(
   adapter: string,
 ): Promise<ConsoleAdapterPairingInfo> {
   return await client.call("adapter.pair.info", { adapter: adapter.trim() });
+}
+
+/** Mints a single-use link that connects whichever messenger account sends it. */
+export async function createConsoleAdapterPairingLink(
+  client: Pick<GSVClient, "call">,
+  adapter: string,
+): Promise<ConsoleAdapterPairingLink> {
+  return await client.call("adapter.pair.create", { adapter: adapter.trim() });
 }
 
 export async function inspectConsoleAdapterPairing(

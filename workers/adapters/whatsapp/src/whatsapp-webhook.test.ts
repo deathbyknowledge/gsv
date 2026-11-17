@@ -10,12 +10,14 @@ import {
 } from "./whatsapp-webhook";
 
 const PHONE_NUMBER_ID = "111222333444555";
+const USER_ID = "US.13491208655302741918";
 const APP_SECRET = "app_secret_value_0123456789";
 
 type MediaFixture = { id?: string; mime_type?: string; sha256?: string; caption?: string; filename?: string; voice?: boolean; animated?: boolean };
 type MessageFixture = {
   id: string;
-  from: string;
+  from?: string;
+  from_user_id?: string;
   type: string;
   timestamp?: string;
   group_id?: string;
@@ -31,8 +33,9 @@ type MessageFixture = {
   button?: { payload?: string; text?: string };
   reaction?: { message_id: string; emoji: string };
   contacts?: Array<{ name: { formatted_name: string } }>;
+  system?: { type: string; user_id?: string; previous_user_id?: string };
 };
-type ContactFixture = { profile: { name: string }; wa_id: string };
+type ContactFixture = { profile: { name: string; username?: string }; wa_id?: string; user_id?: string };
 type StatusFixture = { id: string; status: string; timestamp: string; recipient_id: string };
 type ValueFixture = {
   messaging_product: string;
@@ -287,6 +290,83 @@ describe("WhatsApp webhook normalization", () => {
       { from: "34611111189", id: "wamid.react", type: "reaction", reaction: { message_id: "wamid.x", emoji: "👍" } },
       { from: "34611111189", id: "wamid.unreact", type: "reaction", reaction: { message_id: "wamid.x", emoji: "" } },
     ]), PHONE_NUMBER_ID)).toEqual({ kind: "ignored" });
+  });
+
+  it("keys a username sender by their business-scoped user ID when Meta withholds the number", () => {
+    const payload = notification([]);
+    payload.entry[0]!.changes[0]!.value = {
+      messaging_product: "whatsapp",
+      metadata: { display_phone_number: "34600000000", phone_number_id: PHONE_NUMBER_ID },
+      contacts: [{ profile: { name: "Sheena Nelson", username: "realsheenanelson" }, user_id: USER_ID }],
+      messages: [{ from_user_id: USER_ID, id: "wamid.username", timestamp: "1700000000", type: "text", text: { body: "hello" } }],
+    };
+    expect(normalizeWhatsAppWebhook(payload, PHONE_NUMBER_ID)).toEqual({
+      kind: "accepted",
+      events: [{
+        kind: "message",
+        inbound: {
+          deliveryId: "message:wamid.username",
+          messageId: "wamid.username",
+          actorId: USER_ID,
+          surfaceId: USER_ID,
+          actorName: "Sheena Nelson",
+          actorHandle: "@realsheenanelson",
+          text: "hello",
+          timestamp: 1_700_000_000_000,
+          unsupportedContent: false,
+        },
+      }],
+    });
+  });
+
+  it("keys a sender by user ID and keeps the number Meta still shares", () => {
+    const payload = notification([{ ...textMessage(), from_user_id: USER_ID }]);
+    payload.entry[0]!.changes[0]!.value.contacts = [{ profile: { name: "Hank Human" }, wa_id: "34611111189", user_id: USER_ID }];
+    expect(normalizeWhatsAppWebhook(payload, PHONE_NUMBER_ID)).toMatchObject({
+      kind: "accepted",
+      events: [{
+        kind: "message",
+        inbound: {
+          actorId: USER_ID,
+          surfaceId: USER_ID,
+          phoneNumber: "34611111189",
+          actorName: "Hank Human",
+          actorHandle: "+34•••••••89",
+        },
+      }],
+    });
+  });
+
+  it("carries both identifiers on approval taps and template replies", () => {
+    const approval = notification([{
+      from: "34611111189",
+      from_user_id: USER_ID,
+      id: "wamid.approval",
+      type: "interactive",
+      context: { from: "34600000000", id: "wamid.prompt" },
+      interactive: { type: "button_reply", button_reply: { id: "gsvh:abcdefghijklmnop:a", title: "Allow once" } },
+    }]);
+    expect(normalizeWhatsAppWebhook(approval, PHONE_NUMBER_ID)).toMatchObject({
+      kind: "accepted",
+      events: [{ kind: "approval", reply: { actorId: USER_ID, surfaceId: USER_ID, phoneNumber: "34611111189" } }],
+    });
+  });
+
+  it("ignores Meta's notices about changed numbers and user IDs instead of answering them", () => {
+    const payload = notification([{
+      from_user_id: "US.99999999999999999999",
+      id: "wamid.system",
+      type: "system",
+      system: { type: "user_changed_user_id", user_id: "US.99999999999999999999", previous_user_id: USER_ID },
+    }]);
+    expect(normalizeWhatsAppWebhook(payload, PHONE_NUMBER_ID)).toEqual({ kind: "ignored" });
+  });
+
+  it("drops a message that names neither a number nor a user ID", () => {
+    const payload = notification([{ id: "wamid.anonymous", type: "text", text: { body: "hello" } }]);
+    expect(normalizeWhatsAppWebhook(payload, PHONE_NUMBER_ID)).toEqual({ kind: "ignored" });
+    const malformed = notification([{ from_user_id: "not a user id", id: "wamid.malformed", type: "text", text: { body: "hello" } }]);
+    expect(normalizeWhatsAppWebhook(malformed, PHONE_NUMBER_ID)).toEqual({ kind: "ignored" });
   });
 
   it("rejects malformed envelopes", () => {

@@ -444,6 +444,7 @@ const SYSCALL_NAMES = [
   "adapter.status",
   "adapter.list",
   "adapter.pair.info",
+  "adapter.pair.create",
   "adapter.pair.inspect",
   "adapter.pair.confirm",
   "adapter.pair.disconnect",

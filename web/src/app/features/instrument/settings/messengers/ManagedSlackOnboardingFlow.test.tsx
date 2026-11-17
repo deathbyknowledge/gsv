@@ -39,6 +39,9 @@ const dependencies: ManagedTelegramDependencies = {
       error: null,
     };
   },
+  // Slack connects by pasted code, so it never makes a link or disconnects from this flow.
+  useCreateConsoleAdapterPairingLink: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useDisconnectConsoleAdapterPairing: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useInspectConsoleAdapterPairing: () => ({
     isPending: false,
     mutateAsync: mocks.inspect,

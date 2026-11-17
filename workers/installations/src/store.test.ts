@@ -53,7 +53,9 @@ describe("account directory", () => {
       handle: "replay-home",
     });
 
-    expect(second).toEqual(first);
+    // Only the call that reserved it created it; the replay returns the same reservation without claiming so.
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ ...first, created: false });
   });
 
   it.each([0, 1])("rejects provisioning %i ms after reservation expiry without changing any state", async (offset) => {
@@ -78,7 +80,7 @@ describe("account directory", () => {
       await expect(accounts.beginProvisioning(reservation.operationId, principalId))
         .rejects.toThrow("installation could not enter provisioning");
       expect(await state.first()).toEqual(before);
-      expect(await accounts.getReservationByOperation(reservation.operationId)).toEqual(reservation);
+      expect(await accounts.getReservationByOperation(reservation.operationId)).toEqual({ ...reservation, created: undefined });
     } finally {
       clock.mockRestore();
     }

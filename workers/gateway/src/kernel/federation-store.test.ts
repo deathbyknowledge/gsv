@@ -81,6 +81,17 @@ describe("FederationStore", () => {
       });
       expect(replacement.preferences).toEqual({ saved: false, muted: true, shipHandlesMessages: false, revision: 3 });
       expect(replacement.conversationId).toBe(contact.conversationId);
+      // An explicit choice to keep the person saves them again; declining it leaves them saved.
+      const kept = store.activateContact({
+        ownerUid: contact.ownerUid, remoteDid: REMOTE_DID, remoteName: contact.remoteName,
+        generation: "generation:kept", threadId: "thread:kept", saved: true,
+      });
+      expect(kept.preferences).toEqual({ saved: true, muted: true, shipHandlesMessages: false, revision: 4 });
+      const unchosen = store.activateContact({
+        ownerUid: contact.ownerUid, remoteDid: REMOTE_DID, remoteName: contact.remoteName,
+        generation: "generation:unchosen", threadId: "thread:unchosen", saved: false,
+      });
+      expect(unchosen.preferences).toEqual({ saved: true, muted: true, shipHandlesMessages: false, revision: 5 });
     });
   });
 

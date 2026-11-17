@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage, signupMessenger } from "./navigation";
 
 describe("browser signup handoff", () => {
   it("links signup home to the operator domain", () => {
@@ -7,7 +7,7 @@ describe("browser signup handoff", () => {
     expect(signupHomepage("http://localhost:1507")).toBeUndefined();
   });
   it("carries a friend's invitation alongside setup authorization without query credentials", () => {
-    const destination = new URL(signupDestination("https://new.gsv.space", `onboard_${"x".repeat(43)}`, "contact-invitation"));
+    const destination = new URL(signupDestination("https://new.gsv.space", `onboard_${"x".repeat(43)}`, { contact: "contact-invitation" }));
     const fragment = new URLSearchParams(destination.hash.slice(1));
     expect(destination.pathname).toBe("/onboarding");
     expect(destination.search).toBe("?signup=1");
@@ -21,6 +21,20 @@ describe("browser signup handoff", () => {
     expect(destination.search).toBe("?signup=1");
     expect(destination.hash).toBe(`#${token}`);
     expect(signupDestination("https://new.gsv.space", null)).toBe("https://new.gsv.space/");
+  });
+
+  it("carries the messenger a signup came from, so the new Ship opens its connection", () => {
+    const token = `onboard_${"x".repeat(43)}`;
+    const destination = new URL(signupDestination("https://new.gsv.space", token, { messenger: signupMessenger("whatsapp") }));
+    const fragment = new URLSearchParams(destination.hash.slice(1));
+    expect(destination.search).toBe("?signup=1");
+    expect(fragment.get("onboarding")).toBe(token);
+    expect(fragment.get("messenger")).toBe("whatsapp");
+    expect(signupMessenger("telegram")).toBe("telegram");
+    // Any other source is a campaign, not a messenger.
+    expect(signupMessenger("facebook")).toBeNull();
+    expect(signupMessenger(undefined)).toBeNull();
+    expect(new URL(signupDestination("https://new.gsv.space", token, { messenger: signupMessenger("facebook") })).hash).toBe(`#${token}`);
   });
 
   it.each([["accounts.ship.space", "ship.space"], ["signup.gsv.space", "gsv.space"], ["ship.space", undefined], ["localhost", undefined], ["accounts.localhost", undefined]])("presumes the space domain under %s as %s", (hostname, domain) => {

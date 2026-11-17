@@ -41,6 +41,8 @@ import {
   activateFederationContact,
   assertPairingAttemptCanContinue,
   assertPairingAttemptIdentity,
+  invitationRefusal,
+  remoteRejection,
   requireCommittedPairingContact,
 } from "./pairing";
 import { isCurrentFederationContact } from "./resources";
@@ -49,14 +51,6 @@ const DEFAULT_INVITE_LIFETIME_MS = 60 * 60_000;
 const MAX_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60_000;
 const MAX_OUTSTANDING_INVITES_PER_OWNER = 20;
 const MAX_INVITES_CREATED_PER_HOUR = 20;
-
-/** What the person accepting an invitation reads when the inviting Ship refuses, by the error it names. */
-const REFUSALS = new Map([
-  ["InvitationNotFound", "This invitation isn't available. Ask for a new one."],
-  ["InvitationExpired", "This invitation has expired. Ask for a new one."],
-  ["InvitationCancelled", "This invitation was cancelled."],
-  ["InvitationUsed", "This invitation was already used."],
-]);
 
 type Acceptance = { contact: FederationContactRecord; changed: boolean };
 
@@ -183,10 +177,11 @@ export async function handleContactInviteAccept(
       ctx,
     ));
   } catch (error) {
+    const named = error instanceof ShipCallError ? error.error : undefined;
     if (error instanceof FederationHttpError && isTerminalFederationError(error)) {
-      ctx.federation.terminatePairingAttempt(tokenHash, `remote-rejected:${error.status}`);
+      ctx.federation.terminatePairingAttempt(tokenHash, remoteRejection(error.status, named));
     }
-    const refusal = error instanceof ShipCallError && error.error ? REFUSALS.get(error.error) : undefined;
+    const refusal = invitationRefusal(named);
     if (refusal) throw new Error(refusal, { cause: error });
     throw error;
   }

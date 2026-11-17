@@ -1,9 +1,11 @@
 import type { OperatorShipSnapshot, ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
+import type { RedeemAdapterPairingInput, RedeemAdapterPairingResult } from "@humansandmachines/gsv/services/adapters";
+import { redeemAdapterPairingLink } from "./adapter-pairing";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, telemetryEnabled } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -178,6 +180,7 @@ import {
 import type { GatewayEnv } from "../runtime-env";
 import {
   acceptKernelWebSocket,
+  connectionCountry,
   KernelConnection,
   type KernelConnectionState as ConnectionState,
   type KernelWebSocketMessage,
@@ -392,6 +395,8 @@ const managedAdapterUnlinkSchema = z.object({
   expectedGeneration: z.string().min(1),
 });
 
+const redeemAdapterPairingSchema = z.object({ code: z.string().max(64) });
+
 const serviceBindingArgsSchema = z.object({
   adapter: z.string().trim().min(1).optional(),
 });
@@ -574,7 +579,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid, updated) => {
+      this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed");
+      // However the welcome's record ends, it is reported once. Tracked even with telemetry off, like its delivery.
+      const finished = updated ? this.welcome.markWelcomeFinished(updated) : null;
+      if (finished) {
+        emitTelemetry(this.bindings, {
+          installationId: this.installationId, component: "gateway",
+          event: { stream: "product", name: "onboarding.welcome.finished", properties: finished },
+        });
+      }
+    });
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
@@ -942,6 +957,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const initial: ConnectionState = { step: "pending" };
       const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
       if (source) initial.source = source;
+      const country = telemetryEnabled(this.bindings) ? connectionCountry(request) : undefined;
+      if (country) initial.country = country;
       const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;
@@ -1493,6 +1510,24 @@ export class Kernel extends DurableObject<GatewayEnv> {
       expectedLocalUid: parsed.expectedLocalUid,
       expectedGeneration: parsed.expectedGeneration,
     });
+  }
+
+  /**
+   * Connects the sender of a link code this Kernel minted. The adapter's binding names it,
+   * and the owner comes from the code's record. A new link grants authority, so Accounts is
+   * asked afresh; an unreachable answer throws for the adapter to retry.
+   */
+  async redeemAdapterPairing(adapter: string, input: RedeemAdapterPairingInput): Promise<RedeemAdapterPairingResult> {
+    this.retirement.assertActive();
+    const normalizedAdapter = adapter.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(normalizedAdapter)) throw new Error("Managed adapter identity is invalid");
+    const parsed = redeemAdapterPairingSchema.parse(input);
+    const gate = await this.onboarding.managedWorkGate({ fresh: true });
+    if (!gate.allowed) {
+      if (gate.code === 503) throw new Error(gate.message);
+      return { paired: false, reason: "refused", message: gate.message };
+    }
+    return await redeemAdapterPairingLink(this.buildKernelContext({}), normalizedAdapter, parsed);
   }
 
   async unlinkManagedAdapterIdentity(
