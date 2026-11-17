@@ -192,16 +192,15 @@ WhatsApp accepts a free-form message from Ship only within 24 hours of your last
 message to the number. After that, Ship uses an approved template to send the
 message, or a preview if it is too long. The full message remains in your Ship
 conversation. Open Ship to read it, or reply in WhatsApp to ask Ship about it.
-The **Show me** button sends an ordinary reply to Ship. Messages are not queued
-for automatic delivery when you return.
+Messages are not queued for automatic delivery when you return.
 
 Approval notifications outside the window ask you to review the request in
 Ship. Attachments require an open WhatsApp window or another authorized
 destination.
 
 The operator must configure the matching Meta-approved `gsv_message` template
-before out-of-window messages can be sent. It uses one body parameter and a
-quick-reply button labelled **Show me**. `WHATSAPP_TEMPLATE_NAME` and
+before out-of-window messages can be sent. It uses one body parameter and no
+buttons. `WHATSAPP_TEMPLATE_NAME` and
 `WHATSAPP_TEMPLATE_LANGUAGE` select the template; an empty name disables it.
 Meta determines its category and bills each template accordingly. See the
 WhatsApp messenger README's "Message templates" section for the exact contract.
