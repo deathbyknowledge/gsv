@@ -79,6 +79,10 @@ export type ConsoleIdentityLink = {
   uid: number;
   createdAt: number | null;
   linkedByUid: number | null;
+  /** How the messenger named the person, and when the link connected, for links made through a shared messenger. */
+  actorName?: string;
+  actorHandle?: string;
+  linkedAt?: number;
 };
 
 export type ConsoleMcpTransport = "auto" | "streamable-http" | "sse" | "unknown";

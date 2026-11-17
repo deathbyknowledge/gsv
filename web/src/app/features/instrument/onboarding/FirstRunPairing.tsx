@@ -14,7 +14,7 @@ import {
   whatsAppNumberFromChatUrl,
   whatsAppReachForDevice,
   whatsAppReachSummary,
-} from "../settings/messengers/ManagedTelegramOnboardingFlow";
+} from "../settings/messengers/whatsapp";
 
 export type MessengerChoice = "whatsapp" | "telegram";
 
@@ -144,7 +144,7 @@ export function FirstRunPairing({ adapter, name, linked, disabled, onPaired, onF
               <p>{rich(t("onboarding.surface.troubleText", { platform: name }), { contact: <span class="first-run-contact">{contact}</span> })}</p>
               {contact && <Button variant="link" label={copyLabel} onClick={copy.copy} />}
             </div>
-            {isWhatsApp && <p>{t("settings.pairing.whatsappRelink")}</p>}
+            {isWhatsApp && <p>{t("settings.pairing.linkMove", { platform: name })}</p>}
           </details>
         </>}
       </div>
