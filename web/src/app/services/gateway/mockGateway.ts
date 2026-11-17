@@ -1416,7 +1416,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
-      if (!code.trim()) throw new Error("That code is empty.");
+      // As the Kernel does: twelve unambiguous characters, any case, dashes and spaces ignored.
+      if (!/^[A-HJ-NP-Z2-9]{12}$/.test(code.trim().toUpperCase().replace(/[\s-]+/g, ""))) throw new Error("Pairing code is invalid");
       return respond(id, { adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", actorName: "Esteve", actorHandle: "+31 6 12345678", expiresAt: Date.now() + 600_000, linked: false });
     }
     case "adapter.pair.confirm": {
