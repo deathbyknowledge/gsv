@@ -208,13 +208,15 @@ export async function redeemAdapterPairingLink(
   if (!record || record.cancelled) return UNAVAILABLE_LINK;
   const uid = record.ownerUid;
   const operationId = await pairingOperationId(adapter, ctx.installationId, uid, code);
+  // The Kernel links the sender before the messenger activates its route.
+  const linked = ctx.adapters.identityLinks.list(uid)
+    .some((link) => link.adapter === adapter && link.metadata?.operationId === operationId);
   if (record.redeemed) {
     // A retried delivery of the code's message is answered as before, unless that connection has ended.
-    const connected = ctx.adapters.identityLinks.list(uid)
-      .some((link) => link.adapter === adapter && link.metadata?.operationId === operationId);
-    return connected ? { paired: true } : UNAVAILABLE_LINK;
+    return linked ? { paired: true } : UNAVAILABLE_LINK;
   }
-  if (record.expiresAt <= Date.now()) return UNAVAILABLE_LINK;
+  // An expired code connects no one new, but a connection it started in time still finishes.
+  if (record.expiresAt <= Date.now() && !linked) return UNAVAILABLE_LINK;
   // A credential change cancels the owner's codes; the confirmation rechecks it before each commit.
   if (activeHumanOwner(ctx, uid) === null) {
     return { paired: false, reason: "refused", message: "The account that made this link is no longer active" };

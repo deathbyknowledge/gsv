@@ -548,7 +548,8 @@ change cancels them all. A sender already linked to another Ship or account is
 asked to **Move it** or **Keep it** before the adapter redeems. The Kernel
 answers a refusal, which the adapter relays to the sender; any other failure
 throws, and the adapter delivers the code's message, or the answer to move,
-again until the Kernel answers or the code expires. Processes cannot
+again until the Kernel answers. An expired code starts no connection, but one
+the Kernel began before the expiry still finishes on a retry. Processes cannot
 mint codes: `adapter.pair.info` gives them a `setupUrl` in Settings to send
 instead, so a model never holds a code, and the Kernel refuses inspect and
 confirm for these adapters. The `linkedAt` that `sys.link.list` reports appears

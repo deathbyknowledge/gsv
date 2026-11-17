@@ -5545,6 +5545,30 @@ describe("managed adapter pairing", () => {
       });
     });
 
+    it("finishes a connection it started after the code expires, without starting a new one", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { ctx: kernel, identityLinks } = linkContext(sql, service, redemptionOptions());
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        try {
+          service.adapterPairingFinalize.mockRejectedValueOnce(new Error("finalization lost"));
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).rejects.toThrow("finalization lost");
+        } finally {
+          warn.mockRestore();
+        }
+        // The messenger's retry arrives after the code's ten minutes: the route it activated still finishes.
+        const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10 * 60 * 1000 + 1);
+        try {
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+        } finally {
+          later.mockRestore();
+        }
+        expect(identityLinks.list()[0]?.metadata).toMatchObject({ routeGeneration: "generation-new", linkedAt: expect.any(Number) });
+      });
+    });
+
     it("lets the messenger retry a step that failed, and never tells the sender an adapter's error", async () => {
       await runWithRealKernelSql(async (sql) => {
         const service = pairingService(whatsappCandidate, route, "whatsapp", true);
