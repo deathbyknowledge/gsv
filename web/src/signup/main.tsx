@@ -10,6 +10,10 @@ import { BrowserWelcomeStorage } from "./storage";
 import { loadSignupPage } from "./page";
 import { signupHomepage } from "./navigation";
 
+import { startAcquisition } from "../app/services/acquisition";
+
+startAcquisition();
+
 const accountsOrigin = window.location.origin;
 const homeHref = signupHomepage(accountsOrigin);
 const app = document.querySelector<HTMLElement>("#app");

@@ -10,6 +10,30 @@ state is durable, the Kernel reports a Message after the Conversation accepts
 it, and managed inference reports a request after its reservation settles.
 Callers must not synthesize success events before those boundaries.
 
+## Optional Ship browser signup measurement
+
+Ship's production web build also enables a first-party acquisition coordinator on
+HTTPS `ship.space` domains. Other operators and native clients remain outside this
+integration. It reports a completed registration only after the server accepts
+`sys.setup` for a managed signup arrival, before fallible local cleanup or login.
+Failed setup, reservations, email verification, restored sessions and ordinary
+login do not produce this event.
+
+The marketing site owns consent, the two advertising enablement gates, advertising transport, and the existing cookieless audience-measurement client. The web app
+loads only its first-party coordinator and sends an opaque registration ID, time
+and allowlisted campaign tags. Account addresses, email, private content and
+onboarding secrets never enter the measurement payload. The first-party script
+and config requests suppress referrers. Advertising remains disabled until the
+marketing notice is reviewed and its gates are enabled; organic audience measurement
+is independent of advertising consent and respects DNT/GPC and analytics opt-out.
+
+`VITE_ACQUISITION_ENABLED=false` disables the browser coordinator. Ship's
+`web/.env.production` enables it for production web/signup builds, which must be
+released together through the operator composition. Marketing must first serve
+its acquisition bridge and CORS-enabled public config. The marketing repository's
+`docs/acquisition.md` defines event mappings, the privacy review and release checks.
+Do not change generic backend lifecycle events into browser ad conversions.
+
 ## Privacy contract
 
 The public schema in `@humansandmachines/gsv/telemetry` is the complete

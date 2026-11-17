@@ -7,6 +7,7 @@ import type {
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import { captureRegistration } from "../acquisition";
 import type { TextKey } from "../../i18n/locale";
 import { clearLinkPreviewCache } from "../chat/backend/linkPreviewCache";
 import {
@@ -832,6 +833,9 @@ export function createSessionService(client: SessionClient, options: SessionServ
       }
       throw error;
     }
+
+    // The server acknowledged creation; subsequent login or local cleanup may fail.
+    if (signupArrival && installationOnboardingToken) captureRegistration(result.user.uid);
 
     if (installationOnboardingToken) {
       installationOnboardingToken = null;
