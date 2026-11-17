@@ -21,6 +21,8 @@ export type MessengerLinkOptions = {
 };
 
 export type MessengerLink = {
+  /** Whether the flow has made, or is making, its own link. */
+  started: boolean;
   link: HeldLink | null;
   /** The connection this link made, once the Kernel reports it. */
   connected: ConsoleIdentityLink | null;
@@ -63,12 +65,12 @@ export function useMessengerLink({ adapterId, ready, links, onRefreshLinks, crea
   };
 
   // Opening the flow is the choice to connect, so the link is ready before the person reaches for it.
-  const requested = useRef(false);
+  const [started, setStarted] = useState(false);
   useEffect(() => {
-    if (requested.current || !ready) return;
-    requested.current = true;
+    if (started || !ready) return;
+    setStarted(true);
     void mint();
-  }, [ready]);
+  }, [ready, started]);
 
   useEffect(() => {
     if (!waiting || !link) return;
@@ -100,5 +102,5 @@ export function useMessengerLink({ adapterId, ready, links, onRefreshLinks, crea
     }
   };
 
-  return { link, connected, waiting, expired, error, mint, disconnectWrongAccount };
+  return { started, link, connected, waiting, expired, error, mint, disconnectWrongAccount };
 }

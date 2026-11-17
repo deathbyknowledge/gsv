@@ -62,7 +62,8 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
   const copyLabel = useCodeCopyOutcome(copy.state) || t("settings.logs.copy");
   const open = t("settings.pairing.open", { name: name.toUpperCase() });
 
-  if (linked || pairing.connected) {
+  // A connection already there needs no link; once the card makes one, only the finished connection it made counts.
+  if ((linked && !pairing.started) || pairing.connected) {
     return <div class="first-run-pairing">
       <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: name })} />
       {/* a link can travel, so the card names who sent it and offers a way out for a wrong account */}

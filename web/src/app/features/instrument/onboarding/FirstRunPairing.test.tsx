@@ -128,6 +128,21 @@ describe("first-run pairing", () => {
     expect(onFinish).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps waiting while the connection its link made is unfinished", async () => {
+    await mount();
+    await vi.waitFor(() => expect(minted).toHaveLength(1));
+    // The messenger's route is active but not finished: the screen already counts a link, without `linkedAt`.
+    linked = true;
+    const { linkedAt: _unfinished, ...activated } = linkFrom(minted[0]!.createdAt + 5_000);
+    await reload([activated]);
+    expect(collectNodes(tree).find((node) => node.type === Alert)?.props.title).toBeUndefined();
+    expect(collectText(tree)).toContain("Waiting for your message.");
+
+    await reload([linkFrom(minted[0]!.createdAt + 6_000)]);
+    expect(collectNodes(tree).find((node) => node.type === Alert)?.props.title).toBe("Connected");
+    expect(collectText(tree)).toContain("connected to Esteve · +31•••••••78");
+  });
+
   it("disconnects an account that is not the person's and makes a new link", async () => {
     await mount();
     await vi.waitFor(() => expect(minted).toHaveLength(1));
