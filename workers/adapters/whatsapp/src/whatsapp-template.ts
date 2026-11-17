@@ -3,10 +3,12 @@ import { WHATSAPP_WINDOW_CLOSED_ERROR, type WhatsAppOutboundPayload } from "./wh
 import { renderWhatsAppText } from "./whatsapp-formatting";
 
 /** Body text filed with Meta; the single parameter carries the message or a preview. */
-export const WHATSAPP_TEMPLATE_BODY = "Your GSV has an update about your request: {{1}} Tap below to continue in WhatsApp.";
-/** Quick-reply button label filed with Meta; its text is forwarded to Ship. */
+export const WHATSAPP_TEMPLATE_BODY = "Your Ship sent you a message:\n\n{{1}}\n\nReply to chat with Ship!";
+/**
+ * Templates sent by earlier releases carried a quick-reply button. A tap on one
+ * still reaches Ship as an ordinary reply, under the label it showed.
+ */
 export const WHATSAPP_TEMPLATE_BUTTON_LABEL = "Show me";
-/** Keep the approved button payload stable across adapter upgrades. */
 export const WHATSAPP_TEMPLATE_REPLY_PAYLOAD = "gsvt:show";
 const TEMPLATE_PARAMETER_LIMIT = 1024 - [...WHATSAPP_TEMPLATE_BODY.replace("{{1}}", "")].length;
 const PREVIEW_SUFFIX = "… Open GSV for the full message.";
@@ -35,15 +37,7 @@ export function buildWhatsAppTemplatePayload(
     template: {
       name: template.name,
       language: { code: template.language },
-      components: [
-        { type: "body", parameters: [{ type: "text", text: parameter }] },
-        {
-          type: "button",
-          sub_type: "quick_reply",
-          index: "0",
-          parameters: [{ type: "payload", payload: WHATSAPP_TEMPLATE_REPLY_PAYLOAD }],
-        },
-      ],
+      components: [{ type: "body", parameters: [{ type: "text", text: parameter }] }],
     },
   };
 }

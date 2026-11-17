@@ -84,22 +84,34 @@ eligibility. The adapter does not enforce or assume a geographic exception.
 
 Outside the 24-hour customer service window Meta accepts only a pre-approved
 template, and a template does not reopen the window; only the person's reply
-does, and a tap on a quick-reply button counts as a reply. Meta bills each
-template sent outside the window at the category assigned to it.
+does. Meta bills each template sent outside the window at the category assigned
+to it.
 
-The adapter uses a template with one body parameter and one quick-reply
-button. File it in Meta's message template manager and wait for approval:
+The adapter uses a template with one body parameter and nothing else. File it in
+Meta's message template manager and wait for approval:
 
 - Category: **Marketing** for this general update; do not assume a Utility rate
 - Name: `gsv_message` (or `WHATSAPP_TEMPLATE_NAME`)
 - Language: English (`en`, or `WHATSAPP_TEMPLATE_LANGUAGE`)
-- Header and footer: none
-- Body: `Your GSV has an update about your request: {{1}} Tap below to continue in WhatsApp.`
-- Button: type **Quick reply**, label `Show me`
+- Header, footer and buttons: none
+- Body:
+
+  ```text
+  Your Ship sent you a message:
+
+  {{1}}
+
+  Reply to chat with Ship!
+  ```
 
 Use this body contract even if you customize the template name: the adapter
 budgets the parameter against its surrounding text and Meta's 1,024-character
-body limit. Leave `WHATSAPP_TEMPLATE_NAME` empty until your template is approved.
+body limit. Meta rejects a send whose components differ from the approved
+template with error 132018, so do not add a button. Leave
+`WHATSAPP_TEMPLATE_NAME` empty until your template is approved.
+
+Templates sent by earlier releases carried a **Show me** quick-reply button; a
+tap on one still reaches Ship as an ordinary reply.
 
 When the local receipt says the window is closed, or Meta rejects the first
 free-form part with error 131047, the template carries the actual message.

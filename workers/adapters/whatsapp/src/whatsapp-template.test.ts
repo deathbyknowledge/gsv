@@ -4,11 +4,11 @@ import {
   buildWhatsAppTemplatePayload,
   WHATSAPP_NO_TEMPLATE_ERROR,
   WHATSAPP_TEMPLATE_BODY,
-  WHATSAPP_TEMPLATE_REPLY_PAYLOAD,
 } from "./whatsapp-template";
 
 describe("buildWhatsAppTemplatePayload", () => {
-  it("carries the actual message and a reply button", () => {
+  it("carries the actual message as the template's only parameter", () => {
+    // Meta rejects a template send with a component the approved template lacks (error 132018).
     expect(buildWhatsAppTemplatePayload("34611111189", { name: "gsv_message", language: "en" }, "Your report is ready.")).toEqual({
       to: "34611111189",
       type: "template",
@@ -17,12 +17,6 @@ describe("buildWhatsAppTemplatePayload", () => {
         language: { code: "en" },
         components: [
           { type: "body", parameters: [{ type: "text", text: "Your report is ready." }] },
-          {
-            type: "button",
-            sub_type: "quick_reply",
-            index: "0",
-            parameters: [{ type: "payload", payload: WHATSAPP_TEMPLATE_REPLY_PAYLOAD }],
-          },
         ],
       },
     });
