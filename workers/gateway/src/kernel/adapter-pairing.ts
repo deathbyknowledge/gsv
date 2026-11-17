@@ -1,4 +1,4 @@
-import { adapterPairingOwner, canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
+import { activeHumanOwner, adapterPairingOwner, canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
 import { authorizeNestedOperation } from "./tool-approval";
 import type {
   AdapterPairingCandidate,
@@ -8,6 +8,8 @@ import type {
 import type {
   AdapterPairConfirmArgs,
   AdapterPairConfirmResult,
+  AdapterPairCreateArgs,
+  AdapterPairCreateResult,
   AdapterPairDisconnectArgs,
   AdapterPairDisconnectResult,
   AdapterPairInfoArgs,
@@ -15,7 +17,11 @@ import type {
   AdapterPairInspectArgs,
   AdapterPairInspectResult,
 } from "@humansandmachines/gsv/protocol";
+import { adapterDisplayName } from "@humansandmachines/gsv/protocol";
+import type { RedeemAdapterPairingInput, RedeemAdapterPairingResult } from "@humansandmachines/gsv/services/adapters";
+import { exceptionDiagnostics, redactDiagnosticText } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
+import { hashToken } from "../auth/shadow";
 import { principalOf, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
@@ -59,6 +65,20 @@ const pairingPreparationSchema = z.object({
   previousRoute: z.optional(pairingRouteSchema),
 });
 
+const pairingLinkSchema = z.object({ url: z.string().check(z.maxLength(2048)) });
+
+/** Letters and digits that read unambiguously: no I, O, 0 or 1. */
+const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const DISPLAY_TEXT_LIMIT = 160;
+/** Longest refusal reason an adapter relays to the person who sent a link's code. */
+const REFUSAL_TEXT_LIMIT = 300;
+
+const UNAVAILABLE_LINK: RedeemAdapterPairingResult = {
+  paired: false,
+  reason: "unavailable",
+  message: "This link expired or was already used",
+};
+
 const managedIdentityLinkMetadataSchema = z.looseObject({
   managed: z.literal(true),
   surfaceId: z.string().check(z.minLength(1)),
@@ -75,6 +95,21 @@ function requirePairingOwner(ctx: KernelContext, syscall: string): number {
 
 type PairingConfirmation = AdapterPairConfirmArgs & {
   uid: number; credentialEpoch: number; operationId: string; canonicalOrigin: string; humanConfirmed: boolean;
+};
+
+/** What a managed link records beside its route: the route fences, then how the messenger named the person. */
+type ManagedIdentityLinkMetadata = {
+  managed: true;
+  humanConfirmed: boolean;
+  surfaceKind: "dm";
+  surfaceId: string;
+  routeScope: "surface" | "actor";
+  routeGeneration: string;
+  operationId: string;
+  /** When the connection finished; a page waiting on its link watches for this. */
+  linkedAt?: number;
+  actorName?: string;
+  actorHandle?: string;
 };
 
 export async function handleAdapterPairInfo(
@@ -94,7 +129,110 @@ export async function handleAdapterPairInfo(
   if (info.installUrl) result.installUrl = info.installUrl;
   if (info.instructions) result.instructions = info.instructions;
   if (info.unreachableCallingCodes?.length) result.unreachableCallingCodes = info.unreachableCallingCodes;
+  if (service.adapterPairingLink) result.pairingLinks = true;
+  const origin = ctx.installationIdentity?.canonicalOrigin;
+  if (origin) result.setupUrl = messengerSetupUrl(origin, adapter);
   return result;
+}
+
+/**
+ * Mints a single-use code into a link that opens the messenger ready to send it. Whoever
+ * sends it connects that messenger account to the caller, so only a person signed in
+ * here mints one; Ship sends its owner the setup link instead and never holds a code.
+ */
+export async function handleAdapterPairCreate(
+  args: AdapterPairCreateArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairCreateResult> {
+  const uid = interactivePairingOwner(ctx);
+  if (uid === null) throw new Error("adapter.pair.create requires a direct signed-in user");
+  const adapter = normalizeAdapterName(args.adapter);
+  const service = await requirePairingService(ctx, adapter);
+  if (!service.adapterPairingLink) throw new Error(`${adapterDisplayName(adapter)} connects with a code it sends; confirm that code instead`);
+  if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
+  const canonicalOrigin = requireCanonicalOrigin(ctx);
+  const code = Array.from(
+    crypto.getRandomValues(new Uint8Array(12)),
+    // The alphabet has 32 characters, so each byte's low five bits choose one without bias.
+    (byte) => PAIRING_CODE_ALPHABET[byte & 31],
+  ).join("");
+  const codeHash = await hashToken(code);
+  const created = ctx.adapters.pairingLinks.create({
+    adapter,
+    ownerUid: uid,
+    credentialEpoch: ctx.auth.credentialEpoch(uid),
+    codeHash,
+    now: Date.now(),
+  });
+  try {
+    const link = pairingLinkSchema.parse(await service.adapterPairingLink(adapterInstallationContext(ctx), {
+      code,
+      localUid: uid,
+      canonicalOrigin,
+      expiresAt: created.expiresAt,
+    }));
+    return {
+      adapter,
+      code: `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`,
+      url: requireHttpsUrl(link.url),
+      createdAt: created.createdAt,
+      expiresAt: created.expiresAt,
+    };
+  } catch (error) {
+    ctx.adapters.pairingLinks.cancel(codeHash, Date.now());
+    throw error;
+  }
+}
+
+/**
+ * Connects the messenger account that sent a link code to the owner this Kernel minted it
+ * for. The adapter vouches for the sender; the owner comes only from the Kernel's record.
+ */
+export async function redeemAdapterPairingLink(
+  ctx: KernelContext,
+  adapter: string,
+  input: RedeemAdapterPairingInput,
+): Promise<RedeemAdapterPairingResult> {
+  let code: string;
+  try {
+    code = normalizePairingCode(input.code);
+  } catch {
+    return UNAVAILABLE_LINK;
+  }
+  const codeHash = await hashToken(code);
+  const record = ctx.adapters.pairingLinks.get(adapter, codeHash);
+  if (!record || record.cancelled) return UNAVAILABLE_LINK;
+  const uid = record.ownerUid;
+  const operationId = await pairingOperationId(adapter, ctx.installationId, uid, code);
+  if (record.redeemed) {
+    // A retried delivery of the code's message is answered as before, unless that connection has ended.
+    const connected = ctx.adapters.identityLinks.list(uid)
+      .some((link) => link.adapter === adapter && link.metadata?.operationId === operationId);
+    return connected ? { paired: true } : UNAVAILABLE_LINK;
+  }
+  if (record.expiresAt <= Date.now()) return UNAVAILABLE_LINK;
+  // A credential change cancels the owner's codes; the confirmation rechecks it before each commit.
+  if (activeHumanOwner(ctx, uid) === null) {
+    return { paired: false, reason: "refused", message: "The account that made this link is no longer active" };
+  }
+  try {
+    const service = await requirePairingService(ctx, adapter);
+    await confirmAdapterPairing(ctx, service, {
+      adapter,
+      code,
+      uid,
+      credentialEpoch: record.credentialEpoch,
+      operationId,
+      canonicalOrigin: requireCanonicalOrigin(ctx),
+    }, true);
+  } catch (error) {
+    const diagnostics = exceptionDiagnostics(error);
+    console.warn("[Kernel] Messenger link did not connect:", { adapter, ...diagnostics });
+    // The sender reads this in their messenger: the scrubbed reason, never the error object.
+    return { paired: false, reason: "refused", message: redactDiagnosticText(diagnostics.exceptionMessage ?? "Connection failed", REFUSAL_TEXT_LIMIT) };
+  }
+  ctx.adapters.pairingLinks.redeemed(adapter, codeHash, Date.now());
+  return { paired: true };
 }
 
 export async function handleAdapterPairInspect(
@@ -104,7 +242,7 @@ export async function handleAdapterPairInspect(
   requirePairingOwner(ctx, "adapter.pair.inspect");
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
-  const service = await requirePairingService(ctx, adapter);
+  const service = await requireCodePairingService(ctx, adapter);
   if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
   const candidate = requirePairingCandidate(await service.adapterPairingInspect!(
     adapterInstallationContext(ctx),
@@ -123,18 +261,26 @@ export async function handleAdapterPairConfirm(
   const code = normalizePairingCode(args.code);
   await authorizeNestedOperation(ctx, "adapter.pair.confirm", { adapter });
   ctx.requestSignal?.throwIfAborted();
-  const service = await requirePairingService(ctx, adapter);
+  const service = await requireCodePairingService(ctx, adapter);
   if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
-  const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
-  if (!canonicalOrigin) {
-    throw new Error("Managed adapter pairing is not available in this installation");
-  }
-  const operationId = await stableOpaqueId("adapter-pair", [
-    adapter,
-    ctx.installationId,
-    uid,
-    code,
-  ]);
+  const canonicalOrigin = requireCanonicalOrigin(ctx);
+  const operationId = await pairingOperationId(adapter, ctx.installationId, uid, code);
+  return await confirmAdapterPairing(ctx, service, {
+    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin,
+  }, !ctx.processId);
+}
+
+/**
+ * Connects the account a live claim names to `uid` through the adapter's prepare, activate
+ * and finalize. `interactive` says the person approved it themselves rather than through a process.
+ */
+async function confirmAdapterPairing(
+  ctx: KernelContext,
+  service: AdapterPairingWorkerInterface,
+  confirmation: Omit<PairingConfirmation, "humanConfirmed">,
+  interactive: boolean,
+): Promise<AdapterPairConfirmResult> {
+  const { adapter, code, uid, operationId, canonicalOrigin } = confirmation;
   const existingCandidate = requirePairingCandidate(await service.adapterPairingInspect!(
     adapterInstallationContext(ctx),
     code,
@@ -158,7 +304,7 @@ export async function handleAdapterPairConfirm(
   if (existingLink && existingLink.uid !== uid) {
     throw new Error("This external identity is linked to another user in this GSV");
   }
-  const humanConfirmed = !ctx.processId || (existingLink?.linkedByUid === uid
+  const humanConfirmed = interactive || (existingLink?.linkedByUid === uid
     && existingLink.metadata?.managed === true && existingLink.metadata.humanConfirmed !== false);
   const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
   const cleanup = retainedLink && (!existingLink || (
@@ -166,7 +312,7 @@ export async function handleAdapterPairConfirm(
     && retainedLink.metadata.operationId !== operationId
   )) ? retainedLink : null;
   const completion = prepareAdapterPairing(ctx, service, existingCandidate, cleanup, {
-    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed,
+    ...confirmation, humanConfirmed,
   });
   // Replacing a link owns completion from the first destructive operation.
   if (cleanup) ctx.defer(completion);
@@ -231,21 +377,26 @@ async function completeAdapterPairing(
   prepared: AdapterPairingPreparation,
   { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed }: PairingConfirmation,
 ): Promise<AdapterPairConfirmResult> {
+  const metadata: ManagedIdentityLinkMetadata = {
+    managed: true,
+    humanConfirmed,
+    surfaceKind: "dm",
+    surfaceId: prepared.candidate.surfaceId,
+    routeScope: pairingRouteScope(prepared.candidate),
+    routeGeneration: prepared.route.generation,
+    operationId,
+  };
+  const actorName = displayText(prepared.candidate.actorName);
+  if (actorName) metadata.actorName = actorName;
+  const actorHandle = displayText(prepared.candidate.actorHandle);
+  if (actorHandle) metadata.actorHandle = actorHandle;
   ctx.adapters.identityLinks.link(
     adapter,
     prepared.candidate.accountId,
     prepared.candidate.actorId,
     uid,
     humanConfirmed ? uid : principalOf(ctx)!.account.uid,
-    {
-      managed: true,
-      humanConfirmed,
-      surfaceKind: "dm",
-      surfaceId: prepared.candidate.surfaceId,
-      routeScope: pairingRouteScope(prepared.candidate),
-      routeGeneration: prepared.route.generation,
-      operationId,
-    },
+    metadata,
   );
   const activated = requirePairingPreparation(await service.adapterPairingActivate!(
     adapterInstallationContext(ctx),
@@ -281,6 +432,11 @@ async function completeAdapterPairing(
   if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
     throw new Error("Adapter pairing changed during finalization");
   }
+  // Only now is the connection whole; a lost finalization leaves the link without `linkedAt` until a retry completes it.
+  ctx.adapters.identityLinks.link(adapter, finalizedLink.accountId, finalizedLink.actorId, uid, finalizedLink.linkedByUid, {
+    ...finalizedLink.metadata,
+    linkedAt: Date.now(),
+  });
   // Ship's next private reply, such as the `adapter.connected` hello below, goes to the paired DM.
   ctx.shipReplies.recordAdapterPairing(uid, operationId, {
     kind: "adapter",
@@ -399,6 +555,7 @@ export async function disconnectManagedIdentityLink(
   }
 }
 
+/** The adapter's pairing RPCs; `adapterPairingLink` is present when the adapter pairs from Kernel-minted links. */
 async function requirePairingService(
   ctx: KernelContext,
   adapter: string,
@@ -408,7 +565,7 @@ async function requirePairingService(
   if (!adapterSupportsPairing(service)) throw new Error(`Adapter does not support managed pairing: ${adapter}`);
   const descriptor = await describeAdapterService(adapter, service);
   if (!descriptor?.capabilities.pairing) throw new Error(`Adapter does not advertise pairing: ${adapter}`);
-  return {
+  const pairing: AdapterPairingWorkerInterface = {
     adapterPairingInfo: (...args) => service.adapterPairingInfo!(...args),
     adapterPairingInspect: (...args) => service.adapterPairingInspect!(...args),
     adapterPairingPrepare: (...args) => service.adapterPairingPrepare!(...args),
@@ -416,6 +573,55 @@ async function requirePairingService(
     adapterPairingFinalize: (...args) => service.adapterPairingFinalize!(...args),
     adapterPairingDisconnect: (...args) => service.adapterPairingDisconnect!(...args),
   };
+  if (descriptor.capabilities.pairingLinks) pairing.adapterPairingLink = (...args) => service.adapterPairingLink!(...args);
+  return pairing;
+}
+
+/** A pasted code reaches only adapters that send one; the others connect from a link a person makes in Settings. */
+async function requireCodePairingService(
+  ctx: KernelContext,
+  adapter: string,
+): Promise<AdapterPairingWorkerInterface> {
+  const service = await requirePairingService(ctx, adapter);
+  if (service.adapterPairingLink) {
+    throw new Error(`${adapterDisplayName(adapter)} connects from a link in Settings → Messengers, not a pasted code`);
+  }
+  return service;
+}
+
+function requireCanonicalOrigin(ctx: KernelContext): string {
+  const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
+  if (!canonicalOrigin) throw new Error("Managed adapter pairing is not available in this installation");
+  return canonicalOrigin;
+}
+
+async function pairingOperationId(adapter: string, installationId: string, uid: number, code: string): Promise<string> {
+  return await stableOpaqueId("adapter-pair", [adapter, installationId, uid, code]);
+}
+
+/** Where this Ship opens a messenger's setup, for its owner. */
+function messengerSetupUrl(origin: string, adapter: string): string {
+  const url = new URL("/chat/settings", origin);
+  url.searchParams.set("section", "messengers");
+  url.searchParams.set("messenger", adapter);
+  return url.toString();
+}
+
+function requireHttpsUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Adapter returned an invalid pairing link");
+  }
+  if (url.protocol !== "https:") throw new Error("Adapter returned an invalid pairing link");
+  return url.toString();
+}
+
+/** A name or handle the messenger reported, on one bounded line; untrusted text. */
+function displayText(value: string | undefined): string | undefined {
+  const text = value?.replace(/\s+/g, " ").trim();
+  return text ? Array.from(text).slice(0, DISPLAY_TEXT_LIMIT).join("") : undefined;
 }
 
 function normalizePairingCode(value: string): string {

@@ -17,15 +17,23 @@ export function adapterPairingOwner(ctx: KernelContext): number | null {
   return uid === null ? null : activeHumanOwner(ctx, uid);
 }
 
-function activeHumanOwner(ctx: KernelContext, uid: number): number | null {
+/** The uid when it is a person's own account that is neither locked nor removed. */
+export function activeHumanOwner(ctx: KernelContext, uid: number): number | null {
   const user = ctx.auth.getPasswdByUid(uid);
   const shadow = user ? ctx.auth.getShadowByUsername(user.username) : null;
   if (!user || uid < 1000 || ctx.auth.isPersonalAgentUid(uid) || !shadow || isLocked(shadow) || ctx.auth.isAccountDisabled(uid)) return null;
   return uid;
 }
 
-export function canLinkAdapter(ctx: KernelContext): boolean {
+/**
+ * Whether the caller can connect a messenger for its owner. A messenger that pairs from a link
+ * connects when the person makes the link here, or when their process sends them the setup page.
+ */
+export function canLinkAdapter(ctx: KernelContext, pairingLinks = false): boolean {
   if (adapterPairingOwner(ctx) === null) return false;
   const calls = principalOf(ctx)!.calls;
-  return ["adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"].every((call) => hasCapability(calls, call));
+  const needed = !pairingLinks
+    ? ["adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"]
+    : ctx.processId ? ["adapter.pair.info"] : ["adapter.pair.info", "adapter.pair.create"];
+  return needed.every((call) => hasCapability(calls, call));
 }

@@ -23,10 +23,14 @@ import {
 } from "./adapter-service";
 import {
   handleAdapterPairConfirm,
+  handleAdapterPairCreate,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
   handleAdapterPairInspect,
+  redeemAdapterPairingLink,
 } from "./adapter-pairing";
+import { AdapterPairingLinkStore } from "./adapter-pairing-links";
+import { hashToken } from "../auth/shadow";
 import * as sharedUtils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import {
@@ -4918,12 +4922,16 @@ describe("managed adapter pairing", () => {
     pairingCandidate = candidate,
     pairingRoute = route,
     adapter = "telegram",
+    pairingLinks = false,
   ) {
     return {
       adapterDescribe: vi.fn(async () => ({ version: 1 as const, id: adapter, displayName: adapter, capabilities: {
-        connect: false, disconnect: false, send: true, status: true, activity: true, pairing: true,
+        connect: false, disconnect: false, send: true, status: true, activity: true, pairing: true, pairingLinks,
         surfaces: ["dm"], media: { inbound: [], outbound: [] },
       } })),
+      adapterPairingLink: vi.fn(async (_installation: { installationId: string }, input: { code: string }) => ({
+        url: `https://wa.me/34600000000?text=${encodeURIComponent(input.code)}`,
+      })),
       adapterPairingInfo: vi.fn(async () => ({
         accountId: "managed",
         configured: true,
@@ -4997,6 +5005,7 @@ describe("managed adapter pairing", () => {
       accountId: "managed",
       configured: true,
       botUsername: "official_gsv_bot",
+      setupUrl: "https://test.gsv.space/chat/settings?section=messengers&messenger=telegram",
     });
   });
 
@@ -5065,6 +5074,7 @@ describe("managed adapter pairing", () => {
       accountId: "managed",
       configured: true,
       botUsername: "official_gsv_bot",
+      setupUrl: "https://test.gsv.space/chat/settings?section=messengers&messenger=telegram",
     });
     await expect(handleAdapterPairInspect({
       adapter: "telegram",
@@ -5385,6 +5395,206 @@ describe("managed adapter pairing", () => {
       authenticated: true,
       mode: "managed-shared",
     }));
+  });
+
+  describe("links", () => {
+    const whatsappCandidate = { ...candidate, actorId: "34611111189", surfaceId: "34611111189", actorName: "Hank\nHuman", actorHandle: "+34•••••••89" };
+
+    /** A context whose Kernel keeps link codes in real SQL and records the link it makes. */
+    function linkContext(sql: SqlStorage, service: ReturnType<typeof pairingService>, options: MakeContextOptions = directUserOptions()) {
+      let currentLink: IdentityLinkRecord | null = null;
+      const identityLinks = {
+        get: vi.fn(() => currentLink),
+        getForCleanup: vi.fn(() => currentLink),
+        link: vi.fn((adapter: string, accountId: string, actorId: string, uid: number, linkedByUid: number, metadata: IdentityLinkRecord["metadata"]) => {
+          currentLink = { adapter, accountId, actorId, uid, linkedByUid, metadata, createdAt: 1 };
+          return currentLink;
+        }),
+        unlink: vi.fn(() => { currentLink = null; return true; }),
+        listByAccount: vi.fn(() => currentLink ? [currentLink] : []),
+        list: vi.fn(() => currentLink ? [currentLink] : []),
+      };
+      const ctx = makeContext(
+        { CHANNEL_WHATSAPP: service },
+        { upsert: vi.fn(), setOwner: vi.fn(), list: vi.fn(() => []), listByOwner: vi.fn(() => []) },
+        { ...options, identityLinks },
+      );
+      Object.assign(ctx.adapters, { pairingLinks: new AdapterPairingLinkStore(sql) });
+      return { ctx, identityLinks };
+    }
+
+    /** The Kernel's own context for an adapter's redemption: no caller, only the installation. */
+    function redemptionOptions(): MakeContextOptions {
+      const { connection: _connection, peer: _peer, ...rest } = directUserOptions();
+      return rest;
+    }
+
+    it("mints a single-use code into a link for a person signed in here, and keeps only its hash", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const created = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        expect(created).toMatchObject({ adapter: "whatsapp", code: expect.stringMatching(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/) });
+        expect(created.expiresAt - created.createdAt).toBe(10 * 60 * 1000);
+        const code = created.code.replaceAll("-", "");
+        expect(created.url).toBe(`https://wa.me/34600000000?text=${code}`);
+        expect(service.adapterPairingLink).toHaveBeenCalledWith({ installationId }, {
+          code, localUid: 1000, canonicalOrigin, expiresAt: created.expiresAt,
+        });
+        const rows = sql.exec<{ code_hash: string }>("SELECT code_hash FROM adapter_pairing_links").toArray();
+        expect(rows).toEqual([{ code_hash: await hashToken(code) }]);
+        expect(rows[0]!.code_hash).not.toContain(code);
+        await expect(handleAdapterPairInfo({ adapter: "whatsapp" }, ctx)).resolves.toMatchObject({
+          pairingLinks: true,
+          setupUrl: "https://test.gsv.space/chat/settings?section=messengers&messenger=whatsapp",
+        });
+      });
+    });
+
+    it("withdraws a minted code when its messenger cannot hold it", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        service.adapterPairingLink.mockRejectedValueOnce(new Error("adapter unavailable"));
+        await expect(handleAdapterPairCreate({ adapter: "whatsapp" }, ctx)).rejects.toThrow("adapter unavailable");
+        service.adapterPairingLink.mockResolvedValueOnce({ url: "http://wa.me/34600000000" });
+        await expect(handleAdapterPairCreate({ adapter: "whatsapp" }, ctx)).rejects.toThrow();
+        expect(sql.exec<{ cancelled_at: number | null }>("SELECT cancelled_at FROM adapter_pairing_links").toArray())
+          .toEqual([{ cancelled_at: expect.any(Number) }, { cancelled_at: expect.any(Number) }]);
+      });
+    });
+
+    it("lets only the person mint a link; their process sends them the setup page instead", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        ctx.peer = userIdentity();
+        ctx.peer.provenance = { kind: "process-registry", processId: "pid-1" };
+        Object.assign(ctx, { processId: "pid-1" });
+        await expect(handleAdapterPairCreate({ adapter: "whatsapp" }, ctx)).rejects.toThrow("direct signed-in user");
+        expect(service.adapterPairingLink).not.toHaveBeenCalled();
+        // The process still learns where its owner connects.
+        await expect(handleAdapterPairInfo({ adapter: "whatsapp" }, ctx)).resolves.toMatchObject({ pairingLinks: true, setupUrl: expect.stringContaining("messenger=whatsapp") });
+        expect((await handleAdapterList({}, ctx)).adapters.find((entry) => entry.adapter === "whatsapp")).toMatchObject({ canLink: true });
+      });
+    });
+
+    it("refuses a pasted code for a messenger that connects from links, and a link for one that sends codes", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const { ctx } = linkContext(sql, pairingService(whatsappCandidate, route, "whatsapp", true));
+        await expect(handleAdapterPairInspect({ adapter: "whatsapp", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("Settings → Messengers");
+        await expect(handleAdapterPairConfirm({ adapter: "whatsapp", code: "ABCD-EFGH-JKLM" }, ctx)).rejects.toThrow("Settings → Messengers");
+        const telegram = pairingService();
+        const codes = makeContext({ CHANNEL_TELEGRAM: telegram }, { upsert: vi.fn(), list: vi.fn(() => []) }, directUserOptions());
+        await expect(handleAdapterPairCreate({ adapter: "telegram" }, codes)).rejects.toThrow("connects with a code");
+        expect(telegram.adapterPairingLink).not.toHaveBeenCalled();
+      });
+    });
+
+    it("connects the sender of a minted code to its owner, with how the messenger named them", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        const sibling = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        const { ctx: kernel, identityLinks } = linkContext(sql, service, redemptionOptions());
+
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+        expect(service.adapterPairingPrepare).toHaveBeenCalledWith({ installationId }, expect.objectContaining({
+          code: code.replaceAll("-", ""), installationId, localUid: 1000, canonicalOrigin,
+        }));
+        expect(identityLinks.link).toHaveBeenLastCalledWith("whatsapp", "managed", "34611111189", 1000, 1000, expect.objectContaining({
+          managed: true,
+          humanConfirmed: true,
+          surfaceId: "34611111189",
+          routeGeneration: "generation-new",
+          linkedAt: expect.any(Number),
+          actorName: "Hank Human",
+          actorHandle: "+34•••••••89",
+        }));
+        expect(kernel.shipReplies.recordAdapterPairing).toHaveBeenCalledWith(1000, expect.any(String), expect.objectContaining({ adapter: "whatsapp" }), kernel.adapters.privateDestinations, kernel.runRoutes);
+        // A retried delivery hears the same answer; the owner's other codes no longer connect anyone.
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+        expect(service.adapterPairingFinalize).toHaveBeenCalledTimes(1);
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code: sibling.code })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+        // Once disconnected, the spent code connects nobody again.
+        identityLinks.unlink();
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+      });
+    });
+
+    it("marks a link connected only once its messenger finishes the connection", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { ctx: kernel, identityLinks } = linkContext(sql, service, redemptionOptions());
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        try {
+          service.adapterPairingFinalize.mockRejectedValueOnce(new Error("finalization lost"));
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toMatchObject({ paired: false, reason: "refused" });
+        } finally {
+          warn.mockRestore();
+        }
+        // The route is in place, but a page waiting on the link must not call it connected yet.
+        expect(identityLinks.list()[0]?.metadata).toMatchObject({ routeGeneration: "generation-new" });
+        expect(identityLinks.list()[0]?.metadata).not.toHaveProperty("linkedAt");
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+        expect(identityLinks.list()[0]?.metadata).toMatchObject({ routeGeneration: "generation-new", linkedAt: expect.any(Number) });
+      });
+    });
+
+    it("tells the sender why a connection failed, scrubbed and short, and keeps the code for another try", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { ctx: kernel } = linkContext(sql, service, redemptionOptions());
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        try {
+          service.adapterPairingPrepare.mockRejectedValueOnce(new Error(`Pairing failed with Bearer secret-value ${"x".repeat(400)}`));
+          const refused = await redeemAdapterPairingLink(kernel, "whatsapp", { code });
+          expect(refused).toMatchObject({ paired: false, reason: "refused" });
+          const message = refused.paired ? "" : refused.message;
+          expect(message.length).toBeLessThanOrEqual(300);
+          expect(message).toContain("Bearer [redacted]");
+          expect(message).not.toContain("secret-value");
+          expect(warn).toHaveBeenCalledWith("[Kernel] Messenger link did not connect:", expect.objectContaining({ adapter: "whatsapp", exceptionName: "Error" }));
+        } finally {
+          warn.mockRestore();
+        }
+        // The code was not spent, so the person can send it again.
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+      });
+    });
+
+    it("connects no one with an unknown, expired, or stale code", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { ctx: kernel } = linkContext(sql, service, redemptionOptions());
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code: "ABCD-EFGH-JKLM" })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code: "not a code" })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+        // Another messenger's adapter cannot spend this one's code.
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        await expect(redeemAdapterPairingLink(kernel, "telegram", { code })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+
+        vi.mocked(kernel.auth.isAccountDisabled).mockReturnValue(true);
+        await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({
+          paired: false, reason: "refused", message: "The account that made this link is no longer active",
+        });
+        vi.mocked(kernel.auth.isAccountDisabled).mockReturnValue(false);
+
+        const now = Date.now();
+        const later = vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60 * 1000 + 1);
+        try {
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+        } finally {
+          later.mockRestore();
+        }
+        expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
+      });
+    });
   });
 });
 

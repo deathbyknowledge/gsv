@@ -21,6 +21,7 @@ import type {
   UnlinkManagedAdapterIdentityResult,
 } from "@humansandmachines/gsv/protocol";
 import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
+import type { AdapterGatewayService, RedeemAdapterPairingInput, RedeemAdapterPairingResult } from "@humansandmachines/gsv/services/adapters";
 import {
   adapterGatewayFrameSchema,
   adapterInstallationContextSchema,
@@ -249,7 +250,7 @@ const adapterServicePeerProfileSchema = z.object({
 
 export class AdapterGatewayEntrypoint
   extends WorkerEntrypoint<GatewayEnv, ServicePeerProfile>
-  implements GatewayAdapterInterface, ManagedAdapterGatewayService
+  implements GatewayAdapterInterface, ManagedAdapterGatewayService, AdapterGatewayService
 {
   async serviceFrame(
     inputInstallation: AdapterInstallationContext,
@@ -335,6 +336,22 @@ export class AdapterGatewayEntrypoint
     input: UnlinkManagedAdapterIdentityInput,
   ): Promise<UnlinkManagedAdapterIdentityResult> {
     return await this.unlinkManagedAdapterIdentity(installation, input);
+  }
+
+  /** The installation comes from the adapter's record of the code, and the Kernel checks it minted that code. */
+  async redeemAdapterPairing(
+    installation: AdapterInstallationContext,
+    input: RedeemAdapterPairingInput,
+  ): Promise<RedeemAdapterPairingResult> {
+    const directory = this.env.INSTALLATION_DIRECTORY;
+    if (!directory) throw new Error("Managed adapter pairing is not enabled");
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    const resolved = await directory.resolveInstallation(installationId);
+    if (!resolved.found || resolved.installationId !== installationId) {
+      return { paired: false, reason: "unavailable", message: "This link expired or was already used" };
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.redeemAdapterPairing(this.resolveServicePeerProfile().id, input);
   }
 
   private resolveServicePeerProfile(): ServicePeerProfile {
