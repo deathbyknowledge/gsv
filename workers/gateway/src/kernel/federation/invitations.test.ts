@@ -136,9 +136,20 @@ describe("invitations", () => {
     await alice.run((ctx) => handleContactInviteCancel({ inviteId }, ctx));
     await expect(bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
       .rejects.toThrow(/^This invitation was cancelled\.$/);
-    // The refusal is final, so a retry doesn't call again.
+    // The refusal is final, so a retry doesn't call again and repeats what the inviting Ship said.
     await expect(bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
-      .rejects.toThrow("Contact pairing attempt is terminal (remote-rejected:410)");
+      .rejects.toThrow(/^This invitation was cancelled\.$/);
+  });
+
+  it("says an invitation refused before its refusal was kept isn't available", async () => {
+    const { code, inviteId } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
+    await alice.run((ctx) => handleContactInviteCancel({ inviteId }, ctx));
+    await expect(bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
+      .rejects.toThrow(/^This invitation was cancelled\.$/);
+    // Earlier releases kept only the status.
+    await bob.run((_ctx, storage) => storage.sql.exec("UPDATE federation_pairing_attempts SET terminal_reason = 'remote-rejected:404'"));
+    await expect(bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
+      .rejects.toThrow(/^This invitation isn't available\. Ask for a new one\.$/);
   });
 
   it("asks for a new invitation when the code is from before DIDs", async () => {

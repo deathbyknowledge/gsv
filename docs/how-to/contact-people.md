@@ -29,17 +29,21 @@ to Ship or someone who already has a Ship. It connects one person and lasts seve
 days; you can cancel it before acceptance.
 
 On a managed deployment, the link opens a centered invitation showing who invited you.
-Choose **Continue**. Existing users select their Ship; new users verify their
-email and create one. The contact invitation stays with them through signup and
+Choose **Continue**, then enter your email under **Sign in or create your Ship**.
+After the emailed code, existing users select their Ship and new users create one.
+The contact invitation stays with them through signup and
 activation. In their Ship, they choose who handles new messages and accept the connection.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
-The recipient can also enter their handle or address, including a Ship hosted by another
+The recipient can also enter their handle or address below the email, including a Ship hosted by another
 operator. This remains available if the browser cannot load or save signup state.
 Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
 paste it in People.
+
+When the inviting Ship refuses an invitation, because it was cancelled, already used or
+isn't available any more, accepting it again shows the same reason. Ask for a new link.
 
 Ship can create or accept these same invitations when asked, after you choose
 who handles new messages. The built-in `contacts` skill covers inviting people,
