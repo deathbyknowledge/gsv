@@ -11,7 +11,9 @@ const USAGE = `Usage:
   messenger inspect ADAPTER < code.txt
   messenger connect ADAPTER < code.txt
 
-Ask the user to follow the setup instructions and paste the code in the conversation.
+When setup returns pairingLinks: true, send the user its setupUrl. They connect there
+with one tap; there is no code to collect.
+Otherwise ask the user to follow the setup instructions and paste the code in the conversation.
 Save their code to a file and read it through stdin; keep it out of the logged command.
 Connect redeems it for the process's human owner. Only report success after it returns paired: true.
 `;

@@ -15,10 +15,11 @@ The first time you sign in, Ship wakes and greets you in a language detected
 from your browser; the chat reads "Ship is waking up" until its first message
 lands. In front of the chat, the web app asks once where you want to message
 Ship. Choose **WhatsApp** or **Telegram** to connect it right there: open the
-messenger, send Ship the message it opens with, then paste the code Ship
-replies with and confirm it is you. **Trouble connecting?** shows how to ask for
-a new code. Ship says hello on the messenger once it connects; from then on Ship
-replies wherever you last wrote to it. If your device's language points to a
+messenger and send the message it opens with, which carries a one-time code. On a
+computer you can scan the QR code with your phone instead. The screen connects on
+its own and names the account that connected, with **Not you?** to undo it.
+**Trouble connecting?** shows the code to send by hand. Ship says hello on the
+messenger once it connects; from then on Ship replies wherever you last wrote to it. If your device's language points to a
 country the Ship's WhatsApp number cannot reach, the WhatsApp steps say so, and
 a note under the choices explains that connecting a messenger gives Ship only
 the messages you send it. You can also skip and chat right here. The screen shows once per account, so Desktop and later visits go

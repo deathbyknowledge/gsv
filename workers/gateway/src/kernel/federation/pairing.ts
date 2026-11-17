@@ -7,6 +7,28 @@ import type {
 import { endContactHandling } from "./attention";
 import { cancelRequestResponsibilities } from "./requests";
 
+/** What the person accepting an invitation reads when the inviting Ship refuses, by the error it names. */
+const REFUSALS = new Map([
+  ["InvitationNotFound", "This invitation isn't available. Ask for a new one."],
+  ["InvitationExpired", "This invitation has expired. Ask for a new one."],
+  ["InvitationCancelled", "This invitation was cancelled."],
+  ["InvitationUsed", "This invitation was already used."],
+]);
+const UNAVAILABLE = REFUSALS.get("InvitationNotFound")!;
+
+/** What the person accepting reads for the XRPC error the inviting Ship refused with, when it is a known refusal. */
+export function invitationRefusal(error: string | undefined): string | undefined {
+  return error ? REFUSALS.get(error) : undefined;
+}
+
+/**
+ * Why an attempt ends when the inviting Ship refuses it for good. The reason
+ * keeps a known refusal's name, so a retry repeats it without calling again.
+ */
+export function remoteRejection(status: number, error: string | undefined): string {
+  return invitationRefusal(error) ? `remote-rejected:${status}:${error}` : `remote-rejected:${status}`;
+}
+
 export function activateFederationContact(
   activation: Parameters<FederationStore["activateContact"]>[0],
   ctx: KernelContext,
@@ -59,6 +81,9 @@ export function assertPairingAttemptCanContinue(
   if (attempt.terminalReason === "superseded") {
     throw new Error("Contact pairing attempt was superseded");
   }
+  const [cause, , refusal] = attempt.terminalReason.split(":");
+  // A refusal without a name the person can read says the invitation isn't available.
+  if (cause === "remote-rejected") throw new Error(invitationRefusal(refusal) ?? UNAVAILABLE);
   throw new Error(`Contact pairing attempt is terminal (${attempt.terminalReason})`);
 }
 

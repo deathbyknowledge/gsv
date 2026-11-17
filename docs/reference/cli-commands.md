@@ -622,14 +622,16 @@ The Ship's shell exposes messenger pairing to Ship and signed-in users:
 ```bash
 messenger list
 messenger setup whatsapp
-messenger inspect whatsapp < code.txt
-messenger connect whatsapp < code.txt
+messenger inspect slack < code.txt
+messenger connect slack < code.txt
 ```
 
-`setup` returns adapter-owned instructions for getting a code. The user can
-paste it into their conversation and let Ship connect it for them. Save the
-code to a file with Write, read it through stdin, then remove the file; avoid
-putting it in logged shell command text. `connect` returns `paired: true` only
+`setup` returns adapter-owned instructions. When it reports `pairingLinks: true`,
+as for WhatsApp and Telegram, send the user its `setupUrl`: they connect on that
+page in Settings, and there is no code for Ship to collect. Otherwise the user can
+paste the code they get into their conversation and let Ship connect it for them.
+Save the code to a file with Write, read it through stdin, then remove the file;
+avoid putting it in logged shell command text. `connect` returns `paired: true` only
 after redemption completes. Processes link their human owner's account, subject
 to their capabilities and tool policy. See [Connect a messenger](/how-to/messengers).
 

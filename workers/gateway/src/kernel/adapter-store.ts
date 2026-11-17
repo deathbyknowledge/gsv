@@ -1,6 +1,7 @@
 import { AdapterStatusStore } from "./adapter-status";
 import { AdapterIngressReceiptStore } from "./adapter-ingress-receipts";
 import { AdapterMessageRefStore } from "./adapter-message-refs";
+import { AdapterPairingLinkStore } from "./adapter-pairing-links";
 import { IdentityLinkStore } from "./identity-links";
 import { SurfaceRouteStore } from "./surface-routes";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
@@ -12,6 +13,7 @@ export class AdapterStore {
   readonly status: AdapterStatusStore;
   readonly ingressReceipts: AdapterIngressReceiptStore;
   readonly messageRefs: AdapterMessageRefStore;
+  readonly pairingLinks: AdapterPairingLinkStore;
 
   constructor(sql: SqlStorage) {
     this.identityLinks = new IdentityLinkStore(sql);
@@ -20,5 +22,6 @@ export class AdapterStore {
     this.status = new AdapterStatusStore(sql);
     this.ingressReceipts = new AdapterIngressReceiptStore(sql);
     this.messageRefs = new AdapterMessageRefStore(sql);
+    this.pairingLinks = new AdapterPairingLinkStore(sql);
   }
 }

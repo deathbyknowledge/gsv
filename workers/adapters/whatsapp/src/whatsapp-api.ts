@@ -9,6 +9,7 @@ import {
 } from "../../shared/src/media-body";
 import { jsonValueSchema } from "../../../../packages/gsv/src/protocol/json.js";
 import type { BinaryBody } from "./types";
+import { isWhatsAppUserId } from "./whatsapp-address";
 import type { WhatsAppMediaLookup } from "./whatsapp-inbound-media";
 import { z } from "zod";
 
@@ -107,20 +108,32 @@ export function isWhatsAppTemplateErrorCode(code: number | undefined): boolean {
   return code !== undefined && code >= TEMPLATE_ERROR_MIN && code <= TEMPLATE_ERROR_MAX;
 }
 
+/**
+ * Sends one message to the person `payload.to` addresses. Meta takes a number as `to` and a
+ * business-scoped user ID as `recipient`.
+ */
 export async function sendWhatsAppMessage(
   accessToken: string,
   phoneNumberId: string,
   payload: WhatsAppOutboundPayload,
   fetcher: ManagedWhatsAppFetch = fetch,
 ): Promise<WhatsAppSentMessage> {
+  const { to, ...message } = payload;
+  const address: WhatsAppOutboundPayload = {};
+  if (isWhatsAppUserIdValue(to)) address.recipient = to;
+  else if (to !== undefined) address.to = to;
   const result = await callWhatsAppGraph(
     accessToken,
     `${WHATSAPP_GRAPH_BASE}/${phoneNumberId}/messages`,
-    { method: "POST", body: { messaging_product: "whatsapp", recipient_type: "individual", ...payload } },
+    { method: "POST", body: { messaging_product: "whatsapp", recipient_type: "individual", ...address, ...message } },
     fetcher,
     { idempotent: false, schema: sentMessageSchema },
   );
   return { messageId: result.messages[0]!.id };
+}
+
+function isWhatsAppUserIdValue(value: WhatsAppJsonValue | undefined): value is string {
+  return typeof value === "string" && isWhatsAppUserId(value);
 }
 
 /** Sets this number's reaction on one message; an empty emoji removes it. */

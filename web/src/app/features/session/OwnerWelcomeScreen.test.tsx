@@ -142,9 +142,10 @@ describe("owner welcome", () => {
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(collectText(tree)).toContain(friend ? "Choose your Ship" : "Create your Ship"));
       if (friend) {
-        const disclosure = collectNodes(tree).find((node) => node.type === "details");
-        expect(disclosure?.props).not.toHaveProperty("open", true);
-        expect(collectText(disclosure)).toContain("Use a handle or address");
+        // Someone whose Ship isn't listed sees how to open it rather than a folded-away option.
+        expect(collectNodes(tree).some((node) => node.type === "details")).toBe(false);
+        expect(collectText(tree)).toContain("Enter a handle or address");
+        expect(collectText(tree)).toContain("Address form");
       }
       await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Sign out")?.props.onClick?.(); });
       await vi.waitFor(() => expect(client.state.sessionSecret).toBeNull());
@@ -154,6 +155,11 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Email")).toBeDefined());
       expect(fieldOf(tree, "Handle") !== undefined).toBe(!friend);
       if (!friend) expect(checkboxOf(tree)?.props).toMatchObject({ checked: false });
+      // The email step serves people who already have a Ship as well as people creating one.
+      if (friend) {
+        expect(collectText(tree)).toContain("Sign in or create your Ship");
+        expect(collectText(tree)).toContain("Enter a handle or address");
+      }
       expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`${ORIGIN}/owner/api/session`, `${ORIGIN}/owner/api/logout`]);
       expect(connect).not.toHaveBeenCalled();
     } finally { await root.unmount(); }
@@ -626,7 +632,7 @@ describe("owner welcome", () => {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
       expect(collectText(tree)).toMatch(/Sponsor\s+invited you to Ship/);
-      expect(collectText(tree)).toContain("Use a handle or address");
+      expect(collectText(tree)).toContain("Enter a handle or address");
       expect(addressPanel.mock.lastCall![0].disabled).toBe(false);
       expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
     } finally { await root.unmount(); }

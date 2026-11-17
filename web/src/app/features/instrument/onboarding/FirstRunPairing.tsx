@@ -1,20 +1,23 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { TextInput } from "../../../components/ui/TextInput";
-import { rich, useT } from "../../../i18n/locale";
+import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
+import { useT } from "../../../i18n/locale";
 import {
-  useConfirmConsoleAdapterPairing,
   useConsoleAdapterPairingInfo,
-  useInspectConsoleAdapterPairing,
+  useCreateConsoleAdapterPairingLink,
+  useDisconnectConsoleAdapterPairing,
 } from "../../../services/system/useConsoleData";
 import { useCodeCopy, useCodeCopyOutcome } from "../shared/codeCopy";
+import { messengerLinkName } from "../settings/messengerConnectionsService";
+import { LinkQrCode } from "../settings/messengers/LinkQrCode";
+import { useMessengerLink } from "../settings/messengers/useMessengerLink";
 import {
   whatsAppCountryList,
   whatsAppNumberFromChatUrl,
   whatsAppReachForDevice,
   whatsAppReachSummary,
-} from "../settings/messengers/ManagedTelegramOnboardingFlow";
+} from "../settings/messengers/whatsapp";
 
 export type MessengerChoice = "whatsapp" | "telegram";
 
@@ -24,129 +27,107 @@ type Props = {
   /** The person already linked this messenger, so the panel only offers the way back to it. */
   linked: boolean;
   disabled: boolean;
-  onPaired: () => void;
+  /** The owner's messenger links, where the connection this card's link makes appears. */
+  links?: readonly ConsoleIdentityLink[];
+  onRefreshLinks: () => void;
   onFinish: () => void;
 };
 
 /**
- * The first run's pairing for one messenger: send Ship a message, then paste the code it replies with, as two
- * numbered steps; the step to do now holds the filled button. It uses the same pairing calls as Settings ›
- * Messengers, including the "is this you?" confirmation, and once linked sends the person back to the messenger.
+ * The first run's pairing for one messenger, as two numbered steps: open the messenger with the
+ * message the card's single-use link fills in and send it, then Ship says hello there. The step to
+ * do now holds the filled button. It makes the link with the same calls as Settings › Messengers,
+ * names the account that connected so a wrong one can be disconnected, and once linked sends the
+ * person back to the messenger.
  */
-export function FirstRunPairing({ adapter, name, linked, disabled, onPaired, onFinish }: Props) {
+export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefreshLinks, onFinish }: Props) {
   const t = useT();
   const info = useConsoleAdapterPairingInfo(adapter);
-  const inspect = useInspectConsoleAdapterPairing();
-  const confirm = useConfirmConsoleAdapterPairing();
-  const [code, setCode] = useState("");
-  // Opening the messenger, or typing a code that already arrived, moves the filled button to step 2.
+  const create = useCreateConsoleAdapterPairingLink();
+  const disconnect = useDisconnectConsoleAdapterPairing();
+  const pairing = useMessengerLink({
+    adapterId: adapter, ready: !linked && !disabled && info.data?.configured === true, links, onRefreshLinks, create, disconnect,
+  });
+  // Opening the messenger moves the filled button on to what happens next.
   const [launched, setLaunched] = useState(false);
-  const codeInput = useRef<HTMLInputElement>(null);
 
   const isWhatsApp = adapter === "whatsapp";
-  const number = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
+  const number = isWhatsApp ? whatsAppNumberFromChatUrl(pairing.link?.url ?? info.data?.installUrl) : "";
   const bot = info.data?.botUsername?.replace(/^@/, "") ?? "";
-  const contact = isWhatsApp ? number : bot && `@${bot}`;
   const chatUrl = isWhatsApp ? number && `https://wa.me/${number.slice(1)}` : bot && `https://t.me/${bot}`;
-  // WhatsApp's chat link carries the /link message ready to send.
-  const launchUrl = isWhatsApp ? info.data?.installUrl : chatUrl;
+  const destination = isWhatsApp ? number || t("settings.pairing.shipNumber") : bot ? `@${bot}` : t("settings.pairing.shipBot");
   const reach = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
-  const candidate = inspect.data;
-  const identity = candidate ? [candidate.actorName, candidate.actorHandle ?? candidate.actorId].filter(Boolean).join(" · ") : "";
-  const copy = useCodeCopy(() => contact, contact);
+  const code = pairing.link?.code ?? "";
+  const copy = useCodeCopy(() => code, code);
   const copyLabel = useCodeCopyOutcome(copy.state) || t("settings.logs.copy");
+  const open = t("settings.pairing.open", { name: name.toUpperCase() });
 
-  // Coming back from the messenger, the code it sent goes straight into the field.
-  useEffect(() => {
-    if (!launched) return undefined;
-    const focus = () => { if (document.visibilityState === "visible") codeInput.current?.focus(); };
-    document.addEventListener("visibilitychange", focus);
-    return () => document.removeEventListener("visibilitychange", focus);
-  }, [launched]);
+  // A connection already there needs no link; once the card makes one, only the finished connection it made counts.
+  if ((linked && !pairing.started) || pairing.connected) {
+    return <div class="first-run-pairing">
+      <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: name })} />
+      {/* a link can travel, so the card names who sent it and offers a way out for a wrong account */}
+      {pairing.connected && <div class="first-run-who">
+        <p class="gsv-cf-note gsv-prose">{t("settings.messengers.connectedTo", { id: messengerLinkName(pairing.connected) })}</p>
+        <Button variant="link" label={t(disconnect.isPending ? "settings.pairing.disconnecting" : "onboarding.surface.notYou")}
+          disabled={disabled || disconnect.isPending} onClick={() => { setLaunched(false); void pairing.disconnectWrongAccount(); }} />
+      </div>}
+      {pairing.error && <Alert variant="error" text={pairing.error} />}
+      <div class="first-run-actions">
+        <Button variant="primary" href={chatUrl} label={open} disabled={disabled || !chatUrl} onClick={onFinish} />
+        <Button variant="secondary" label={t("onboarding.surface.openChatHere")} disabled={disabled} onClick={onFinish} />
+      </div>
+    </div>;
+  }
 
-  if (linked || confirm.isSuccess) return <div class="first-run-pairing">
-    <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: name })} />
-    <div class="first-run-actions">
-      <Button variant="primary" href={chatUrl} label={t("settings.pairing.open", { name: name.toUpperCase() })} disabled={disabled || !chatUrl} onClick={onFinish} />
-      <Button variant="secondary" label={t("onboarding.surface.openChatHere")} disabled={disabled} onClick={onFinish} />
-    </div>
-  </div>;
-
-  const inspectCode = () => {
-    if (code.trim() && !inspect.isPending) inspect.mutate({ adapter, code });
-  };
-  const back = () => {
-    inspect.reset();
-    confirm.reset();
-  };
+  // An expired or failed link sends the person back to the first step, where a new one replaces it.
+  const retry = !create.isPending && (pairing.expired || pairing.error !== "");
+  const second = launched && !retry;
 
   return <ol class="gsv-cf-rail first-run-pairing">
-    <li class="gsv-cf-rail-step" aria-current={launched ? undefined : "step"}>
+    <li class="gsv-cf-rail-step" aria-current={second ? undefined : "step"}>
       <span class="gsv-cf-rail-mark" aria-hidden="true">
-        <span class={`gsv-sp-dot is-${launched ? "done" : "cur"}`}>1</span>
-        <span class={`gsv-cf-rail-line is-${launched ? "done" : "next"}`} />
+        <span class={`gsv-sp-dot is-${second ? "done" : "cur"}`}>1</span>
+        <span class={`gsv-cf-rail-line is-${second ? "done" : "next"}`} />
       </span>
       <div class="gsv-cf-rail-body">
         <p class="first-run-step-title gsv-prose-lead">{t("onboarding.surface.sendStep", { platform: name })}</p>
+        <p class="gsv-cf-note gsv-prose">{t(isWhatsApp ? "settings.pairing.linkWhatsappStart" : "settings.pairing.linkTelegramStart")}</p>
         {info.isError && <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform: name })} />}
-        <Button variant={launched ? "secondary" : "primary"} href={launchUrl} label={t("settings.pairing.open", { name: name.toUpperCase() })}
-          disabled={disabled || !launchUrl} onClick={() => setLaunched(true)} />
+        {info.data && !info.data.configured && <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform: name })} />}
+        {pairing.error && <Alert variant="error" text={pairing.error} />}
+        {pairing.expired && <p class="gsv-cf-note gsv-prose" role="status">{t("settings.pairing.linkExpired")}</p>}
+        {retry
+          ? <Button variant="primary" label={t("settings.pairing.newLink")} disabled={disabled} onClick={() => { setLaunched(false); void pairing.mint(); }} />
+          : <Button variant={second ? "secondary" : "primary"} href={pairing.waiting ? pairing.link?.url : undefined}
+            label={open} disabled={disabled || !pairing.waiting} onClick={() => setLaunched(true)} />}
+        {create.isPending && <p class="gsv-cf-note gsv-prose" role="status">{t("settings.pairing.makingLinkStatus")}</p>}
+        {/* a phone opens the link itself; a computer shows the code its camera can scan */}
+        {pairing.waiting && pairing.link && <div class="gsv-cf-scan">
+          <LinkQrCode url={pairing.link.url} label={t("settings.pairing.scanLabel", { platform: name })} />
+          <p class="gsv-cf-note gsv-prose gsv-cf-scan-hint">{t("settings.pairing.scan", { platform: name })}</p>
+        </div>}
         {reach.length > 0 && <details class="gsv-cf-aside gsv-prose">
           <summary>{whatsAppReachSummary(reach, t)}</summary>
           <p>{t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(reach, t) })}</p>
         </details>}
       </div>
     </li>
-    <li class="gsv-cf-rail-step" aria-current={launched ? "step" : undefined}>
+    <li class="gsv-cf-rail-step" aria-current={second ? "step" : undefined}>
       <span class="gsv-cf-rail-mark" aria-hidden="true">
-        <span class={`gsv-sp-dot is-${launched ? "cur" : "next"}`}>2</span>
+        <span class={`gsv-sp-dot is-${second ? "cur" : "next"}`}>2</span>
       </span>
       <div class="gsv-cf-rail-body">
-        <p class="first-run-step-title gsv-prose-lead">{t("onboarding.surface.codeStep")}</p>
-        {candidate ? <>
-          {/* the code alone cannot choose the account, so the person confirms who sent it */}
-          <Alert variant={candidate.linked ? "warning" : "neutral"}
-            title={t(candidate.linked ? "settings.pairing.replaceTitle" : "settings.pairing.isThisYou")}
-            text={candidate.linked ? t("settings.pairing.replaceText", { identity }) : t("settings.pairing.confirmText", { platform: name, identity })} />
-          {confirm.error && <Alert variant="error" text={confirm.error.message} />}
-          <div class="first-run-actions">
-            <Button variant="primary" label={t(confirm.isPending ? "settings.pairing.connecting" : "settings.pairing.connectIdentity")}
-              disabled={disabled || confirm.isPending} onClick={() => confirm.mutate({ adapter, code }, { onSuccess: onPaired })} />
-            <Button variant="secondary" label={t("settings.pairing.back")} disabled={confirm.isPending} onClick={back} />
-          </div>
-        </> : <>
-          <div class="first-run-code">
-            <TextInput label="" value={code} placeholder="ABCD-EFGH-JKLM" clearable disabled={disabled}
-              status={inspect.error ? "error" : "none"} message={inspect.error?.message}
-              onChange={(value) => {
-                setCode(value.toUpperCase());
-                if (value.trim()) setLaunched(true);
-                if (inspect.error) inspect.reset();
-              }}
-              inputProps={{
-                ref: codeInput,
-                "aria-label": t("onboarding.surface.codeStep"),
-                autoComplete: "one-time-code",
-                name: `${adapter}PairingCode`,
-                onKeyDown: (event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  inspectCode();
-                },
-              }} />
-            <Button variant={launched ? "primary" : "secondary"} label={t(inspect.isPending ? "settings.pairing.connecting" : "settings.pairing.connect")}
-              disabled={disabled || !code.trim() || inspect.isPending} onClick={inspectCode} />
-          </div>
-          {/* a rejected code opens the way to a new one */}
-          <details class="gsv-cf-aside gsv-prose first-run-trouble" open={inspect.isError || undefined}>
-            <summary>{t("onboarding.surface.trouble")}</summary>
-            <div class="first-run-trouble-line">
-              <p>{rich(t("onboarding.surface.troubleText", { platform: name }), { contact: <span class="first-run-contact">{contact}</span> })}</p>
-              {contact && <Button variant="link" label={copyLabel} onClick={copy.copy} />}
-            </div>
-            {isWhatsApp && <p>{t("settings.pairing.whatsappRelink")}</p>}
-          </details>
-        </>}
+        <p class="first-run-step-title gsv-prose-lead">{t("onboarding.surface.helloStep", { platform: name })}</p>
+        {pairing.waiting && <p class="gsv-cf-note gsv-prose" role="status">{t("settings.pairing.waiting")}</p>}
+        <details class="gsv-cf-aside gsv-prose first-run-trouble">
+          <summary>{t("onboarding.surface.trouble")}</summary>
+          {pairing.waiting && pairing.link && <div class="first-run-trouble-line">
+            <p>{t("settings.pairing.linkManual", { code: pairing.link.code, destination, platform: name })}</p>
+            <Button variant="link" label={copyLabel} onClick={copy.copy} />
+          </div>}
+          <p>{t("settings.pairing.linkMove", { platform: name })}</p>
+        </details>
       </div>
     </li>
   </ol>;

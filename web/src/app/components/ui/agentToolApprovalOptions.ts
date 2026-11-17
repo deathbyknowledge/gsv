@@ -156,6 +156,7 @@ const GRANT_LABELS = new Map(Object.entries({
   "approach.create": "approval.match.approachCreate",
   "approach.list": "approval.match.approachList",
   "adapter.pair.info": "approval.match.adapterPairInfo",
+  "adapter.pair.create": "approval.match.adapterPairCreate",
   "adapter.pair.inspect": "approval.match.adapterPairInspect",
   "adapter.pair.confirm": "approval.match.adapterPairConfirm",
   "adapter.pair.disconnect": "approval.match.adapterPairDisconnect",

@@ -240,8 +240,11 @@ processes.
 
 Actors link through messenger pairing, which the adapter owns. When the Kernel
 has no link for a direct message, it answers `pairing_required` and the adapter
-replies with its own pairing instructions. Non-DM messages from unlinked actors
-are dropped. Once
+replies with its own pairing instructions. A link code reaches only the
+installation that minted it: the adapter holds the installation in a claim the
+Kernel created when a signed-in human made the link, and the Kernel redeems the
+code against its stored hash for that human, never a uid the message names.
+Non-DM messages from unlinked actors are dropped. Once
 linked, a direct message is delivered to the user's personal controller unless
 that controller opened a direct line to an owned work process from the exact
 current DM run. A newer private message or selection fences a late route

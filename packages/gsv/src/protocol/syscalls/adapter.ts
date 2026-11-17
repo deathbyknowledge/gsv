@@ -229,6 +229,25 @@ export type AdapterPairInfoResult = {
   instructions?: string;
   /** Calling codes the provider keeps this account from messaging, so pairing cannot complete from there. */
   unreachableCallingCodes?: string[];
+  /** The person connects by sending a code from a link `adapter.pair.create` makes, not by pasting one the platform sends. */
+  pairingLinks?: boolean;
+  /** Opens this messenger's setup in Ship, for sending to its owner. It carries no code. */
+  setupUrl?: string;
+};
+
+export type AdapterPairCreateArgs = {
+  adapter: string;
+};
+
+/** A single-use link: the messenger account that sends its code connects to the caller. */
+export type AdapterPairCreateResult = {
+  adapter: string;
+  /** The code inside the link, for sending by hand when the link cannot open the messenger. */
+  code: string;
+  /** Opens the messenger with the code ready to send to the platform account. */
+  url: string;
+  createdAt: number;
+  expiresAt: number;
 };
 
 export type AdapterPairInspectArgs = {

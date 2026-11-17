@@ -15,9 +15,18 @@ import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { settingsGatewayFixture } from "./settingsGatewayFixture";
 
 const account: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", relation: "self", runnable: false, gecos: "", capabilities: ["*"] };
+function stubPage(href: string) {
+  vi.stubGlobal("window", {
+    location: new URL(href),
+    history: { state: { gsvAppIndex: 0 }, replaceState: vi.fn() },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
+}
+
 beforeEach(() => {
   vi.stubGlobal("document", {});
-  vi.stubGlobal("window", { location: new URL("https://ship.example/chat/settings") });
+  stubPage("https://ship.example/chat/settings");
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -45,6 +54,24 @@ it("keeps Slack and Discord connection controls disabled even when their adapter
     const whatsapp = screen.nodes().find((node) => node.props["aria-label"] === "WhatsApp")!;
     expect(collectNodes(whatsapp).find((node) => node.type === "button")!.props.disabled).toBe(false);
   } finally { await screen.close(); }
+});
+
+it("opens the setup of the messenger Ship's setup link names, and only one that can connect", async () => {
+  settingsGatewayFixture();
+  stubPage("https://ship.example/chat/settings?section=messengers&messenger=whatsapp");
+  const screen = await mount(() => MessengerConnections({ account, active: true }));
+  try {
+    await vi.waitFor(() => expect(screen.nodes().find((node) => node.type === MessengerPairing)?.props.adapter).toBe("whatsapp"));
+  } finally { await screen.close(); }
+
+  for (const messenger of ["slack", "nonsense"]) {
+    stubPage(`https://ship.example/chat/settings?section=messengers&messenger=${messenger}`);
+    const other = await mount(() => MessengerConnections({ account, active: true }));
+    try {
+      await vi.waitFor(() => expect(other.nodes().filter((node) => node.props.class === "settings-messenger")).toHaveLength(4));
+      expect(other.nodes().some((node) => node.type === MessengerPairing)).toBe(false);
+    } finally { await other.close(); }
+  }
 });
 
 it("reorders permission rules through the table and removes one before saving", async () => {

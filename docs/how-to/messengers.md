@@ -6,8 +6,8 @@ Messengers are extensible. This page documents the messengers bundled with the
 current release; it is not a complete list of messaging apps Ship can connect.
 
 Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
-apps offered in **Messengers**. You connect your account on that messenger with
-a short-lived code.
+apps offered in **Messengers**. You connect WhatsApp and Telegram by sending one
+message from a link your Ship makes, and Slack and Discord with a short-lived code.
 You do not need to create a bot or paste its token into your Ship.
 
 When Ship asks something with a few likely answers, the messenger offers them
@@ -26,17 +26,29 @@ for your answer. If you answer a request that has ended, whether it timed out,
 was interrupted by a new message or was answered elsewhere, the messenger says
 your answer wasn't used; ask Ship to try again if it still needs doing.
 
+## Start from a messenger
+
+You can message the Ship number on WhatsApp or the Ship bot on Telegram before
+you have a Ship. When the operator offers signup, the reply links to it. Create
+your Ship there, and the first screen it shows has that messenger's connection
+open: tap **Open WhatsApp** (or **Open Telegram**) and send the message it
+fills in. Ship says hello there once you are connected.
+
 ## Ask Ship to connect
 
-Ask Ship to connect the messenger you want. It gets the current connection
-instructions from that messenger and shares the link or bot name.
-Follow those instructions, then paste the code back into your conversation.
-Ship redeems it for your account and tells you when the connection succeeds.
-No visit to Settings is needed. If the code expires, request a new one.
-To also use that messenger for password recovery, connect it directly in Settings.
+Ask Ship to connect WhatsApp or Telegram, and it sends you a link to that
+messenger's page in **Settings → Messengers**. Open it and follow the steps below;
+the page makes your link, so Ship never sees its code. Because you connect it
+yourself, the messenger also works for password recovery.
 
+For Slack and Discord, Ship gets the current connection instructions from that
+messenger and shares the link or bot name. Follow those instructions, then paste
+the code back into your conversation. Ship redeems it for your account and tells
+you when the connection succeeds. If the code expires, request a new one. To also
+use that messenger for password recovery, connect it directly in Settings.
 Only share a code from your own messenger account. If it is already connected
 to another Ship, redeeming the code moves that connection to this Ship.
+
 Send another message in the messenger after connecting to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
@@ -59,19 +71,24 @@ it can't see, and it asks rather than guesses.
 
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and choose **Send message**. It opens
-   a chat with the official Ship bot. To message it manually instead, find the
-   bot handle shown under the instructions.
-2. Send the bot any private message. It replies with a short-lived code.
-3. Enter that code in the **Telegram code** field and choose **Connect**. Ship
-   shows the Telegram display name, handle, and numeric ID that requested it.
-4. Confirm only if that is your Telegram account. The code alone cannot choose
-   an installation or user; the signed-in Ship session supplies both.
-5. Send another message in Telegram. It reaches the same Ship conversation
+1. In Ship, open **Settings → Messengers → Telegram**. Ship makes a link with a
+   one-time code, which works once, for 10 minutes.
+2. Choose **Open Telegram**. It opens a chat with the official Ship bot; tap
+   **Start**. On a computer, you can scan the QR code with your phone's camera
+   instead, or send the code shown to the bot handle shown.
+3. The page moves on by itself and names the Telegram account that connected:
+   its display name, handle, and numeric ID. If that is not your account, choose
+   **Disconnect**, then send a new link from your own account.
+4. Send another message in Telegram. It reaches the same Ship conversation
    you use in Ship, without selecting a helper.
 
-If your Telegram account was connected to another Ship, requesting or inspecting
-a code does not interrupt it. The route moves only after confirmation succeeds.
+The code connects only to the Ship that made it, for the person signed in there.
+If the link expires, choose **Make a new link**. Messaging the bot without a
+connection gets a reminder to ask your Ship how to connect, and, when the
+operator offers signup, a link to create a Ship.
+
+If your Telegram account talks to another Ship, the bot asks whether to **Move
+it** to this Ship or **Keep it**; the route moves only when you choose to move it.
 Use **Disconnect** on the connected account to revoke it.
 
 When Ship offers answers, they take the place of your keyboard until you tap
@@ -148,17 +165,23 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Send
-   message**. It opens a chat with the Ship number, with the pairing message already filled
-   in. To message Ship manually instead, send `/link` to the number shown under
-   the instructions.
-2. Send that message. It replies with instructions and a separate code-only
-   message you can copy. The code expires in 10 minutes.
-3. Enter the code in the **WhatsApp code** field and choose **Connect**. Ship
-   shows the WhatsApp profile name and the masked number that requested it.
-4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
-   Ship or user; your signed-in session supplies both.
-5. Send another message. It reaches the same Ship conversation you use in Ship.
+1. In Ship, open **Settings → Messengers → WhatsApp**. Ship makes a link with a
+   one-time code, which works once, for 10 minutes.
+2. Choose **Open WhatsApp**. It opens a chat with the Ship number, with
+   "Connect my Ship" and your code already filled in; send it. On a computer,
+   you can scan the QR code with your phone's camera instead, or send the code
+   shown to the number shown.
+3. The page moves on by itself and names the account that connected: its
+   WhatsApp profile name and masked number, or your WhatsApp username if you
+   keep your number private. If that is not your account, choose
+   **Disconnect**, then send a new link from your own account.
+4. Send another message. It reaches the same Ship conversation you use in Ship.
+
+The code connects only to the Ship that made it, for the person signed in there.
+If the link expires, choose **Make a new link**. Messaging the Ship number
+without a connection gets a reminder to ask your Ship how to connect (with a
+link to create a Ship when the operator offers signup), and a number
+that talks to another Ship is asked there whether to **Move it** or **Keep it**.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several
@@ -210,8 +233,8 @@ this use of the WhatsApp Business Platform. Ask your operator whether the
 service is offered for your number.
 
 Meta restricts WhatsApp Business messaging across the borders of Brazil (+55)
-and Indonesia (+62). A Ship number registered elsewhere cannot deliver the
-code to numbers in either country, and a number registered in one of
+and Indonesia (+62). A Ship number registered elsewhere cannot message
+numbers in either country, and a number registered in one of
 them cannot reach the other. When your device's language points to one of
 those countries, such as Portuguese (Brazil) or Indonesian, the first-run screen
 and the WhatsApp page in **Settings → Messengers** show a flagged note under
@@ -220,15 +243,18 @@ and pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_U
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 
-The earlier linked-device messenger, which connected by scanning a QR code, is
-no longer bundled, and its connections do not carry over.
+The earlier linked-device messenger, which connected by scanning a QR code in
+WhatsApp's linked devices, is no longer bundled, and its connections do not carry
+over. The QR code on the WhatsApp page only opens the chat with your code.
 
 ## Disconnect or switch Ships {#disconnect-or-change-a-space}
 
-Use **Disconnect** on the connected account to revoke its route. To move an
-account, request a new code and confirm it from the destination Ship. Issuing
-or inspecting a code leaves the old route active; confirmation changes its
-generation. Delayed messages from the old route cannot cross into the new one.
+Use **Disconnect** on the connected account to revoke its route. To move a
+WhatsApp or Telegram account, send a link from the destination Ship and choose
+**Move it** when the messenger asks. To move a Slack or Discord account, request a
+new code and confirm it from the destination Ship. Making a link, or issuing or
+inspecting a code, leaves the old route active; connecting changes its generation.
+Delayed messages from the old route cannot cross into the new one.
 
 ## See also
 

@@ -369,7 +369,10 @@ manifest, along with its `requiredVariables`. Telegram needs its bot username
 and public webhook origin, Slack its public origin, and Discord its application
 ID. A manifest's `optionalVariables` reach the Worker only when set, so an
 explicit empty value still counts; WhatsApp uses this for
-`WHATSAPP_UNREACHABLE_CALLING_CODES`. The common runtime binds Accounts, Gateway and each adapter's lifecycle
+`WHATSAPP_UNREACHABLE_CALLING_CODES`. WhatsApp and Telegram also take an
+optional `GSV_SIGNUP_URL`, the HTTPS signup page for people without a Ship,
+such as `https://signup.<account host>/`; when set, a sender with no
+connection is offered it. The common runtime binds Accounts, Gateway and each adapter's lifecycle
 service; the manifest inventories every owned Durable Object namespace,
 including retained legacy namespaces. Their public callback routes and provider application registration
 belong to the operator; enabling a Worker alone does not complete that external

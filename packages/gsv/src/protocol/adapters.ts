@@ -566,6 +566,19 @@ export type AdapterPairingDisconnectResult = {
   disconnected: boolean;
 };
 
+/** A code the Kernel minted for one of its owners; the adapter keeps it until someone sends it. */
+export type AdapterPairingLinkInput = {
+  code: string;
+  localUid: number;
+  canonicalOrigin: string;
+  expiresAt: number;
+};
+
+export type AdapterPairingLink = {
+  /** Opens the messenger with the code ready to send to the platform account. */
+  url: string;
+};
+
 /** Optional private RPC surface for platform-owned shared adapter accounts. */
 export interface AdapterPairingWorkerInterface {
   adapterPairingInfo(
@@ -591,6 +604,11 @@ export interface AdapterPairingWorkerInterface {
     installation: AdapterInstallationContext,
     input: AdapterPairingDisconnectInput,
   ): Promise<AdapterPairingDisconnectResult>;
+  /** Present when the descriptor declares `pairingLinks`. */
+  adapterPairingLink?(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingLinkInput,
+  ): Promise<AdapterPairingLink>;
 }
 
 /** Validate one live account status returned by an adapter worker. */
