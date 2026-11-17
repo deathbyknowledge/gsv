@@ -22,8 +22,8 @@ let cache: QueryClient;
 const onChange = vi.fn();
 const onOpen = vi.fn();
 
-function Harness({ draft }: { draft: ApproachDraft }) {
-  tree = AddContact({ account, draft, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn(), onHaveInvitation: vi.fn() });
+function Harness({ draft, busy = false }: { draft: ApproachDraft; busy?: boolean }) {
+  tree = AddContact({ account, draft, busy, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn(), onHaveInvitation: vi.fn() });
   return null;
 }
 
@@ -56,6 +56,13 @@ beforeEach(() => {
 afterEach(async () => { await root.unmount(); cache.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("adding a contact", () => {
+  it("keeps the way back closed while a request is sending", async () => {
+    // Leaving would drop the form while its request still finishes, and that finish would clear the next draft.
+    await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness draft={{ ...emptyApproachDraft("juno"), profile: JUNO }} busy /></QueryClientProvider></GatewayProvider>);
+    const back = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "← back to search");
+    expect(back?.props.disabled).toBe(true);
+  });
+
   it("offers a conversation you already have", async () => {
     await type("mara");
     expect(collectText(messageButton())).toBe("Message Mara");

@@ -227,7 +227,7 @@ export function People({ onDirtyChange, onAsk }: {
     </section>
     <FleetDialog open={active && dialog !== null} title={t(dialog === "add" ? "people.add.title" : "people.connect.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
       {dialog === "invitation" || dialog === "accept" ? <InviteContact key={dialog} account={account} draft={invitation} onChange={setInvitation} onAdded={showConversation} onBusy={setBusy} accepting={dialog === "accept"} onProfile={() => setDialog("add")} />
-        : dialog === "add" ? <AddContact account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact}
+        : dialog === "add" ? <AddContact account={account} draft={compose} busy={busy} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact}
           onInvite={() => setDialog("invitation")} onHaveInvitation={() => setDialog("accept")} /> : null}
     </FleetDialog>
   </main>;

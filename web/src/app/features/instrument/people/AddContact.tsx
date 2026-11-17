@@ -20,9 +20,11 @@ const LOOKUP_DELAY_MS = 400;
  * Finds someone by handle, among your contacts or on the open network, and starts a message request
  * to them; someone without a Ship gets an invitation link instead.
  */
-export function AddContact({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvite, onHaveInvitation }: {
+export function AddContact({ account, draft, busy, onChange, onSent, onBusy, contacts, onOpen, onInvite, onHaveInvitation }: {
   account: ConsoleAccount | undefined;
   draft: ApproachDraft;
+  /** A request is sending; leaving would let its finish replace whatever draft came next. */
+  busy: boolean;
   onChange: (value: ApproachDraft) => void;
   onSent: (request: ApproachSummary) => void;
   onBusy: (busy: boolean) => void;
@@ -62,7 +64,7 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
   const missing = !!query && !known.length && !found && !looking;
 
   if (draft.profile) return <>
-    <button class="people-action" onClick={() => onChange({ ...draft, profile: null, shipHandlesMessages: null, intent: null })}>{t("people.add.back")}</button>
+    <button class="people-action" disabled={busy} onClick={() => onChange({ ...draft, profile: null, shipHandlesMessages: null, intent: null })}>{t("people.add.back")}</button>
     <NewConversation account={account} draft={draft} onChange={onChange} onSent={onSent} onBusy={onBusy} contacts={contacts} onOpen={onOpen} />
   </>;
 
