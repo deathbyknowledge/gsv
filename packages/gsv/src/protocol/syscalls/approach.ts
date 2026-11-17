@@ -11,6 +11,8 @@ export type ApproachCreateArgs = {
   idempotencyKey: string;
   /** Local owner's choice for new messages once the request is accepted. */
   shipHandlesMessages?: boolean;
+  /** Local owner's choice to keep this person in their contacts once the request is accepted. */
+  saveContact?: boolean;
 };
 export type ApproachGetArgs = { approachId: string };
 export type ApproachResult = { approach: ApproachSummary };

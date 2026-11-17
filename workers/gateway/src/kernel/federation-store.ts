@@ -721,7 +721,11 @@ export class FederationStore {
     );
     if (existing) {
       if (existing.generation !== input.generation) {
-        this.sql.exec("UPDATE federation_contacts SET ship_handles_messages = ?, policy_revision = policy_revision + 1 WHERE contact_id = ?", input.shipHandlesMessages ? 1 : 0, existing.id);
+        // A choice to keep the person saves a returning contact; without one, its saved preference stands.
+        this.sql.exec(
+          "UPDATE federation_contacts SET ship_handles_messages = ?, saved = MAX(saved, ?), policy_revision = policy_revision + 1 WHERE contact_id = ?",
+          input.shipHandlesMessages ? 1 : 0, input.saved ? 1 : 0, existing.id,
+        );
         this.sql.exec(
           `UPDATE federation_requests SET
              state = 'cancelled', revision = revision + 1, updated_at = ?,

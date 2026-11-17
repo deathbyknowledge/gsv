@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApproachSummary, PublicProfile } from "@humansandmachines/gsv/protocol";
-import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address, requestMayReport } from "./peopleModel";
+import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, matchesPerson, profileAddress as address, requestMayReport } from "./peopleModel";
 
 const deployment = { primaryDomain: "fleet.example", legacyDomains: ["old.example"] };
 const profileAddress = (value: string) => address(value, deployment);
@@ -63,6 +63,8 @@ describe("first-message approval", () => {
     expect(approachSendIntent({ ...draft, profile: { ...profile }, intent })).toBe(intent);
     expect(emptyApproachDraft(profile.url).displayName).toBeNull();
     expect(emptyApproachDraft(profile.url).shipHandlesMessages).toBeNull();
+    expect(emptyApproachDraft(profile.url).saveContact).toBe(true);
+    expect(approachSendIntent({ ...draft, saveContact: false }).saveContact).toBe(false);
     expect(() => approachSendIntent({ ...draft, shipHandlesMessages: null })).toThrow("Choose who");
   });
 
@@ -71,7 +73,7 @@ describe("first-message approval", () => {
     const intent = approachSendIntent(draft);
     for (const change of [
       { text: "Different message" }, { displayName: "A different name" },
-      { shipHandlesMessages: true },
+      { shipHandlesMessages: true }, { saveContact: false },
       { profile: { ...profile, cid: "bafyreiprofiletwo" } },
       { profile: { ...profile, did: "did:plc:otheraaaaaaaaaaaaaaaaaaa" } },
     ]) expect(approachSendIntent({ ...draft, intent, ...change }).idempotencyKey).not.toBe(intent.idempotencyKey);
@@ -103,5 +105,14 @@ describe("message request status", () => {
     expect(requestMayReport({ ...received, state: "accepted" })).toBe(false);
     expect(requestMayReport({ ...received, reportedAtMs: 5 })).toBe(false);
     expect(requestMayReport({ ...sent, messageSequence: 1 })).toBe(false);
+  });
+});
+
+describe("finding a person by what was typed", () => {
+  it("matches any name or handle, ignoring case, spaces and a leading @", () => {
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], "mara")).toBe(true);
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], " LIN ")).toBe(true);
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], "@mara.ship")).toBe(true);
+    expect(matchesPerson(["Mara Lin", undefined], "juno")).toBe(false);
   });
 });

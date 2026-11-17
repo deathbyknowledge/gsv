@@ -27,6 +27,7 @@ import { KERNEL_V091_OUTSIDE_TEXT_LABELS } from "./v091_outside_text_labels";
 import { KERNEL_V092_OUTBOUND_MAIL_COPIES } from "./v092_outbound_mail_copies";
 import { KERNEL_V093_AUTOMATIC_MAIL } from "./v093_automatic_mail";
 import { KERNEL_V094_OUTBOUND_MAIL_INVITES } from "./v094_outbound_mail_invites";
+import { KERNEL_V095_REQUEST_SAVE_CONTACT } from "./v095_request_save_contact";
 import { KERNEL_V096_ADAPTER_PAIRING_LINKS } from "./v096_adapter_pairing_links";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
@@ -239,6 +240,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V092_OUTBOUND_MAIL_COPIES,
   KERNEL_V093_AUTOMATIC_MAIL,
   KERNEL_V094_OUTBOUND_MAIL_INVITES,
+  KERNEL_V095_REQUEST_SAVE_CONTACT,
   KERNEL_V096_ADAPTER_PAIRING_LINKS,
 ];
 

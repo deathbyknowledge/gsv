@@ -29,7 +29,7 @@ const createSchema = z.strictObject({
   did: didSchema, profileCid: z.string().check(z.minLength(1), z.maxLength(128)),
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   text: z.string().check(z.minLength(1), z.maxLength(32_768)), idempotencyKey: idSchema,
-  shipHandlesMessages: z.optional(z.boolean()),
+  shipHandlesMessages: z.optional(z.boolean()), saveContact: z.optional(z.boolean()),
 });
 const reportSchema = z.strictObject({ approachId: idSchema, category: z.enum(REQUEST_REPORT_CATEGORIES), includeMessage: z.boolean() });
 /** How long the person waits for the operator's queue before they're asked to try again. */
@@ -97,7 +97,8 @@ async function createApproach(args: z.infer<typeof createSchema>, ownerUid: numb
       text: args.text, createdAtMs: previous.sentAtMs, expiresAtMs: previous.summary.expiresAtMs,
     };
     if (previous.fingerprint !== await approachFingerprint(content) || previous.summary.peerDid !== args.did
-      || previous.shipHandlesMessages !== (args.shipHandlesMessages ?? false)) throw new Error("This send already has different content");
+      || previous.shipHandlesMessages !== (args.shipHandlesMessages ?? false)
+      || previous.saveContact !== (args.saveContact ?? false)) throw new Error("This send already has different content");
     return { approach: previous.summary };
   }
   // Approval can take a while, so the request is checked against the profile as it stands once approved.
@@ -124,7 +125,7 @@ async function createApproach(args: z.infer<typeof createSchema>, ownerUid: numb
     return ctx.approaches.prepare({
       ownerUid, direction: "outgoing", remoteDid: profile.did, remoteHandle: profile.handle,
       remoteDisplayName: profile.displayName, localDisplayName: args.displayName,
-      shipHandlesMessages: args.shipHandlesMessages,
+      shipHandlesMessages: args.shipHandlesMessages, saveContact: args.saveContact,
       conversationId: peerContact?.conversationId ?? `conv:${crypto.randomUUID()}`, contactId: peerContact?.id ?? `contact:${crypto.randomUUID()}`,
       threadId, content, fingerprint, idempotencyKey: args.idempotencyKey,
     }, () => consumeLocalRateLimits(ctx, [

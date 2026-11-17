@@ -13,6 +13,7 @@ export class ApproachAdmissionError extends Error {
 
 type ApproachRow = {
   ship_handles_messages: number;
+  save_contact: number;
   approach_id: string; owner_uid: number; direction: ApproachSummary["direction"];
   request_id: string; remote_did: string; remote_handle: string | null;
   remote_display_name: string; local_display_name: string;
@@ -29,6 +30,8 @@ type ApproachRow = {
 /** Owning-runtime record. Public APIs return summary() instead. */
 export type ApproachRecord = {
   shipHandlesMessages: boolean;
+  /** The sender's choice to keep the person in their contacts once an outgoing request is accepted. */
+  saveContact: boolean;
   summary: ApproachSummary;
   ownerUid: number;
   localDisplayName: string;
@@ -50,6 +53,7 @@ export type ApproachRecord = {
 
 export type PrepareApproach = {
   shipHandlesMessages?: boolean;
+  saveContact?: boolean;
   ownerUid: number;
   direction: ApproachSummary["direction"];
   remoteDid: string;
@@ -97,12 +101,13 @@ export class ApproachStore {
         approach_id, owner_uid, direction, request_id, remote_did, remote_handle,
         remote_display_name, local_display_name, conversation_id, contact_id, thread_id,
         state, fingerprint, idempotency_key, profile_cid, message_id, sent_at, pending_text, pending_text_bytes,
-        delivery_state, next_attempt_at, created_at, updated_at, expires_at, ship_handles_messages
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        delivery_state, next_attempt_at, created_at, updated_at, expires_at, ship_handles_messages, save_contact
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, input.ownerUid, input.direction, content.requestId, input.remoteDid, input.remoteHandle ?? null,
       input.remoteDisplayName, input.localDisplayName, input.conversationId, input.contactId, input.threadId,
       input.fingerprint, input.idempotencyKey ?? null, content.profileCid, content.messageId, content.createdAtMs, content.text, bytes,
-      input.direction === "outgoing" ? "queued" : "unconfirmed", now, now, now, content.expiresAtMs, input.shipHandlesMessages ? 1 : 0);
+      input.direction === "outgoing" ? "queued" : "unconfirmed", now, now, now, content.expiresAtMs, input.shipHandlesMessages ? 1 : 0,
+      input.saveContact ? 1 : 0);
       return this.get(id)!;
     });
   }
@@ -359,6 +364,7 @@ function summary(row: ApproachRow): ApproachSummary {
 function record(row: ApproachRow): ApproachRecord {
   return {
     shipHandlesMessages: row.ship_handles_messages === 1,
+    saveContact: row.save_contact === 1,
     summary: summary(row), ownerUid: row.owner_uid, localDisplayName: row.local_display_name,
     contactId: row.contact_id, threadId: row.thread_id, fingerprint: row.fingerprint,
     profileCid: row.profile_cid, messageId: row.message_id, sentAtMs: row.sent_at,

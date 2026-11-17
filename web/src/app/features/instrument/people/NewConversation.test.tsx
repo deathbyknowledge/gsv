@@ -72,8 +72,9 @@ describe("writing a message request", () => {
     const request = await mount(text);
     expect(alerts()).toEqual([]);
     expect(sendButton()?.props.disabled).toBe(false);
-    await act(async () => { elements("form")[1].props.onSubmit!({ preventDefault: () => {} }); });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("approach.create", expect.objectContaining({ did: profile.did, text })));
+    await act(async () => { elements("form")[0].props.onSubmit!({ preventDefault: () => {} }); });
+    // Also adding them as a contact starts ticked.
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("approach.create", expect.objectContaining({ did: profile.did, text, saveContact: true })));
   });
 
   it("says a message longer than a request carries is too long", async () => {
