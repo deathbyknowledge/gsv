@@ -104,10 +104,11 @@ Meta's message template manager and wait for approval:
   Reply to chat with Ship!
   ```
 
-Use this body contract even if you customize the template name: the adapter
-budgets the parameter against its surrounding text and Meta's 1,024-character
-body limit. Meta rejects a send whose components differ from the approved
-template with error 132018, so do not add a button. Leave
+The adapter sends only the template's name, language and parameter; Meta fills
+in the approved text. You may change that text, but keep it under 124 characters
+around `{{1}}`: Meta caps the whole body at 1,024 characters and the message
+takes up to 900. Meta rejects a send whose components differ from the approved
+template with error 132018, so do not add a header, footer or button. Leave
 `WHATSAPP_TEMPLATE_NAME` empty until your template is approved.
 
 Templates sent by earlier releases carried a **Show me** quick-reply button; a

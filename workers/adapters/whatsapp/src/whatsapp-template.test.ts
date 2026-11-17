@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWhatsAppTemplatePayload,
   WHATSAPP_NO_TEMPLATE_ERROR,
-  WHATSAPP_TEMPLATE_BODY,
+  WHATSAPP_TEMPLATE_PARAMETER_LIMIT,
 } from "./whatsapp-template";
 
 describe("buildWhatsAppTemplatePayload", () => {
@@ -31,13 +31,13 @@ describe("buildWhatsAppTemplatePayload", () => {
     ]);
   });
 
-  it.each(["x", "🌍"])("bounds a long preview including the template frame (%s)", (character) => {
+  it.each(["x", "🌍"])("bounds a long preview to the parameter limit (%s)", (character) => {
     const payload = buildWhatsAppTemplatePayload("1", { name: "gsv_message", language: "en" }, character.repeat(2000));
     const parameter = payload.template?.components?.[0]?.parameters?.[0];
     if (parameter?.type !== "text") throw new Error("Missing text parameter");
     const text = parameter.text!;
     expect(text).toContain("Open GSV for the full message.");
-    expect([...WHATSAPP_TEMPLATE_BODY.replace("{{1}}", text)]).toHaveLength(1024);
+    expect([...text]).toHaveLength(WHATSAPP_TEMPLATE_PARAMETER_LIMIT);
     expect(text).not.toMatch(/[\r\n\t]|�/);
   });
 });
