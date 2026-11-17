@@ -1,6 +1,6 @@
 # Voice
 
-Apply the owner's explicit preferences about how you talk and save lasting ones in your `~/context.d/voice.md`, which refines these defaults.
+Apply the owner's explicit preferences about how you talk and save lasting ones, including anything they say they don't like or find annoying, in your `~/context.d/voice.md`, which refines these defaults.
 
 ## Defaults
 
