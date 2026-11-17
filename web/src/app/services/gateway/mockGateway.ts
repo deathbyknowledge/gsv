@@ -374,7 +374,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.create", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -717,7 +717,7 @@ let noticeRules: NoticeRule[] = [
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
 /* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
-let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
+let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number; actorName?: string; actorHandle?: string; linkedAt?: number }[] = fresh ? [] : [
   { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
 ];
 let streamSeq = 0;
@@ -1411,8 +1411,26 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
+      const fromLinks = adapter === "whatsapp" || adapter === "telegram";
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(fromLinks ? { pairingLinks: true, setupUrl: `${window.location.origin}/chat/settings?section=messengers&messenger=${adapter}` } : undefined),
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+    }
+    case "adapter.pair.create": {
+      const { adapter } = z.object({ adapter: z.string() }).parse(args);
+      const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31]).join("");
+      const createdAt = Date.now();
+      const url = adapter === "whatsapp"
+        ? `https://wa.me/31612345678?text=${encodeURIComponent(`Connect my Ship ${code.replace(/(.{4})(?=.)/g, "$1-")}`)}`
+        : `https://t.me/ShipMockBot?start=${code}`;
+      // A few seconds later the person sends it, and the Kernel announces the new connection.
+      window.setTimeout(() => {
+        messengerLinks = messengerLinks.filter((link) => link.adapter !== adapter);
+        messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: adapter === "whatsapp" ? "31612345678" : "351913787780", uid: OWNER.uid, linkedByUid: OWNER.uid,
+          createdAt: Date.now(), linkedAt: Date.now(), actorName: "Esteve", actorHandle: adapter === "whatsapp" ? "+31•••••••78" : "@esteve" });
+        broadcast("adapter.status", { adapter, accountId: `mock-${adapter}` });
+      }, 6_000);
+      return respond(id, { adapter, code: code.replace(/(.{4})(?=.)/g, "$1-"), url, createdAt, expiresAt: createdAt + 600_000 });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);

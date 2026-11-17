@@ -63,14 +63,15 @@ wants to message Ship. Ship's welcome has already started at sign-in; the screen
 connect a messenger. Each messenger the deployment offers is a design-system `Surface` card whose header, labelled
 "Chat on" the messenger, opens
 its pairing beneath it, one card at a time; the first card leads with the filled button. The
-pairing uses the Settings pairing calls as two numbered steps, opening the messenger and then
-pasting the code it replies with, and the step to do now holds the filled button. Returning to
-the tab focuses the code field. A rejected code shows under the field and opens "Trouble
-connecting?", which holds the manual `/link` route with a copyable number and the note about
-replacing another Ship's link. The "is this you?" confirmation and the countries the WhatsApp
-number cannot reach, when the device's languages point there, stay as in Settings. Once
-linked, the card offers the messenger itself first and the chat here second, and the Kernel's
-`adapter.connected` wake says hello there. A line under the cards says Ship only sees the
+pairing makes its single-use link with Settings' `useMessengerLink` as soon as the card opens, and
+shows two numbered steps: open the messenger with the link's message (or, on a wide screen with a
+fine pointer, scan its QR code), then Ship says hello there. The step to do now holds the filled
+button. The card waits for the connection as Settings does and names the account that made it,
+with "Not you?" to disconnect it and make a new link; an expired link offers a new one. "Trouble
+connecting?" holds the code to send by hand with a copy action, and the note about moving
+another Ship's link. The countries the WhatsApp number cannot reach, when the device's languages
+point there, stay as in Settings. Once linked, the card offers the messenger itself first and
+the chat here second, and the Kernel's `adapter.connected` wake says hello there. A line under the cards says Ship only sees the
 messages sent to it. A text action skips to the chat at once; without a messenger to offer,
 an Open chat button takes its place. Finishing writes the
 per-user `ui/welcome_card_seen` flag, which only this screen reads, so the screen follows the account across web and Desktop

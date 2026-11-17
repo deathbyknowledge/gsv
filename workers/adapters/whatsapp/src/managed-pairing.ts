@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { AdapterPairingActivateInput, AdapterPairingPrepareInput } from "./types";
 import type { AdapterGatewayService } from "../../../../packages/gsv/src/services/adapters.js";
 import type { InstallationDeletionRequest } from "../../../../packages/gsv/src/services/lifecycle.js";
-import { AdapterPairingClaim, type AdapterPairingClaimState } from "../../shared/src/pairing-claim";
+import { AdapterPairingClaim, type AdapterPairingClaimState, type AdapterPairingLinkOffer } from "../../shared/src/pairing-claim";
 import { AdapterRetirement } from "../../shared/src/retirement";
 import { AdapterPairingRetirement } from "../../shared/src/pairing-retirement";
 import type { ManagedWhatsAppPeer } from "./managed-peer";
@@ -12,7 +12,6 @@ import { MANAGED_WHATSAPP_ACCOUNT_ID } from "./managed-peer-state";
 export type ManagedWhatsAppPairingRecord = AdapterPairingClaimState & {
   version: 1;
   claimId: string;
-  surfaceId: string;
   expiresAt: number;
   operationId?: string;
   stage?: "prepared" | "active" | "finalized";
@@ -46,10 +45,17 @@ export class ManagedWhatsAppPairing extends DurableObject<ManagedWhatsAppPairing
     (task) => this.ctx.waitUntil(task), this.retirement, MANAGED_WHATSAPP_ACCOUNT_ID,
   );
 
-  async initialize(input: ManagedWhatsAppPairingRecord) {
-    if (!this.ctx.id.name) throw new Error("WhatsApp pairing name is unavailable");
-    return await this.claim.initialize({ ...input, resourceName: this.ctx.id.name, owner: null });
+  /** Holds a code the Kernel minted for one of its people until a sender sends it. */
+  async offer(input: { claimId: string; expiresAt: number; link: AdapterPairingLinkOffer }) {
+    const owner = { installationId: input.link.installationId, generation: input.claimId };
+    const release = this.retirement.start(owner);
+    try {
+      if (!this.ctx.id.name) throw new Error("WhatsApp pairing name is unavailable");
+      await this.env.WHATSAPP_INSTALLATIONS.getByName(owner.installationId).registerResource({ kind: "adapter-pairing", name: this.ctx.id.name, objectId: this.ctx.id.toString(), generation: input.claimId });
+      await this.claim.offer({ version: 1, claimId: input.claimId, expiresAt: input.expiresAt, link: input.link, resourceName: this.ctx.id.name, owner });
+    } finally { release(); }
   }
+  async bind(surfaceId: string) { return await this.claim.bind(surfaceId); }
   async inspect() { return await this.claim.inspect(); }
   async prepare(input: AdapterPairingPrepareInput) {
     const release = this.retirement.start({ installationId: input.installationId, generation: input.operationId });

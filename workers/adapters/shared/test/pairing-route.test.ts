@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activateAdapterPairing, disconnectAdapterPeer, prepareAdapterPairing, type AdapterPeerLink, type AdapterPeerRoute } from "../src/pairing-route";
+import { activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing, type AdapterPeerLink, type AdapterPeerRoute } from "../src/pairing-route";
 
 const route: AdapterPeerRoute = { installationId: "installation", localUid: 1000, generation: "prepared", canonicalOrigin: "https://space.example.test", linkedAt: 1 };
 const transition = { claimId: "claim", expiresAt: 10_000, operationId: "pair", route };
@@ -48,5 +48,17 @@ describe("exclusive adapter route disconnection", () => {
     expect(result.state.activeRoute).toBeUndefined();
     expect(result.state.pairing).toBeUndefined();
     expect(disconnectAdapterPeer(result.state, disconnect, "adapter").disconnected).toBe(true);
+  });
+});
+
+describe("adapter pairing replay", () => {
+  it("lets the Kernel finish a connection it started after the code expires, but starts none from an expired code", () => {
+    const late = { ...transition, now: transition.expiresAt + 1 };
+    const active = activateAdapterPairing(preparation(), transition).state;
+    // Each step of a started operation replays; the code's expiry only stops a new one.
+    expect(prepareAdapterPairing(active, late, "adapter").state).toBe(active);
+    expect(finalizeAdapterPairing(active, transition).state.pairing?.status).toBe("finalized");
+    const pending: AdapterPeerLink = { pairing: { claimId: "claim", code: "ABCDEFGHJKLM", expiresAt: transition.expiresAt, status: "pending" } };
+    expect(() => prepareAdapterPairing(pending, late, "adapter")).toThrow("Pairing code expired");
   });
 });

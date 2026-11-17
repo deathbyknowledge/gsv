@@ -3,15 +3,16 @@
 WhatsApp integration for GSV Gateway on the WhatsApp Business Platform Cloud
 API, using Meta's webhook flow.
 
-GSV uses one operator-owned WhatsApp Business phone number. A person messages
-that number, receives a short-lived code, and confirms the displayed WhatsApp
-identity from a direct signed-in GSV session. The access token and app secret
-stay on the adapter Worker; individual spaces never accept or store them.
+GSV uses one operator-owned WhatsApp Business phone number. A signed-in person
+makes a link in their space, which opens a chat with that number prefilled with a
+single-use code; sending it connects the sender to that person's space. The
+access token and app secret stay on the adapter Worker; individual spaces never
+accept or store them.
 
 The Worker is `src/managed.ts` with `wrangler.managed.jsonc`. It keeps one
 peer Durable Object per person who writes to the platform number, named by
 Meta's business-scoped user ID, and a separate short-lived pairing object per
-code. Meta sends the user ID with every message, and instead of the number when
+code, which holds the installation that made the code until a sender claims it. Meta sends the user ID with every message, and instead of the number when
 a person with a WhatsApp username keeps their number private. People paired by
 number before Meta sent user IDs keep their number's peer; the user ID's peer
 forwards to it. Use separate Meta apps and
@@ -152,6 +153,9 @@ The platform operator configures these Worker secrets and variables:
   window; defaults to `gsv_message`, and an empty value switches templates off
 - `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
 - `WHATSAPP_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
+- `GSV_SIGNUP_URL` — optional HTTPS signup page offered to a number with no
+  link, tagged with `utm_source=whatsapp`; unset, the reply only says how to
+  connect an existing Ship
 
 The template values are declared with their defaults in
 `wrangler.managed.jsonc`; the operator stack overrides them only when the
@@ -164,18 +168,22 @@ numbers on the same account are acknowledged and ignored.
 
 ## Usage
 
-1. Send any message to the GSV WhatsApp number. Send `/link` to request a new
-   code when the number is already connected somewhere.
-2. Copy the code-only message that follows the instructions. It expires in 10 minutes.
-3. Open **GSV → Settings → Messengers → WhatsApp**, enter the code, inspect the
-   name and the masked number or username, and explicitly confirm it.
-4. Send another WhatsApp message. It enters the space's canonical Ship
+1. Open **GSV → Settings → Messengers → WhatsApp**. The space makes a link with
+   a single-use code, which works for 10 minutes.
+2. Choose **Open WhatsApp** and send the prefilled "Connect my Ship" message, or
+   send the code shown to the number. The adapter redeems it through the Gateway,
+   and the page names the account that connected.
+3. Send another WhatsApp message. It enters the space's canonical Ship
    conversation.
 
-Issuing or inspecting a code never suspends an existing link. Confirmation
-activates a new route with a fresh generation, and cleanup of the previous
-installation is retried until it is complete. A queued inbound message or
-outbound reply retains that generation and cannot cross a relink.
+A number with no link gets a reminder to ask its Ship how to connect, at most
+every ten minutes, and the signup page when `GSV_SIGNUP_URL` is set; a Ship created
+from it opens its WhatsApp link first. A number linked to another space is asked to **Move it** or
+**Keep it** before the code is redeemed. Making a link never suspends an
+existing link. Connecting activates a new route with a fresh generation, and
+cleanup of the previous installation is retried until it is complete. A queued
+inbound message or outbound reply retains that generation and cannot cross a
+relink.
 
 ## Webhook Endpoint
 

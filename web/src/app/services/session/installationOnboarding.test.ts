@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearFirstRunMessenger,
   clearInstallationOnboardingToken,
+  readFirstRunMessenger,
   readInstallationOnboardingToken,
   readSignupArrival,
 } from "./installationOnboarding";
@@ -48,6 +50,23 @@ describe("installation onboarding capability", () => {
     expect(readSignupArrival(other)).toBe(false);
     clearInstallationOnboardingToken();
     expect(readSignupArrival(TOKEN)).toBe(false);
+  });
+
+  it("keeps the messenger a signup came from past setup, and only from a setup link", () => {
+    window.history.replaceState(null, "", `/onboarding?signup=1#onboarding=${TOKEN}&messenger=whatsapp`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.hash).toBe("");
+    clearInstallationOnboardingToken();
+    expect(readFirstRunMessenger()).toBe("whatsapp");
+    clearFirstRunMessenger();
+    expect(readFirstRunMessenger()).toBeNull();
+
+    window.history.replaceState(null, "", "/onboarding#messenger=telegram");
+    expect(readInstallationOnboardingToken()).toBeNull();
+    expect(readFirstRunMessenger()).toBeNull();
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&messenger=Not%20a%20messenger`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(readFirstRunMessenger()).toBeNull();
   });
 
   it("moves the capability out of the URL fragment into tab storage", () => {

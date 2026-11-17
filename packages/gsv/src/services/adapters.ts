@@ -28,6 +28,7 @@ export const adapterServiceCapabilitiesSchema = z.strictObject({
   status: z.boolean(),
   activity: z.boolean(),
   pairing: z.boolean(),
+  pairingLinks: z.optional(z.boolean()),
   targets: z.optional(z.boolean()),
   surfaces: z.array(z.enum(["dm", "group", "channel", "thread"])),
   media: z.strictObject({
@@ -43,6 +44,8 @@ export type AdapterServiceCapabilities = {
   status: boolean;
   activity: boolean;
   pairing: boolean;
+  /** Pairing starts from a code the Kernel mints into a link (`adapterPairingLink`) instead of one the adapter sends. */
+  pairingLinks?: boolean;
   targets?: boolean;
   surfaces: AdapterSurfaceKind[];
   media: {
@@ -216,6 +219,7 @@ export interface AdapterService {
   adapterPairingActivate?: AdapterPairingWorkerInterface["adapterPairingActivate"];
   adapterPairingFinalize?: AdapterPairingWorkerInterface["adapterPairingFinalize"];
   adapterPairingDisconnect?: AdapterPairingWorkerInterface["adapterPairingDisconnect"];
+  adapterPairingLink?: AdapterPairingWorkerInterface["adapterPairingLink"];
   /** Return an authoritative list, including empty for revoked access; reject failed discovery. */
   adapterTargetList?: (
     installation: AdapterInstallationContext,
@@ -246,10 +250,26 @@ export type UnlinkAdapterIdentityInput = {
 
 export type UnlinkAdapterIdentityResult = { removed: boolean };
 
-/** Identity cleanup on an attenuated, deployment-owned adapter Gateway binding. */
+/** A link code someone sent from the messenger account the adapter verified. */
+export type RedeemAdapterPairingInput = { code: string };
+
+/**
+ * `unavailable`: the code expired, was used up or never existed. `refused`: the Kernel
+ * would not connect this account, and `message` says why. Transport failures throw.
+ */
+export type RedeemAdapterPairingResult =
+  | { paired: true }
+  | { paired: false; reason: "unavailable" | "refused"; message: string };
+
+/** Identity linking on an attenuated, deployment-owned adapter Gateway binding. */
 export interface AdapterGatewayService {
   unlinkAdapterIdentity(
     installation: AdapterInstallationContext,
     input: UnlinkAdapterIdentityInput,
   ): Promise<UnlinkAdapterIdentityResult>;
+  /** Connects the sender of a link code the installation minted; the Kernel derives its owner from its own record. */
+  redeemAdapterPairing(
+    installation: AdapterInstallationContext,
+    input: RedeemAdapterPairingInput,
+  ): Promise<RedeemAdapterPairingResult>;
 }

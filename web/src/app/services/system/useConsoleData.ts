@@ -8,6 +8,7 @@ import {
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
   confirmConsoleAdapterPairing,
+  createConsoleAdapterPairingLink,
   createConsoleAgent,
   deleteConsoleMachine,
   disconnectConsoleAdapter,
@@ -42,6 +43,7 @@ import {
   type ConnectConsoleAdapterResult,
   type ConsoleAdapterPairingCandidate,
   type ConsoleAdapterPairingInfo,
+  type ConsoleAdapterPairingLink,
   type ConsoleAdapterPairingResult,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
@@ -386,6 +388,13 @@ export function useConsoleAdapterPairingInfo(adapter: string, enabled = true) {
     queryKey: ["adapter-pairing", "info", adapter],
     enabled: connected && enabled,
     queryFn: () => loadConsoleAdapterPairingInfo(client, adapter),
+  });
+}
+
+export function useCreateConsoleAdapterPairingLink() {
+  const { client } = useGateway();
+  return useMutation<ConsoleAdapterPairingLink, Error, string>({
+    mutationFn: (adapter) => createConsoleAdapterPairingLink(client, adapter),
   });
 }
 

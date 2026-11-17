@@ -66,6 +66,7 @@ export class MessengerGatewayGate extends WorkerEntrypoint<Env, { id: Adapter }>
   }
   async linkedPeerFrame(...args: Parameters<AdapterGatewayInterface["linkedPeerFrame"]>) { return await this.gateway().linkedPeerFrame(...args); }
   async unlinkAdapterIdentity(...args: Parameters<Gateway["unlinkAdapterIdentity"]>) { return await this.gateway().unlinkAdapterIdentity(...args); }
+  async redeemAdapterPairing(...args: Parameters<Gateway["redeemAdapterPairing"]>) { return await this.gateway().redeemAdapterPairing(...args); }
 }
 
 export class MessengerChannelGate extends WorkerEntrypoint<Env, { id: Adapter }> {
@@ -74,6 +75,7 @@ export class MessengerChannelGate extends WorkerEntrypoint<Env, { id: Adapter }>
   async adapterStatus(...args: Parameters<NonNullable<AdapterService["adapterStatus"]>>) { return await this.channel().adapterStatus!(...args); }
   async adapterSetActivity(...args: Parameters<NonNullable<AdapterService["adapterSetActivity"]>>) { return await this.channel().adapterSetActivity!(...args); }
   async adapterPairingInfo(...args: Parameters<NonNullable<AdapterService["adapterPairingInfo"]>>) { return await this.channel().adapterPairingInfo!(...args); }
+  async adapterPairingLink(...args: Parameters<NonNullable<AdapterService["adapterPairingLink"]>>) { return await this.channel().adapterPairingLink!(...args); }
   async adapterPairingInspect(...args: Parameters<NonNullable<AdapterService["adapterPairingInspect"]>>) { return await this.channel().adapterPairingInspect!(...args); }
   async adapterPairingPrepare(...args: Parameters<NonNullable<AdapterService["adapterPairingPrepare"]>>) { return await this.channel().adapterPairingPrepare!(...args); }
   async adapterPairingActivate(...args: Parameters<NonNullable<AdapterService["adapterPairingActivate"]>>) { return await this.channel().adapterPairingActivate!(...args); }

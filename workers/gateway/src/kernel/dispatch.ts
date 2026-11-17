@@ -118,6 +118,7 @@ import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
+  handleAdapterPairCreate,
   handleAdapterPairInspect,
 } from "./adapter-pairing";
 import {
@@ -993,6 +994,9 @@ async function dispatchKernel(
         break;
       case "adapter.pair.info":
         data = await handleAdapterPairInfo(frame.args, ctx);
+        break;
+      case "adapter.pair.create":
+        data = await handleAdapterPairCreate(frame.args, ctx);
         break;
       case "adapter.pair.inspect":
         data = await handleAdapterPairInspect(frame.args, ctx);
