@@ -155,7 +155,9 @@ Meta sends with every message and sends instead of the number when a person with
 a WhatsApp username keeps their number private. A person the adapter knew by
 number before Meta sent user IDs keeps that number's peer: the first message
 carrying both records the user ID as an alias for it, so later messages reach the
-same route even when Meta withholds the number. Replies address a user ID as
+same route even when Meta withholds the number. That holds when the user ID first
+came alone and only heard how to connect; a user ID with a connection of its own
+keeps it. Replies address a user ID as
 Meta's `recipient` and a number as `to`.
 Each peer owns an exclusive route containing the installation, local uid, and a
 fresh generation. Inbound records and queued replies retain that generation and

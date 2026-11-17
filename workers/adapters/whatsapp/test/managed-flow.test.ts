@@ -1526,6 +1526,63 @@ describe("WhatsApp usernames", () => {
     // Nothing went to the user ID as if it were a stranger asking to pair.
     expect((await sentMessages()).filter((record) => record.body.recipient === userId)).toEqual([]);
   });
+
+  it("moves a number-paired person back onto their route once Meta ties a user ID that came alone to the number", async () => {
+    const phoneNumber = "34677777789";
+    const userId = "ES.77777777777777777777";
+    const ana: SenderIdentity = { name: "Ana Quiet", phoneNumber };
+    const link = await mintLink();
+    expect((await SELF.fetch(await textFrom(ana, "wamid.quiet.1", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const generation = await confirmPairing(link.code, "operation_quiet");
+
+    // After a quiet month Meta sends only the user ID, so nothing ties it to the number yet.
+    const hidden: SenderIdentity = { name: "Ana Quiet", userId, username: "ana" };
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.quiet.2", "anyone there?"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).some((record) => record.body.recipient === userId)).toBe(true);
+    });
+
+    const reachedShip = async (text: string) => await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text, actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+    });
+    expect((await SELF.fetch(await textFrom({ ...ana, userId }, "wamid.quiet.3", "it is me"))).status).toBe(200);
+    await reachedShip("it is me");
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.quiet.4", "number hidden again"))).status).toBe(200);
+    await reachedShip("number hidden again");
+  });
+
+  it("keeps a person connected under their user ID there when Meta later shares a number another peer knows", async () => {
+    const phoneNumber = "34688888889";
+    const userId = "ES.88888888888888888888";
+    // The number messaged once without connecting, then the person connected under their user ID.
+    expect((await SELF.fetch(await textFrom({ name: "Teo Two", phoneNumber }, "wamid.two.1", "hello"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).some((record) => record.body.to === phoneNumber)).toBe(true);
+    });
+    const teo: SenderIdentity = { name: "Teo Two", userId, username: "teo" };
+    const link = await mintLink();
+    expect((await SELF.fetch(await textFrom(teo, "wamid.two.2", link.message))).status).toBe(200);
+    await redeemed(link.code);
+    const generation = await confirmPairing(link.code, "operation_two");
+
+    expect((await SELF.fetch(await textFrom({ ...teo, phoneNumber }, "wamid.two.3", "both ids"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "both ids", actor: expect.objectContaining({ id: userId }) }),
+        }),
+      }));
+    });
+  });
 });
 
 it("does not export the retired linked-device entrypoints", async () => {

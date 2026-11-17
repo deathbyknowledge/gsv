@@ -302,17 +302,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   /**
    * The address of the peer that already knew this event's sender by number, when this peer is
    * named for the user ID Meta now sends beside that number. The answer is kept, so later events
-   * reach that peer even when Meta withholds the number.
+   * reach that peer even when Meta withholds the number. A user ID that came alone first, and only
+   * heard how to connect, still joins that peer; one with a connection of its own keeps it.
    */
   private async knownAddress(event: ManagedWhatsAppPeerEvent): Promise<string | null> {
     const alias = await this.ctx.storage.get<ManagedWhatsAppPeerAlias>(ALIAS_KEY);
     if (alias) return alias.surfaceId;
     const { phoneNumber } = whatsAppEventActor(event);
-    if (!phoneNumber || await this.knowsSender()) return null;
+    if (!phoneNumber || holdsConnection(await this.ctx.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))) return null;
     if (!await this.env.MANAGED_WHATSAPP_PEER.getByName(`managed:${phoneNumber}`).knowsSender()) return null;
     return await this.ctx.storage.transaction(async (txn) => {
-      // Another event may have made this user ID the person's own peer meanwhile.
-      if (await txn.get<ManagedWhatsAppPeerState>(STATE_KEY)) return null;
+      // Another event may have connected this user ID's own peer meanwhile.
+      if (holdsConnection(await txn.get<ManagedWhatsAppPeerState>(STATE_KEY))) return null;
       await txn.put(ALIAS_KEY, { version: 1, surfaceId: phoneNumber } satisfies ManagedWhatsAppPeerAlias);
       return phoneNumber;
     });
@@ -1479,6 +1480,16 @@ function platformResponse(
   };
   if (choices) message.choices = choices;
   return { terminal: true, responses: [{ message, context }] };
+}
+
+/**
+ * Whether this peer has a connection of its own, or a live code making one, that sending its
+ * sender to another peer would cut off. A peer that only told a stray sender how to connect has none.
+ */
+function holdsConnection(state: ManagedWhatsAppPeerState | undefined): boolean {
+  if (!state) return false;
+  if (state.activeRoute) return true;
+  return Boolean(state.pairing && state.pairing.status !== "finalized" && state.pairing.expiresAt > Date.now());
 }
 
 /** A pairing the Kernel is connecting right now; another code waits until it ends or expires. */
