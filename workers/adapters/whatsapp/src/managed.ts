@@ -7,9 +7,13 @@ import type {
   AdapterPairingDisconnectResult,
   AdapterPairingFinalizeInput,
   AdapterPairingInfo,
+  AdapterPairingLink,
+  AdapterPairingLinkInput,
   AdapterPairingPreparation,
   AdapterPairingPrepareInput,
 } from "../../../../packages/gsv/src/protocol/adapters.js";
+import type { AdapterPairingLinkOffer } from "../../shared/src/pairing-claim";
+import { pairingLinkMessage, parsePairingLinkInput } from "../../shared/src/pairing-link";
 import type {
   AdapterService,
   AdapterServiceDescriptor,
@@ -77,6 +81,7 @@ type ManagedWhatsAppPeerStub = {
 };
 
 type ManagedWhatsAppPairingStub = {
+  offer(input: { claimId: string; expiresAt: number; link: AdapterPairingLinkOffer }): Promise<void>;
   inspect(): Promise<AdapterPairingCandidate>;
   prepare(input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation>;
   activate(input: AdapterPairingActivateInput): Promise<AdapterPairingPreparation>;
@@ -98,6 +103,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         status: true,
         activity: true,
         pairing: true,
+        pairingLinks: true,
         surfaces: ["dm"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -192,7 +198,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
     }
   }
 
-  /** The chat link opens WhatsApp on the platform number with the relink command prefilled. */
+  /** The chat link opens WhatsApp on the platform number; a person connects from a link they make. */
   async adapterPairingInfo(
     installation: AdapterInstallationContext,
   ): Promise<AdapterPairingInfo> {
@@ -201,9 +207,22 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
       accountId: MANAGED_WHATSAPP_ACCOUNT_ID,
       configured: this.isConfigured(),
       installUrl: managedWhatsAppChatUrl(this.env.WHATSAPP_DISPLAY_NUMBER),
-      instructions: "Open the chat link and send /link to get a code.",
+      instructions: "Make a link in Settings → Messengers → WhatsApp and send the message it opens.",
       unreachableCallingCodes: managedWhatsAppUnreachableCallingCodes(this.env),
     };
+  }
+  /** Holds the Kernel's code and answers with a chat link whose prefilled message carries it. */
+  async adapterPairingLink(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingLinkInput,
+  ): Promise<AdapterPairingLink> {
+    const parsed = parseAdapterInstallationContext(installation);
+    if (!this.isConfigured()) throw new Error("Managed WhatsApp is not configured");
+    const { code, expiresAt, link } = parsePairingLinkInput(parsed.installationId, input);
+    const url = managedWhatsAppChatUrl(this.env.WHATSAPP_DISPLAY_NUMBER, pairingLinkMessage(code));
+    if (!url) throw new Error("Managed WhatsApp is not configured");
+    await this.pairing(code).offer({ claimId: crypto.randomUUID(), expiresAt, link });
+    return { url };
   }
 
   async adapterPairingInspect(

@@ -26,6 +26,8 @@ export type {
   AdapterPairingDisconnectResult,
   AdapterPairingFinalizeInput,
   AdapterPairingInfo,
+  AdapterPairingLink,
+  AdapterPairingLinkInput,
   AdapterPairingPreparation,
   AdapterPairingPrepareInput,
   AdapterPairingRoute,

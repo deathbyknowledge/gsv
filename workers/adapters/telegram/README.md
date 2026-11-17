@@ -2,14 +2,15 @@
 
 Telegram bot integration for GSV Gateway using the Telegram Bot API webhook flow.
 
-GSV uses one operator-owned bot. A Telegram user messages that bot, receives a
-short-lived code, and confirms the displayed identity from a direct signed-in
-GSV session. The bot token stays on the adapter Worker; individual spaces never
-accept or store it.
+GSV uses one operator-owned bot. A signed-in person makes a link in their space,
+which opens the bot with a single-use code as its `start` parameter; tapping
+Start connects the sender to that person's space. The bot token stays on the
+adapter Worker; individual spaces never accept or store it.
 
 The Worker is `src/managed.ts` with `wrangler.managed.jsonc`. It keeps
 one peer Durable Object per private Telegram identity and a separate short-lived
-pairing object per code. Telegram can have only one active webhook per bot, so
+pairing object per code, which holds the installation that made the code until a
+sender claims it. Telegram can have only one active webhook per bot, so
 staging and production require different BotFather bots and credentials.
 
 ## Outbound Text
@@ -63,17 +64,20 @@ Durable Objects, and both Gateway service bindings are healthy.
 
 ## Usage
 
-1. Send any private message to the official GSV bot.
-2. Copy the 12-character code from its reply.
-3. Open **GSV → Messengers → Telegram**, enter the code, inspect the Telegram
-   identity, and explicitly confirm it.
-4. Send another Telegram message. It enters the space's canonical
+1. Open **GSV → Settings → Messengers → Telegram**. The space makes a link with
+   a single-use code, which works for 10 minutes.
+2. Choose **Open Telegram** and tap **Start**, or send the code shown to the
+   bot. The adapter redeems it through the Gateway, and the page names the
+   account that connected.
+3. Send another Telegram message. It enters the space's canonical
    Ship conversation.
 
-Issuing or inspecting a code never suspends an existing link. Confirmation
-activates a new route with a fresh generation, and cleanup of the previous
-installation is retried until it is complete. A queued inbound message or
-outbound reply retains that generation and cannot cross a relink.
+A sender with no link gets a reminder to connect from Settings, at most every ten
+minutes. A sender linked to another space is asked to **Move it** or **Keep it**
+before the code is redeemed. Making a link never suspends an existing link.
+Connecting activates a new route with a fresh generation, and cleanup of the
+previous installation is retried until it is complete. A queued inbound message
+or outbound reply retains that generation and cannot cross a relink.
 
 ## Webhook Endpoint
 

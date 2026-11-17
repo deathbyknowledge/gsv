@@ -32,7 +32,7 @@ async function telegramMessages(): Promise<TelegramApiMessage[]> {
 }
 
 // Recovery replaces the route; keep it in its own per-file storage environment.
-it("offers fresh pairing after password revocation and waits for confirmation before replacing the route", async () => {
+it("tells a revoked sender how to connect and replaces the route only after a new link connects", async () => {
   const peer = bindings.MANAGED_TELEGRAM_PEER.getByName("managed:12345");
   const previousRoute = {
     installationId: "installation_recovery", localUid: 1000, generation: "revoked-generation",
@@ -45,18 +45,20 @@ it("offers fresh pairing after password revocation and waits for confirmation be
   });
   const before = (await telegramMessages()).length;
   expect((await SELF.fetch(update(501, "__identity_revoked__"))).status).toBe(200);
-  let code = "";
   await vi.waitFor(async () => {
     const messages = (await telegramMessages()).slice(before).filter((message) => message.body.text);
-    expect(messages).toHaveLength(2);
-    const text = messages[1]?.body.text ?? "";
-    code = text.match(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/)?.[0]?.replaceAll("-", "") ?? "";
-    expect(code).toHaveLength(12);
+    expect(messages.map((message) => message.body.text)).toEqual([expect.stringContaining("connect Telegram in Settings → Messengers")]);
   }, { timeout: 3_000 });
   await runInDurableObject(peer, async (_instance, state) => {
     expect(await state.storage.get("managed_telegram_peer:v1:state")).toMatchObject({ activeRoute: previousRoute });
   });
+  const code = "RECXVERYL2NK";
   const pairing = bindings.MANAGED_TELEGRAM_PAIRING.getByName(`pair:${code}`);
+  await pairing.offer({
+    claimId: crypto.randomUUID(), expiresAt: Date.now() + 10 * 60_000,
+    link: { installationId: previousRoute.installationId, localUid: 1000, canonicalOrigin: previousRoute.canonicalOrigin },
+  });
+  expect((await SELF.fetch(update(503, `/start ${code}`))).status).toBe(200);
   using candidate = await pairing.inspect();
   expect(candidate).toMatchObject({ actorId: "12345", linked: true });
   const operation = {

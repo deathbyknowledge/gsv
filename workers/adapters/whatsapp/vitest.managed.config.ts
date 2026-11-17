@@ -16,6 +16,9 @@ export default defineConfig({
               let approvalReleased = false;
               let recoveryReleased = false;
               let obsoleteApprovalRecovered = false;
+              // Redeems answer paired unless a test sets another result, and wait while held.
+              let redeemHeld = false;
+              let redeemResult = null;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
@@ -78,10 +81,22 @@ export default defineConfig({
                   calls.push({ call: "unlinkAdapterIdentity", installation, input });
                   return { removed: true };
                 }
+                async redeemAdapterPairing(installation, input) {
+                  calls.push({ call: "redeemAdapterPairing", installation, input });
+                  const until = Date.now() + 5000;
+                  while (redeemHeld && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+                  return redeemResult ?? { paired: true };
+                }
                 async fetch(request) {
                   if (new URL(request.url).pathname === "/release-approval") approvalReleased = true;
                   if (new URL(request.url).pathname === "/release-recovery") recoveryReleased = true;
                   if (new URL(request.url).pathname === "/recover-obsolete-approval") obsoleteApprovalRecovered = true;
+                  if (new URL(request.url).pathname === "/hold-redeem") redeemHeld = true;
+                  if (new URL(request.url).pathname === "/release-redeem") redeemHeld = false;
+                  if (new URL(request.url).pathname === "/redeem-result") {
+                    const result = await request.text();
+                    redeemResult = result ? JSON.parse(result) : null;
+                  }
                   return Response.json(calls);
                 }
               }

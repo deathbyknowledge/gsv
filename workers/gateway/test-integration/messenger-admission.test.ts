@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { JsonObject, JsonValue, AdapterPairConfirmResult, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
+import type { JsonObject, JsonValue, AdapterPairConfirmResult, AdapterPairCreateResult, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -149,9 +149,31 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
     return text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)![0];
   }
   async function pair(adapter: Messenger, index: 0 | 1, owner: Socket, group = false): Promise<AdapterPairConfirmResult> {
+    if (adapter === "telegram") {
+      await send(adapter, index, startCommand(await link(owner)));
+      const linked = await until(() => linkedActor(owner, index), (found) => found !== null);
+      if (!linked) throw new Error("Telegram did not connect from its link");
+      return linked;
+    }
     const code = await issue(adapter, index, group);
     // SAFETY: This successful syscall returns the public pairing confirmation contract.
     return await ok(owner, "adapter.pair.confirm", { adapter, code }) as AdapterPairConfirmResult;
+  }
+  /** Telegram connects from a link its owner makes; tapping Start in the chat it opens sends `/start CODE`. */
+  async function link(owner: Socket): Promise<AdapterPairCreateResult> {
+    // SAFETY: This successful syscall returns the public link contract.
+    return await ok(owner, "adapter.pair.create", { adapter: "telegram" }) as AdapterPairCreateResult;
+  }
+  function startCommand(created: AdapterPairCreateResult): string { return `/start ${created.code.replaceAll("-", "")}`; }
+  async function linkedActor(owner: Socket, index: 0 | 1): Promise<AdapterPairConfirmResult | null> {
+    const { links } = z.object({ links: z.array(z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string(), uid: z.number() })) })
+      .parse(await ok(owner, "sys.link.list", {}));
+    const found = links.find((entry) => entry.adapter === "telegram" && entry.actorId === actor("telegram", index));
+    // A Telegram direct chat has the person's own id.
+    return found ? { paired: true, adapter: "telegram", accountId: found.accountId, actorId: found.actorId, surfaceId: found.actorId, uid: found.uid } : null;
+  }
+  async function botSaid(adapter: Messenger, after: number, start: string): Promise<void> {
+    await until(() => messages(adapter), (rows) => rows.slice(after).some((row) => (row.body.text ?? row.body.content ?? "").startsWith(start)));
   }
   async function assertAdmitted(text: string, handle: Handle) {
     const record = await received(text);
@@ -243,7 +265,9 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
     it(`${adapter}: invalid proof and an unpaired actor select no Kernel`, async () => {
       await start(adapter);
       await send(adapter, 0, "unpaired human work", { forge: true });
-      await until(() => messages(adapter), (rows) => rows.some((row) => /[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/.test(row.body.text ?? row.body.content ?? "")));
+      // Telegram tells an unpaired sender where to make a link; the others send a code to paste.
+      const answered = (text: string) => adapter === "telegram" ? text.includes("Settings → Messengers") : /[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/.test(text);
+      await until(() => messages(adapter), (rows) => rows.some((row) => answered(row.body.text ?? row.body.content ?? "")));
       expect(await records()).toEqual([]);
       expect(await worker().listDurableObjectIds("KERNEL")).toEqual([]);
       await send(adapter, 1, "invalid provider proof", { invalidProof: true, forge: true });
@@ -254,18 +278,40 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
 
     it(`${adapter}: real human confirmation recovers a lost response and isolates two colliding accounts`, async () => {
       const a = await setup("first"); const b = await setup("second"); await start(adapter);
-      const code = await issue(adapter, 0);
       const anonymous = await socket("first");
-      expect(await rpc(anonymous, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
-      await control({ loseFinalize: adapter });
-      expect(await rpc(a.owner, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
       const storage = await worker().getDurableObjectStorage("KERNEL", { name: installation("first") });
-      const selected = await storage.exec("SELECT account_id, actor_id, uid, json_extract(metadata_json, '$.routeGeneration') AS generation FROM identity_links WHERE adapter = ?", adapter);
-      expect(selected).toHaveLength(1);
-      const linked = await ok(a.owner, "adapter.pair.confirm", { adapter, code });
-      expect(linked).toMatchObject({ paired: true, uid: 1000 });
-      expect(await storage.exec("SELECT account_id, actor_id, uid, json_extract(metadata_json, '$.routeGeneration') AS generation FROM identity_links WHERE adapter = ?", adapter)).toEqual(selected);
-      expect(await rpc(b.owner, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
+      const identityLinks = () => storage.exec("SELECT account_id, actor_id, uid, json_extract(metadata_json, '$.routeGeneration') AS generation FROM identity_links WHERE adapter = ?", adapter);
+      if (adapter === "telegram") {
+        expect(await rpc(anonymous, "adapter.pair.create", { adapter })).toMatchObject({ ok: false });
+        const created = await link(a.owner);
+        await control({ loseFinalize: adapter });
+        const before = (await messages(adapter)).length;
+        await send(adapter, 0, startCommand(created));
+        await botSaid(adapter, before, "Ship could not connect");
+        const selected = await identityLinks();
+        expect(selected).toHaveLength(1);
+        // Sending the same link again finishes that connection, on the same route.
+        await send(adapter, 0, startCommand(created));
+        await until(() => storage.exec("SELECT redeemed_at FROM adapter_pairing_links WHERE redeemed_at IS NOT NULL"), (rows) => rows.length === 1);
+        expect(await identityLinks()).toEqual(selected);
+        // The spent link connects no one else.
+        const spent = (await messages(adapter)).length;
+        await send(adapter, 1, startCommand(created));
+        await botSaid(adapter, spent, "This link expired or was already used");
+        expect(await linkedActor(a.owner, 1)).toBeNull();
+        expect(await linkedActor(b.owner, 1)).toBeNull();
+      } else {
+        const code = await issue(adapter, 0);
+        expect(await rpc(anonymous, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
+        await control({ loseFinalize: adapter });
+        expect(await rpc(a.owner, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
+        const selected = await identityLinks();
+        expect(selected).toHaveLength(1);
+        const linked = await ok(a.owner, "adapter.pair.confirm", { adapter, code });
+        expect(linked).toMatchObject({ paired: true, uid: 1000 });
+        expect(await identityLinks()).toEqual(selected);
+        expect(await rpc(b.owner, "adapter.pair.confirm", { adapter, code })).toMatchObject({ ok: false });
+      }
       await pair(adapter, 1, b.owner);
       await send(adapter, 0, "first owned request", { forge: true }); await assertAdmitted("first owned request", "first");
       await send(adapter, 1, "second owned request", { forge: true }); await assertAdmitted("second owned request", "second");
@@ -304,13 +350,23 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       const a = await setup("first"); const b = await setup("second"); await start(adapter);
       const oldLink = await pair(adapter, 0, a.owner); await pair(adapter, 1, b.owner);
       expect(await rpc(a.owner, "adapter.send", outbound(adapter, oldLink, "delivery before relink"))).toMatchObject({ ok: true, data: { ok: true, deliveryState: "sent" } });
-      const moveCode = await issue(adapter, 0);
+      const moveLink = adapter === "telegram" ? await link(b.owner) : null;
+      const moveCode = moveLink ? "" : await issue(adapter, 0);
       await control({ hold: "old ingress" }); await control({ hold: "old outbound" });
       await send(adapter, 0, "old ingress"); await received("old ingress", false);
       const sending = rpc(a.owner, "adapter.send", outbound(adapter, oldLink, "old outbound"));
       try {
         await until(records, (rows) => rows.some((row) => row.direction === "outbound" && row.text === "old outbound"));
-        await ok(b.owner, "adapter.pair.confirm", { adapter, code: moveCode });
+        if (moveLink) {
+          // The sender's link to the first space makes them choose, even while their last message waits on it.
+          const before = (await messages(adapter)).length;
+          await send(adapter, 0, startCommand(moveLink));
+          await botSaid(adapter, before, "This Telegram account talks to the Ship at first.gsv.space. Move it to second.gsv.space?");
+          await send(adapter, 0, "Move it");
+          await until(() => linkedActor(b.owner, 0), (linked) => linked !== null);
+        } else {
+          await ok(b.owner, "adapter.pair.confirm", { adapter, code: moveCode });
+        }
         await control({ release: "old ingress" }); await control({ release: "old outbound" });
         expect((await received("old ingress")).response).toMatchObject({ ok: true, data: { droppedReason: "stale_route_generation" } });
         const sent = await sending;

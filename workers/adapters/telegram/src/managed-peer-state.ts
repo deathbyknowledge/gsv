@@ -20,10 +20,22 @@ export type ManagedTelegramPeerState = {
   actorHandle?: string;
   activeRoute?: ManagedTelegramPeerRoute;
   pairing?: ManagedTelegramPairingState;
+  /** A link from another Ship that this linked sender sent, waiting for them to move or keep. */
+  linkMove?: ManagedTelegramLinkMove;
+  /** When the platform last told this sender how to connect. */
+  hintedAt?: number;
   lastDisconnect?: {
     operationId: string;
     route: ManagedTelegramPeerRoute;
   };
+};
+export type ManagedTelegramLinkMove = {
+  code: string;
+  claimId: string;
+  expiresAt: number;
+  installationId: string;
+  /** The host of the Ship this sender talks to now, as the question named it. */
+  current: string;
 };
 type PairingTransition = { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation };
 type FinalizeResult = PairingTransition & { changed: boolean };
@@ -44,6 +56,8 @@ export function bindManagedTelegramPeerIdentity(
     actorHandle: inbound.actorHandle ?? state?.actorHandle,
     activeRoute: state?.activeRoute,
     pairing: state?.pairing,
+    linkMove: state?.linkMove,
+    hintedAt: state?.hintedAt,
     lastDisconnect: state?.lastDisconnect,
   };
 }

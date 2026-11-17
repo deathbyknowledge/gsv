@@ -8,9 +8,13 @@ import {
   type AdapterPairingDisconnectResult,
   type AdapterPairingFinalizeInput,
   type AdapterPairingInfo,
+  type AdapterPairingLink,
+  type AdapterPairingLinkInput,
   type AdapterPairingPreparation,
   type AdapterPairingPrepareInput,
 } from "../../../../packages/gsv/src/protocol/adapters.js";
+import type { AdapterPairingLinkOffer } from "../../shared/src/pairing-claim";
+import { parsePairingLinkInput } from "../../shared/src/pairing-link";
 import type {
   AdapterService,
   AdapterServiceDescriptor,
@@ -68,6 +72,7 @@ type ManagedTelegramPeerStub = {
 };
 
 type ManagedTelegramPairingStub = {
+  offer(input: { claimId: string; expiresAt: number; link: AdapterPairingLinkOffer }): Promise<void>;
   inspect(): Promise<AdapterPairingCandidate>;
   prepare(input: AdapterPairingPrepareInput): Promise<AdapterPairingPreparation>;
   activate(input: AdapterPairingActivateInput): Promise<AdapterPairingPreparation>;
@@ -89,6 +94,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         status: true,
         activity: true,
         pairing: true,
+        pairingLinks: true,
         surfaces: ["dm"],
         media: {
           inbound: ["image", "audio", "video", "document"],
@@ -189,8 +195,21 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
       botUsername: validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
         ? normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
         : undefined,
-      instructions: "Open a private chat with the bot and send /link to get a code.",
+      instructions: "Make a link in Settings → Messengers → Telegram and tap Start in the chat it opens.",
     };
+  }
+
+  /** Holds the Kernel's code and answers with a bot link that sends it when the person taps Start. */
+  async adapterPairingLink(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingLinkInput,
+  ): Promise<AdapterPairingLink> {
+    const parsed = parseAdapterInstallationContext(installation);
+    if (!this.isConfigured()) throw new Error("Managed Telegram is not configured");
+    const { code, expiresAt, link } = parsePairingLinkInput(parsed.installationId, input);
+    await this.pairing(code).offer({ claimId: crypto.randomUUID(), expiresAt, link });
+    const bot = normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME);
+    return { url: `https://t.me/${encodeURIComponent(bot)}?start=${code}` };
   }
 
   async adapterPairingInspect(
