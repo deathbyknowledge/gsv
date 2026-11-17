@@ -84,8 +84,8 @@ it can't see, and it asks rather than guesses.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the bot without a
-connection gets a reminder to connect from **Settings → Messengers**, and, when
-the operator offers signup, a link to create a Ship.
+connection gets a reminder to ask your Ship how to connect, and, when the
+operator offers signup, a link to create a Ship.
 
 If your Telegram account talks to another Ship, the bot asks whether to **Move
 it** to this Ship or **Keep it**; the route moves only when you choose to move it.
@@ -179,8 +179,8 @@ Platform. You message that number from your own WhatsApp account.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the Ship number
-without a connection gets a reminder to connect from **Settings → Messengers**
-(with a link to create a Ship when the operator offers signup), and a number
+without a connection gets a reminder to ask your Ship how to connect (with a
+link to create a Ship when the operator offers signup), and a number
 that talks to another Ship is asked there whether to **Move it** or **Keep it**.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship

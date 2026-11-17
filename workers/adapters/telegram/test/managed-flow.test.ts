@@ -224,7 +224,7 @@ describe("managed Telegram clean-instance flow", () => {
     await vi.waitFor(async () => {
       const messages = (await telegramMessages()).filter((message) => message.body.text);
       expect(messages.map((message) => message.body.text)).toEqual([
-        "Hi! To talk to Ship here, first create your own Ship:\nhttps://signup.gsv.test/?utm_source=telegram\nOnce it's ready, it brings you back here.\n\nAlready have a Ship? Open it and connect Telegram in Settings → Messengers.",
+        "Hi! To talk to Ship here, click on this link:\nhttps://signup.gsv.test/?utm_source=telegram\n\nAlready have a Ship? Ask it how to connect.",
       ]);
     }, { timeout: 3_000 });
 

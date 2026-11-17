@@ -60,10 +60,14 @@ export function pairingLinkText(messenger: string) {
     move: (current: string, next: string) => `This ${messenger} account talks to the Ship at ${current}. Move it to ${next}?`,
     kept: (current: string) => `Kept. This ${messenger} account still talks to ${current}.`,
     inProgress: `Ship is still connecting this ${messenger} account. Send your message again in a moment.`,
-    /** With somewhere to sign up, a stranger hears first how to get a Ship; an owner, how to connect theirs. */
+    /**
+     * With somewhere to sign up, a stranger hears first how to get a Ship; an owner, to ask theirs,
+     * which sends its setup link. The address stands on its own line with nothing touching it, so
+     * no messenger takes punctuation into the link.
+     */
     unlinked: (signupUrl?: string) => signupUrl
-      ? `Hi! To talk to Ship here, first create your own Ship:\n${signupUrl}\nOnce it's ready, it brings you back here.\n\nAlready have a Ship? Open it and connect ${messenger} in Settings → Messengers.`
-      : `To talk to your Ship here, open your Ship and connect ${messenger} in Settings → Messengers.`,
+      ? `Hi! To talk to Ship here, click on this link:\n${signupUrl}\n\nAlready have a Ship? Ask it how to connect.`
+      : `To talk to your Ship here, ask it how to connect ${messenger}.`,
     linked: (current: string) => `This ${messenger} account talks to the Ship at ${current}. To connect it to another Ship, open Settings → Messengers there.`,
   };
 }

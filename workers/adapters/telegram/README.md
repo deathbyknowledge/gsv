@@ -75,8 +75,8 @@ Durable Objects, and both Gateway service bindings are healthy.
 3. Send another Telegram message. It enters the space's canonical
    Ship conversation.
 
-A sender with no link gets a reminder to connect from Settings, at most every ten
-minutes, and the signup page when `GSV_SIGNUP_URL` is set; a Ship created from it
+A sender with no link gets a reminder to ask its Ship how to connect, at most
+every ten minutes, and the signup page when `GSV_SIGNUP_URL` is set; a Ship created from it
 opens its Telegram link first. A sender linked to another space is asked to **Move it** or **Keep it**
 before the code is redeemed. Making a link never suspends an existing link.
 Connecting activates a new route with a fresh generation, and cleanup of the
