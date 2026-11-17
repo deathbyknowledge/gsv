@@ -19,7 +19,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { adapterDisplayName } from "@humansandmachines/gsv/protocol";
 import type { RedeemAdapterPairingInput, RedeemAdapterPairingResult } from "@humansandmachines/gsv/services/adapters";
-import { exceptionDiagnostics, redactDiagnosticText } from "@humansandmachines/gsv/telemetry";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
 import { hashToken } from "../auth/shadow";
 import { principalOf, type KernelContext } from "./context";
@@ -70,14 +70,18 @@ const pairingLinkSchema = z.object({ url: z.string().check(z.maxLength(2048)) })
 /** Letters and digits that read unambiguously: no I, O, 0 or 1. */
 const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const DISPLAY_TEXT_LIMIT = 160;
-/** Longest refusal reason an adapter relays to the person who sent a link's code. */
-const REFUSAL_TEXT_LIMIT = 300;
 
 const UNAVAILABLE_LINK: RedeemAdapterPairingResult = {
   paired: false,
   reason: "unavailable",
   message: "This link expired or was already used",
 };
+
+/**
+ * A pairing the Kernel will not complete. Any other failure, such as a lost adapter call, may
+ * succeed when tried again, so a messenger redeeming a link code retries its delivery instead.
+ */
+class PairingRefusedError extends Error {}
 
 const managedIdentityLinkMetadataSchema = z.looseObject({
   managed: z.literal(true),
@@ -226,10 +230,11 @@ export async function redeemAdapterPairingLink(
       canonicalOrigin: requireCanonicalOrigin(ctx),
     }, true);
   } catch (error) {
-    const diagnostics = exceptionDiagnostics(error);
-    console.warn("[Kernel] Messenger link did not connect:", { adapter, ...diagnostics });
-    // The sender reads this in their messenger: the scrubbed reason, never the error object.
-    return { paired: false, reason: "refused", message: redactDiagnosticText(diagnostics.exceptionMessage ?? "Connection failed", REFUSAL_TEXT_LIMIT) };
+    console.warn("[Kernel] Messenger link did not connect:", { adapter, ...exceptionDiagnostics(error) });
+    // The messenger retries its delivery of the code after any other failure; the code stays live until then.
+    if (!(error instanceof PairingRefusedError)) throw error;
+    // The sender reads this in their messenger: the Kernel's own reason, never an adapter's error.
+    return { paired: false, reason: "refused", message: error.message };
   }
   ctx.adapters.pairingLinks.redeemed(adapter, codeHash, Date.now());
   return { paired: true };
@@ -302,7 +307,7 @@ async function confirmAdapterPairing(
     existingCandidate.actorId,
   );
   if (existingLink && existingLink.uid !== uid) {
-    throw new Error("This external identity is linked to another user in this GSV");
+    throw new PairingRefusedError("This external identity is linked to another user in this GSV");
   }
   const humanConfirmed = interactive || (existingLink?.linkedByUid === uid
     && existingLink.metadata?.managed === true && existingLink.metadata.humanConfirmed !== false);
@@ -329,9 +334,9 @@ async function prepareAdapterPairing(
   const { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin } = confirmation;
   if (cleanup) {
     // Only a live, inspected external claim may release a revoked or superseded route for a successor.
-    if (existingCandidate.expiresAt <= Date.now()) throw new Error("Pairing code expired");
+    if (existingCandidate.expiresAt <= Date.now()) throw new PairingRefusedError("Pairing code expired");
     if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
-      throw new Error("Account credentials changed during pairing; sign in again");
+      throw new PairingRefusedError("Account credentials changed during pairing; sign in again");
     }
     if (cleanup.metadata?.managed === true) {
       await disconnectManagedIdentityLink(cleanup, ctx);
@@ -358,12 +363,12 @@ async function prepareAdapterPairing(
     || prepared.candidate.accountId !== existingCandidate.accountId
     || pairingRouteScope(prepared.candidate) !== pairingRouteScope(existingCandidate)
   ) {
-    throw new Error("Adapter pairing changed during preparation");
+    throw new PairingRefusedError("Adapter pairing changed during preparation");
   }
 
   // A password reset or removal during provider preparation cannot restore the old user's link.
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
-    throw new Error("Account credentials changed during pairing; sign in again");
+    throw new PairingRefusedError("Account credentials changed during pairing; sign in again");
   }
   // Once activation starts, the Kernel owns completion even if the caller stops waiting.
   const completion = completeAdapterPairing(ctx, service, prepared, confirmation);
@@ -408,7 +413,7 @@ async function completeAdapterPairing(
     },
   ), ctx.installationId, uid);
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
-    throw new Error("Account credentials changed during pairing; sign in again");
+    throw new PairingRefusedError("Account credentials changed during pairing; sign in again");
   }
   if (
     activated.candidate.actorId !== prepared.candidate.actorId
@@ -417,7 +422,7 @@ async function completeAdapterPairing(
     || pairingRouteScope(activated.candidate) !== pairingRouteScope(prepared.candidate)
     || activated.route.generation !== prepared.route.generation
   ) {
-    throw new Error("Adapter pairing changed during confirmation");
+    throw new PairingRefusedError("Adapter pairing changed during confirmation");
   }
   await service.adapterPairingFinalize!(adapterInstallationContext(ctx), {
     code,
@@ -426,11 +431,11 @@ async function completeAdapterPairing(
     canonicalOrigin,
   });
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
-    throw new Error("Account credentials changed during pairing; sign in again");
+    throw new PairingRefusedError("Account credentials changed during pairing; sign in again");
   }
   const finalizedLink = ctx.adapters.identityLinks.get(adapter, activated.candidate.accountId, activated.candidate.actorId);
   if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
-    throw new Error("Adapter pairing changed during finalization");
+    throw new PairingRefusedError("Adapter pairing changed during finalization");
   }
   // Only now is the connection whole; a lost finalization leaves the link without `linkedAt` until a retry completes it.
   ctx.adapters.identityLinks.link(adapter, finalizedLink.accountId, finalizedLink.actorId, uid, finalizedLink.linkedByUid, {

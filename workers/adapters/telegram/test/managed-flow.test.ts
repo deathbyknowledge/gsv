@@ -681,6 +681,24 @@ describe("managed Telegram clean-instance flow", () => {
     expect(calls.filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === other.code)).toEqual([]);
     expect(calls.filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Keep it")).toEqual([]);
   });
+
+  it("keeps the answer to move through a lost redemption, and moves on the retry", async () => {
+    const before = (await telegramMessages()).length;
+    const other = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(update(203, 203, `/start ${other.code}`))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await telegramMessages()).slice(before).some((message) => message.body.reply_markup?.keyboard)).toBe(true);
+    }, { timeout: 3_000 });
+    const redemptions = async () => (await gatewayCalls()).filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === other.code);
+
+    // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
+    const gateway = env.GATEWAY as Fetcher;
+    await gateway.fetch("https://gateway.test/fail-next-redeem");
+    expect((await SELF.fetch(update(204, 204, "Move it"))).status).toBe(200);
+    // The retried delivery still answers the question, so the other Ship gets the code again.
+    await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); }, { timeout: 3_000 });
+    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
+  });
 });
 
 it("does not export the retired per-account deployment entrypoints", async () => {

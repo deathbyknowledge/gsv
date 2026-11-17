@@ -634,19 +634,31 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   ): Promise<InboundDeliveryDisposition<ResponseContext> | null> {
     const state = await this.requireState();
     const move = state.linkMove;
-    if (move && answersLinkMove(move, inbound.text)) {
+    // The delivery whose "Move it" is connecting still answers the question once it has expired.
+    if (move && (move.answeredBy === inbound.deliveryId || answersLinkMove(move, inbound.text))) {
+      const keep = inbound.text === KEEP_LINK_CHOICE;
       const answered = await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
-        if (!latest || latest.linkMove?.claimId !== move.claimId) return false;
-        const { linkMove: _answered, ...rest } = latest;
-        await txn.put(STATE_KEY, rest satisfies ManagedTelegramPeerState);
+        const open = latest?.linkMove;
+        if (!latest || open?.claimId !== move.claimId) return false;
+        // Another tap while a move connects changes nothing; the answering delivery's retry carries on.
+        if (open.answeredBy !== undefined) return open.answeredBy === inbound.deliveryId;
+        if (keep) {
+          const { linkMove: _kept, ...rest } = latest;
+          await txn.put(STATE_KEY, rest satisfies ManagedTelegramPeerState);
+        } else {
+          // The question stays open until the Kernel answers, so a retry after a failed call still reads as the answer.
+          await txn.put(STATE_KEY, { ...latest, linkMove: { ...open, answeredBy: inbound.deliveryId } } satisfies ManagedTelegramPeerState);
+        }
         return true;
       });
       if (!answered) return { terminal: true };
-      if (inbound.text === KEEP_LINK_CHOICE) {
+      if (keep) {
         return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, LINK_TEXT.kept(move.current));
       }
-      return await this.redeemLink(inbound, move);
+      const settled = await this.redeemLink(inbound, move);
+      await this.closeLinkMove(move.claimId);
+      return settled;
     }
     const code = pairingLinkCode(inbound.text);
     if (!code) return null;
@@ -678,9 +690,20 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return await this.redeemLink(inbound, { ...binding, code });
   }
 
+  /** Closes the question about moving to another Ship once the Kernel has answered it. */
+  private async closeLinkMove(claimId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!latest || latest.linkMove?.claimId !== claimId) return;
+      const { linkMove: _closed, ...rest } = latest;
+      await txn.put(STATE_KEY, rest satisfies ManagedTelegramPeerState);
+    });
+  }
+
   /**
    * Hands a code bound to this sender to the Kernel that minted it. The Kernel reads the pending
    * pairing back through the claim and connects this sender; its confirmation names the Ship.
+   * A failed call throws, so the code's message is delivered again.
    */
   private async redeemLink(
     inbound: ManagedTelegramInbound,

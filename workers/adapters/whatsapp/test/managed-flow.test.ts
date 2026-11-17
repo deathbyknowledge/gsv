@@ -1606,6 +1606,43 @@ describe("WhatsApp links", () => {
       && ["Move it", "Keep it"].includes(call.args?.message?.text ?? ""))).toEqual([]);
   });
 
+  it("keeps the answer to move through a lost redemption, and moves on the retry though the move replaced the route", async () => {
+    const nora: SenderIdentity = { name: "Nora Retry", phoneNumber: "34655555589" };
+    const first = await mintLink();
+    expect((await SELF.fetch(await textFrom(nora, "wamid.retry.1", first.message))).status).toBe(200);
+    await redeemed(first.code);
+    await confirmPairing(first.code, "operation_retry_first");
+    const prompts = async () => (await sentMessages()).filter((record) => record.body.to === "34655555589" && record.body.type === "interactive");
+    const moved = await mintLink("installation_other", "https://other.gsv.space");
+    expect((await SELF.fetch(await textFrom(nora, "wamid.retry.2", moved.message))).status).toBe(200);
+    await vi.waitFor(async () => { expect(await prompts()).toHaveLength(1); });
+    const redemptions = async () => (await gatewayCalls()).filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === moved.code);
+
+    // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
+    const gateway = env.GATEWAY as Fetcher;
+    await gateway.fetch("https://gateway.test/hold-redeem");
+    await gateway.fetch("https://gateway.test/fail-next-redeem");
+    try {
+      const answered = SELF.fetch(await tapFrom(nora, "wamid.retry.3", (await prompts())[0]!, "Move it"));
+      await redeemed(moved.code, "installation_other");
+      // The other Ship moves the sender's route through the claim, then its answer is lost.
+      const pairing = pairingFor(moved.code);
+      const canonicalOrigin = "https://other.gsv.space";
+      const operation = { code: moved.code, operationId: "operation_retry_move", canonicalOrigin };
+      const prepared = await pairing.prepare({ ...operation, installationId: "installation_other", localUid: 1000 });
+      await pairing.activate({ ...operation, route: prepared.route });
+      // A second tap while the first connects changes nothing.
+      expect((await SELF.fetch(await tapFrom(nora, "wamid.retry.4", (await prompts())[0]!, "Move it"))).status).toBe(200);
+      await gateway.fetch("https://gateway.test/release-redeem");
+      expect((await answered).status).toBe(200);
+    } finally {
+      await gateway.fetch("https://gateway.test/release-redeem");
+    }
+    // The retried delivery still answers the question, so the other Ship gets the code again.
+    await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); });
+    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
+  });
+
   it("answers a code that is no live link", async () => {
     const stranger: SenderIdentity = { name: "Mia Number", phoneNumber: "34622222289" };
     expect((await SELF.fetch(await textFrom(stranger, "wamid.stale.1", "Connect my Ship ABCD-EFGH-JKLM"))).status).toBe(200);

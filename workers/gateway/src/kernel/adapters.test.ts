@@ -5532,7 +5532,8 @@ describe("managed adapter pairing", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         try {
           service.adapterPairingFinalize.mockRejectedValueOnce(new Error("finalization lost"));
-          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toMatchObject({ paired: false, reason: "refused" });
+          // The messenger keeps the code's message and delivers it again.
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).rejects.toThrow("finalization lost");
         } finally {
           warn.mockRestore();
         }
@@ -5544,7 +5545,7 @@ describe("managed adapter pairing", () => {
       });
     });
 
-    it("tells the sender why a connection failed, scrubbed and short, and keeps the code for another try", async () => {
+    it("lets the messenger retry a step that failed, and never tells the sender an adapter's error", async () => {
       await runWithRealKernelSql(async (sql) => {
         const service = pairingService(whatsappCandidate, route, "whatsapp", true);
         const { ctx } = linkContext(sql, service);
@@ -5552,19 +5553,34 @@ describe("managed adapter pairing", () => {
         const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         try {
-          service.adapterPairingPrepare.mockRejectedValueOnce(new Error(`Pairing failed with Bearer secret-value ${"x".repeat(400)}`));
-          const refused = await redeemAdapterPairingLink(kernel, "whatsapp", { code });
-          expect(refused).toMatchObject({ paired: false, reason: "refused" });
-          const message = refused.paired ? "" : refused.message;
-          expect(message.length).toBeLessThanOrEqual(300);
-          expect(message).toContain("Bearer [redacted]");
-          expect(message).not.toContain("secret-value");
+          service.adapterPairingPrepare.mockRejectedValueOnce(new Error("Pairing failed with Bearer secret-value"));
+          // A failure is no refusal: the messenger's retry may still connect, so nothing answers the sender yet.
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).rejects.toThrow("secret-value");
           expect(warn).toHaveBeenCalledWith("[Kernel] Messenger link did not connect:", expect.objectContaining({ adapter: "whatsapp", exceptionName: "Error" }));
         } finally {
           warn.mockRestore();
         }
-        // The code was not spent, so the person can send it again.
+        // The code was not spent, so the retried delivery connects.
         await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({ paired: true });
+      });
+    });
+
+    it("tells the sender why the Kernel refused to connect them", async () => {
+      await runWithRealKernelSql(async (sql) => {
+        const service = pairingService(whatsappCandidate, route, "whatsapp", true);
+        const { ctx } = linkContext(sql, service);
+        const { ctx: kernel, identityLinks } = linkContext(sql, service, redemptionOptions());
+        const { code } = await handleAdapterPairCreate({ adapter: "whatsapp" }, ctx);
+        identityLinks.link("whatsapp", whatsappCandidate.accountId, whatsappCandidate.actorId, 1001, 1001, undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        try {
+          await expect(redeemAdapterPairingLink(kernel, "whatsapp", { code })).resolves.toEqual({
+            paired: false, reason: "refused", message: "This external identity is linked to another user in this GSV",
+          });
+        } finally {
+          warn.mockRestore();
+        }
+        expect(service.adapterPairingActivate).not.toHaveBeenCalled();
       });
     });
 

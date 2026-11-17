@@ -287,13 +287,12 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
         await control({ loseFinalize: adapter });
         const before = (await messages(adapter)).length;
         await send(adapter, 0, startCommand(created));
-        await botSaid(adapter, before, "Ship could not connect");
-        const selected = await identityLinks();
-        expect(selected).toHaveLength(1);
-        // Sending the same link again finishes that connection, on the same route.
-        await send(adapter, 0, startCommand(created));
+        // The lost response leaves the code's message with the messenger, whose retry finishes that connection.
         await until(() => storage.exec("SELECT redeemed_at FROM adapter_pairing_links WHERE redeemed_at IS NOT NULL"), (rows) => rows.length === 1);
-        expect(await identityLinks()).toEqual(selected);
+        expect(await identityLinks()).toHaveLength(1);
+        expect(await storage.exec("SELECT json_extract(metadata_json, '$.linkedAt') AS linked_at FROM identity_links WHERE adapter = ?", adapter))
+          .toEqual([{ linked_at: expect.any(Number) }]);
+        expect((await messages(adapter)).slice(before).filter((row) => (row.body.text ?? "").includes("could not connect"))).toEqual([]);
         // The spent link connects no one else.
         const spent = (await messages(adapter)).length;
         await send(adapter, 1, startCommand(created));

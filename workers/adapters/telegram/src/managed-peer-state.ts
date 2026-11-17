@@ -36,6 +36,8 @@ export type ManagedTelegramLinkMove = {
   installationId: string;
   /** The host of the Ship this sender talks to now, as the question named it. */
   current: string;
+  /** The delivery whose "Move it" is connecting the sender; the question stays open until the Kernel answers it. */
+  answeredBy?: string;
 };
 type PairingTransition = { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation };
 type FinalizeResult = PairingTransition & { changed: boolean };

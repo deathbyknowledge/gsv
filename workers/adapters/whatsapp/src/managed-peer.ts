@@ -782,16 +782,17 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       }
       return await this.linkResponse(inbound, null) ?? await this.pairingResponse(inbound, null, false);
     }
-    const route = state.activeRoute;
-    if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) {
-      return { terminal: true };
-    }
+    const active = state.activeRoute;
+    const route = active && !this.retirement.retired(active) && active.generation === payload.routeGeneration ? active : null;
+    if (route) await this.markRead(inbound.messageId, route);
+    // A link's code, or the answer to moving, is the platform's to settle even once the route that
+    // admitted it has changed, so a retry still finishes a connection that replaced that route.
+    const link = await this.linkResponse(inbound, active?.generation ?? payload.routeGeneration);
+    if (link) return link;
+    if (!route) return { terminal: true };
     // Replies to a linked person's message belong to the route that admitted
     // it, so a delayed delivery cannot cross a relink.
     const linked: ResponseContext = { kind: "installation", installationId: route.installationId, generation: route.generation };
-    await this.markRead(inbound.messageId, route);
-    const link = await this.linkResponse(inbound, route.generation);
-    if (link) return link;
     if (isManagedWhatsAppPairCommand(inbound.text)) {
       return await this.pairingResponse(inbound, route.generation, true);
     }
@@ -946,19 +947,31 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const context: ResponseContext = { kind: "platform", routeGeneration };
     const state = await this.requireState();
     const move = state.linkMove;
-    if (move && answersLinkMove(move, inbound.text)) {
+    // The delivery whose "Move it" is connecting still answers the question once it has expired.
+    if (move && (move.answeredBy === inbound.deliveryId || answersLinkMove(move, inbound.text))) {
+      const keep = inbound.text === KEEP_LINK_CHOICE;
       const answered = await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
-        if (!latest || latest.linkMove?.claimId !== move.claimId) return false;
-        const { linkMove: _answered, ...rest } = latest;
-        await txn.put(STATE_KEY, rest satisfies ManagedWhatsAppPeerState);
+        const open = latest?.linkMove;
+        if (!latest || open?.claimId !== move.claimId) return false;
+        // Another tap while a move connects changes nothing; the answering delivery's retry carries on.
+        if (open.answeredBy !== undefined) return open.answeredBy === inbound.deliveryId;
+        if (keep) {
+          const { linkMove: _kept, ...rest } = latest;
+          await txn.put(STATE_KEY, rest satisfies ManagedWhatsAppPeerState);
+        } else {
+          // The question stays open until the Kernel answers, so a retry after a failed call still reads as the answer.
+          await txn.put(STATE_KEY, { ...latest, linkMove: { ...open, answeredBy: inbound.deliveryId } } satisfies ManagedWhatsAppPeerState);
+        }
         return true;
       });
       if (!answered) return { terminal: true };
-      if (inbound.text === KEEP_LINK_CHOICE) {
+      if (keep) {
         return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, LINK_TEXT.kept(move.current), context);
       }
-      return await this.redeemLink(inbound, move, routeGeneration);
+      const settled = await this.redeemLink(inbound, move, routeGeneration);
+      await this.closeLinkMove(move.claimId);
+      return settled;
     }
     const code = pairingLinkCode(inbound.text);
     if (!code) return null;
@@ -991,9 +1004,20 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     return await this.redeemLink(inbound, { ...binding, code }, routeGeneration);
   }
 
+  /** Closes the question about moving to another Ship once the Kernel has answered it. */
+  private async closeLinkMove(claimId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
+      if (!latest || latest.linkMove?.claimId !== claimId) return;
+      const { linkMove: _closed, ...rest } = latest;
+      await txn.put(STATE_KEY, rest satisfies ManagedWhatsAppPeerState);
+    });
+  }
+
   /**
    * Hands a code bound to this sender to the Kernel that minted it. The Kernel reads the pending
    * pairing back through the claim and connects this sender; its confirmation names the Ship.
+   * A failed call throws, so the code's message is delivered again.
    */
   private async redeemLink(
     inbound: ManagedWhatsAppInbound,
