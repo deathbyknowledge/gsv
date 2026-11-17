@@ -67,7 +67,7 @@ export function FirstRunPairing({ adapter, name, linked, disabled, onPaired, onF
   if (linked || confirm.isSuccess) return <div class="first-run-pairing">
     <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: name })} />
     <div class="first-run-actions">
-      <Button variant="primary" href={chatUrl || undefined} label={t("settings.pairing.open", { name: name.toUpperCase() })} disabled={disabled} onClick={onFinish} />
+      <Button variant="primary" href={chatUrl} label={t("settings.pairing.open", { name: name.toUpperCase() })} disabled={disabled || !chatUrl} onClick={onFinish} />
       <Button variant="secondary" label={t("onboarding.surface.openChatHere")} disabled={disabled} onClick={onFinish} />
     </div>
   </div>;

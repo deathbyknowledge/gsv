@@ -4,7 +4,7 @@ import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import { collectNodes, createTestRoot } from "../../../testing/testHarness";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
