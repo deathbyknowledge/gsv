@@ -4,7 +4,7 @@ import {
   validManagedWhatsAppVerifyToken,
   type ManagedWhatsAppConfigEnv,
 } from "./managed-config";
-import { isWhatsAppAddress } from "./whatsapp-address";
+import { isWhatsAppAddress, isWhatsAppUserId } from "./whatsapp-address";
 import {
   answerWhatsAppVerification,
   normalizeWhatsAppWebhook,
@@ -16,6 +16,7 @@ import {
 
 type ManagedWhatsAppPeerStub = DurableObjectStub & {
   handleWebhook(event: ManagedWhatsAppPeerEvent): Promise<{ ok: true }>;
+  aliasedAddress(): Promise<string | null>;
 };
 
 export type ManagedWhatsAppHttpEnv = ManagedWhatsAppConfigEnv & {
@@ -89,13 +90,10 @@ export async function handleManagedWhatsAppRequest(
   const allowlist = allowedActorIds(env.WHATSAPP_ALLOWED_ACTOR_IDS);
   let rejected = 0;
   for (const event of normalized.events) {
-    const { actorId, surfaceId, phoneNumber } = whatsAppEventActor(event);
-    if (allowlist && !allowlist.has(actorId) && !(phoneNumber && allowlist.has(phoneNumber))) continue;
-    const id = env.MANAGED_WHATSAPP_PEER.idFromName(`managed:${surfaceId}`);
-    // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.
-    const peer = env.MANAGED_WHATSAPP_PEER.get(id) as ManagedWhatsAppPeerStub;
+    const sender = whatsAppEventActor(event);
     try {
-      await peer.handleWebhook(event);
+      if (allowlist && !await allowlisted(allowlist, sender, () => managedPeer(env, sender.surfaceId))) continue;
+      await managedPeer(env, sender.surfaceId).handleWebhook(event);
     } catch {
       rejected += 1;
       console.warn(JSON.stringify({
@@ -111,6 +109,28 @@ export async function handleManagedWhatsAppRequest(
     );
   }
   return Response.json({ ok: true });
+}
+
+function managedPeer(env: ManagedWhatsAppHttpEnv, surfaceId: string): ManagedWhatsAppPeerStub {
+  const id = env.MANAGED_WHATSAPP_PEER.idFromName(`managed:${surfaceId}`);
+  // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook and aliasedAddress RPCs.
+  return env.MANAGED_WHATSAPP_PEER.get(id) as ManagedWhatsAppPeerStub;
+}
+
+/**
+ * Whether the allowlist admits the sender: by their address, by the number Meta shared beside it,
+ * or by the number of the peer their user ID was recorded as an alias of, so a person admitted by
+ * number keeps getting through once Meta withholds it. Only that last check reaches a peer.
+ */
+async function allowlisted(
+  allowlist: Set<string>,
+  sender: { actorId: string; phoneNumber?: string },
+  peer: () => ManagedWhatsAppPeerStub,
+): Promise<boolean> {
+  if (allowlist.has(sender.actorId) || (sender.phoneNumber && allowlist.has(sender.phoneNumber))) return true;
+  if (!isWhatsAppUserId(sender.actorId)) return false;
+  const alias = await peer().aliasedAddress();
+  return alias !== null && allowlist.has(alias);
 }
 
 function allowedActorIds(value: string | undefined): Set<string> | null {

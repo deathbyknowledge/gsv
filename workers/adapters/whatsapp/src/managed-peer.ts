@@ -276,6 +276,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     return { ok: true };
   }
 
+  /** The number of the peer this user ID's sender was first known by, once recorded. */
+  async aliasedAddress(): Promise<string | null> {
+    return (await this.ctx.storage.get<ManagedWhatsAppPeerAlias>(ALIAS_KEY))?.surfaceId ?? null;
+  }
+
   /** Whether anyone has messaged the platform number under this peer's address. */
   async knowsSender(): Promise<boolean> {
     return Boolean(await this.ctx.storage.get<ManagedWhatsAppPeerState>(STATE_KEY));

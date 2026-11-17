@@ -27,10 +27,30 @@ function notification(from = "34611111189") {
   };
 }
 
-function makeEnv(overrides: Partial<ManagedWhatsAppHttpEnv> = {}) {
+/** A message from a person who keeps their number private: Meta names them only by user ID. */
+function userIdNotification(userId = "US.13491208655302741918") {
+  return {
+    object: "whatsapp_business_account",
+    entry: [{
+      id: "9876543210",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: { display_phone_number: "34600000000", phone_number_id: PHONE_NUMBER_ID },
+          contacts: [{ profile: { name: "Hank", username: "hank" }, user_id: userId }],
+          messages: [{ from_user_id: userId, id: "wamid.first", timestamp: "1700000000", type: "text", text: { body: "hello" } }],
+        },
+      }],
+    }],
+  };
+}
+
+function makeEnv(overrides: Partial<ManagedWhatsAppHttpEnv> = {}, alias: string | null = null) {
   const handleWebhook = vi.fn(async () => ({ ok: true as const }));
+  const aliasedAddress = vi.fn(async () => alias);
   const idFromName = vi.fn((name: string) => ({ name }));
-  const get = vi.fn(() => ({ handleWebhook }));
+  const get = vi.fn(() => ({ handleWebhook, aliasedAddress }));
   // SAFETY: this test fake implements the only namespace operations used by the handler.
   const env: ManagedWhatsAppHttpEnv = {
     MANAGED_WHATSAPP_PEER: {
@@ -46,7 +66,7 @@ function makeEnv(overrides: Partial<ManagedWhatsAppHttpEnv> = {}) {
     WHATSAPP_DISPLAY_NUMBER: "+34600000000",
     ...overrides,
   };
-  return { env, handleWebhook, idFromName, get };
+  return { env, handleWebhook, aliasedAddress, idFromName, get };
 }
 
 async function sign(body: string, secret = APP_SECRET): Promise<string> {
@@ -120,6 +140,31 @@ describe("managed WhatsApp HTTP boundary", () => {
     );
     expect(response.status).toBe(200);
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("admits a user ID the allowlist knows by the number its peer was recorded as an alias of", async () => {
+    const { env, idFromName, handleWebhook, aliasedAddress } = makeEnv({ WHATSAPP_ALLOWED_ACTOR_IDS: "34611111189" }, "34611111189");
+    const response = await handleManagedWhatsAppRequest(
+      await webhookRequest(JSON.stringify(userIdNotification())),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(aliasedAddress).toHaveBeenCalledOnce();
+    expect(idFromName).toHaveBeenCalledWith("managed:US.13491208655302741918");
+    expect(handleWebhook).toHaveBeenCalledWith({
+      kind: "message",
+      inbound: expect.objectContaining({ actorId: "US.13491208655302741918", text: "hello" }),
+    });
+  });
+
+  it("drops a user ID the allowlist does not name and no allowlisted number aliases", async () => {
+    const { env, handleWebhook } = makeEnv({ WHATSAPP_ALLOWED_ACTOR_IDS: "34611111189" }, "34622222289");
+    const response = await handleManagedWhatsAppRequest(
+      await webhookRequest(JSON.stringify(userIdNotification())),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(handleWebhook).not.toHaveBeenCalled();
   });
 
   it("normalizes an authenticated notification and routes each message to its peer", async () => {
