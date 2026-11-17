@@ -15,6 +15,9 @@ describe("browser signup assets", () => {
     expect(response?.headers.get("cache-control")).toBe("no-store");
     expect(response?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response?.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    const policy = response!.headers.get("content-security-policy")!;
+    expect(policy.split("; ").find((directive) => directive.startsWith("frame-src "))).toBe("frame-src 'self'");
+    expect(policy).toContain("default-src 'none'");
     const html = await response!.text();
     expect(html).toContain('"primaryDomain":"fleet.example"');
     expect(html).toContain('id="gsv-deployment"');

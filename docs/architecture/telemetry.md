@@ -32,6 +32,8 @@ is independent of advertising consent and respects DNT/GPC and analytics opt-out
 released together through the operator composition. Marketing must first serve
 its acquisition bridge and CORS-enabled public config. The marketing repository's
 `docs/acquisition.md` defines event mappings, the privacy review and release checks.
+The Accounts signup page permits same-origin frames so a signup page hosted on
+the marketing origin can load that bridge; its policy still blocks external frames.
 Do not change generic backend lifecycle events into browser ad conversions.
 
 ## Privacy contract

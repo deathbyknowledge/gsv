@@ -36,7 +36,7 @@ export async function handleOwnerSignupRequest(request: Request, env: Pick<Insta
   const headers = new Headers(asset.headers);
   headers.set("referrer-policy", "no-referrer");
   headers.set("x-content-type-options", "nosniff");
-  headers.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  headers.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; frame-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   if (index) headers.set("cache-control", "no-store");
   const response = new Response(asset.body, { status: asset.status, headers });
   if (!index || !headers.get("content-type")?.includes("text/html")) return response;
