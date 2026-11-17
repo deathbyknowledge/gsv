@@ -532,7 +532,27 @@ to a local uid. That mapping is what allows inbound messages to reach the right
 process and lets authenticated native callbacks submit an exact pending
 human-in-the-loop decision as that linked human.
 
-The adapter issues a short-lived code without choosing a space. A signed-in
+An adapter whose descriptor declares `pairingLinks`, as WhatsApp and Telegram
+do, connects people from a link. A signed-in human calls `adapter.pair.create`.
+The Kernel mints a single-use code, keeps only its hash beside the owner, their
+credential epoch and a ten-minute expiry, and asks the adapter for a link that
+carries it. The adapter records which installation offered the code in a claim
+keyed by the code and returns a messenger link, such as a prefilled `wa.me`
+message or a Telegram `start` parameter. When a message carries the code, the
+adapter binds the claim to its sender and calls `redeemAdapterPairing` on the
+Gateway entrypoint, which resolves the installation through the directory. The
+Kernel checks the hash, expiry and owner, then runs the ordinary confirmation as
+that owner. An unknown, spent or expired code connects no one. Connecting with
+one code retires the owner's other codes for that messenger, and a credential
+change cancels them all. A sender already linked to another Ship or account is
+asked to **Move it** or **Keep it** before the adapter redeems. Processes cannot
+mint codes: `adapter.pair.info` gives them a `setupUrl` in Settings to send
+instead, so a model never holds a code, and the Kernel refuses inspect and
+confirm for these adapters. The `linkedAt` that `sys.link.list` reports appears
+only once finalization completes, so a page waiting on its link never shows an
+unfinished connection.
+
+Otherwise the adapter issues a short-lived code without choosing a space. A signed-in
 human or an authorized process can inspect and redeem it through
 `adapter.pair.inspect` and `adapter.pair.confirm`. For a process, the Kernel
 derives the active human owner from its registry and honors the process's
@@ -550,21 +570,23 @@ and remote activation. The Kernel retains that promise through finalization,
 even if the caller stops waiting. Credential revocation remains authoritative.
 
 `messenger setup ADAPTER` reads public connection instructions from the adapter.
-The user can paste its code into the conversation; Ship reads that code from a
+For an adapter with `pairingLinks`, Ship sends the user its `setupUrl`. Otherwise
+the user can paste its code into the conversation; Ship reads that code from a
 file through `messenger connect ADAPTER < code.txt`. This uses the existing
 pairing operation without a separate UI confirmation protocol or model tool.
 
-Without a link, addressed messages may request pairing; they do not enter a
-Process. The first message that requested the code is not replayed as agent
+Without a link, addressed messages may request pairing, or, for `pairingLinks`
+adapters, get a reminder to connect from Settings at most every ten minutes; they
+do not enter a Process. The first message that requested the code is not replayed as agent
 input. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
 
 A private message on the exact retained route of a password-revoked identity
 returns `revoked_identity`. Managed adapters respond with their own fresh pairing
-code; the revoked message never enters a Process. Removed accounts, unknown
-routes, and obsolete generations remain fenced. Redeeming a fresh code through
-the signed-in human or an authorized owned process releases the retained route
-before activating its replacement.
+code, or with the reminder to make a link; the revoked message never enters a
+Process. Removed accounts, unknown routes, and obsolete generations remain fenced.
+Redeeming a fresh code or link for the signed-in human or an authorized owned
+process releases the retained route before activating its replacement.
 
 Linked group, channel, and thread traffic is not ambient input. The adapter must
 set `wasMentioned: true` when the bot was addressed according to that
