@@ -58,7 +58,8 @@
       "WHATSAPP_DISPLAY_NUMBER"
     ],
     "optionalVariables": [
-      "WHATSAPP_UNREACHABLE_CALLING_CODES"
+      "WHATSAPP_UNREACHABLE_CALLING_CODES",
+      "GSV_SIGNUP_URL"
     ]
   }
 }

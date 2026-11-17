@@ -60,9 +60,34 @@ export function pairingLinkText(messenger: string) {
     move: (current: string, next: string) => `This ${messenger} account talks to the Ship at ${current}. Move it to ${next}?`,
     kept: (current: string) => `Kept. This ${messenger} account still talks to ${current}.`,
     inProgress: `Ship is still connecting this ${messenger} account. Send your message again in a moment.`,
-    unlinked: `To talk to your Ship here, open your Ship and connect ${messenger} in Settings → Messengers.`,
+    /**
+     * With somewhere to sign up, a stranger hears first how to get a Ship; an owner, to ask theirs,
+     * which sends its setup link. The address stands on its own line with nothing touching it, so
+     * no messenger takes punctuation into the link.
+     */
+    unlinked: (signupUrl?: string) => signupUrl
+      ? `Hi! To talk to Ship here, click on this link:\n${signupUrl}\n\nAlready have a Ship? Ask it how to connect.`
+      : `To talk to your Ship here, ask it how to connect ${messenger}.`,
     linked: (current: string) => `This ${messenger} account talks to the Ship at ${current}. To connect it to another Ship, open Settings → Messengers there.`,
   };
+}
+
+/**
+ * Where someone without a Ship creates one, as the operator configured it, tagged with the
+ * messenger that sent them as its `utm_source`: signup counts where it came from, and the new
+ * Ship opens that messenger's connection. Unset, or anything but an HTTPS URL, offers no signup.
+ */
+export function messengerSignupUrl(configured: string | undefined, adapter: string): string | undefined {
+  if (!configured?.trim()) return undefined;
+  let url: URL;
+  try {
+    url = new URL(configured.trim());
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:") return undefined;
+  url.searchParams.set("utm_source", adapter);
+  return url.href;
 }
 
 /** The longest a minted code may live; the Kernel mints them for ten minutes. */

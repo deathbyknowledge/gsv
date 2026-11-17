@@ -1,5 +1,7 @@
 const STORAGE_ONBOARDING_TOKEN = "gsv.ui.installation-onboarding.v1";
 const STORAGE_SIGNUP_ARRIVAL = "gsv.ui.installation-onboarding.signup.v1";
+const STORAGE_FIRST_RUN_MESSENGER = "gsv.ui.first-run.messenger.v1";
+const MESSENGER_PATTERN = /^[a-z0-9-]{1,32}$/;
 const ONBOARDING_PATH = "/onboarding";
 const SIGNUP_ARRIVAL_PARAM = "signup";
 const ONBOARDING_TOKEN_PATTERN = /^onboard_[A-Za-z0-9_-]{32,128}$/;
@@ -11,6 +13,9 @@ export function readInstallationOnboardingToken(): string | null {
     if (token && ONBOARDING_TOKEN_PATTERN.test(token)) {
       try {
         window.sessionStorage.setItem(STORAGE_ONBOARDING_TOKEN, token);
+        // Signup names the messenger the person came from; it outlives setup, for the first run to open.
+        const messenger = fragment.get("messenger");
+        if (messenger && MESSENGER_PATTERN.test(messenger)) window.sessionStorage.setItem(STORAGE_FIRST_RUN_MESSENGER, messenger);
       } catch {}
       removeFragment();
       return token;
@@ -46,6 +51,21 @@ export function readSignupArrival(token: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The messenger a signup came from, which the first run opens once; only a setup link carries it. */
+export function readFirstRunMessenger(): string | null {
+  try {
+    return window.sessionStorage.getItem(STORAGE_FIRST_RUN_MESSENGER);
+  } catch {
+    return null;
+  }
+}
+
+export function clearFirstRunMessenger(): void {
+  try {
+    window.sessionStorage.removeItem(STORAGE_FIRST_RUN_MESSENGER);
+  } catch {}
 }
 
 export function clearInstallationOnboardingToken(): void {

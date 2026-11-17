@@ -42,6 +42,16 @@ const button = (label: string) => collectNodes(tree).find((node) => node.type ==
 const alert = () => collectNodes(tree).find((node) => node.type === Alert);
 const skip = () => button("Skip for now, chat with Ship here");
 const click = async (node: { props: { onClick?: () => void | Promise<void> } } | undefined) => { await act(async () => { await node!.props.onClick!(); }); };
+/** Signup left this messenger in tab storage for the first run; returns that storage. */
+function arriveFrom(messenger: string): Map<string, string> {
+  const stored = new Map([["gsv.ui.first-run.messenger.v1", messenger]]);
+  vi.stubGlobal("window", { ...window, sessionStorage: {
+    getItem: (key: string) => stored.get(key) ?? null,
+    removeItem: (key: string) => { stored.delete(key); },
+    setItem: (key: string, value: string) => { stored.set(key, value); },
+  } });
+  return stored;
+}
 
 beforeEach(() => {
   adapters = [managedAdapter("whatsapp"), managedAdapter("telegram"), managedAdapter("slack", { canLink: false })];
@@ -106,6 +116,39 @@ describe("first-run screen", () => {
     expect(request).toHaveBeenCalledWith("sys.link.list", {});
     await act(async () => { pairings()[0]!.props.onFinish!(); });
     expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  it("opens the card of the messenger a signup came from, once", async () => {
+    const arrival = arriveFrom("telegram");
+    await mount();
+    await vi.waitFor(() => expect(pairings().map((node) => node.props.adapter)).toEqual(["telegram"]));
+    expect(header("Telegram")?.props["aria-expanded"]).toBe(true);
+    expect(arrival.size).toBe(0);
+    // Closing it leaves the choice to the person; a later load of the links does not open it again.
+    await click(header("Telegram"));
+    expect(pairings()).toEqual([]);
+    await click(header("WhatsApp"));
+    request.mockClear();
+    await act(async () => { pairings()[0]!.props.onRefreshLinks!(); });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.link.list", {}));
+    expect(pairings().map((node) => node.props.adapter)).toEqual(["whatsapp"]);
+  });
+
+  it("opens nothing for a messenger that is already connected or that this deployment does not offer", async () => {
+    links = [whatsAppLink];
+    const connectedHint = arriveFrom("whatsapp");
+    await mount();
+    await vi.waitFor(() => expect(connectedHint.size).toBe(0));
+    expect(collectNodes(header("WhatsApp")!.props.children).find((node) => node.type === Tag)?.props.label).toBe("Connected");
+    expect(pairings()).toEqual([]);
+    await root.unmount();
+
+    adapters = [managedAdapter("whatsapp")];
+    const unavailable = arriveFrom("telegram");
+    await mount();
+    await vi.waitFor(() => expect(unavailable.size).toBe(0));
+    expect(cards()).toEqual(["WhatsApp"]);
+    expect(pairings()).toEqual([]);
   });
 
   it("opens the chat instead of skipping when no messenger can be paired", async () => {

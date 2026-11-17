@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
@@ -7,6 +7,7 @@ import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
 import { gatewayHttpOrigin } from "../../../services/platform/gatewayOrigin";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import { clearFirstRunMessenger, readFirstRunMessenger } from "../../../services/session/installationOnboarding";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { loadMessengerConnections } from "../settings/messengerConnectionsService";
@@ -37,6 +38,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
   const t = useT();
   const { client, connected } = useGateway();
   const [open, setOpen] = useState<MessengerChoice | null>(null);
+  const [arrivedFrom, setArrivedFrom] = useState(readFirstRunMessenger);
   const connections = useQuery({
     queryKey: [...INSTRUMENT_MESSENGERS_KEY, ownerUid],
     queryFn: () => loadMessengerConnections(client, ownerUid),
@@ -46,6 +48,14 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
     const adapter = connections.data?.adapters.find((entry) => entry.adapter === id);
     return adapter?.enabled === true && adapter.supportsPairing && adapter.canLink;
   });
+  /* someone who signed up from a messenger finds its card open, once, unless it is already connected */
+  useEffect(() => {
+    if (!arrivedFrom || !connections.data) return;
+    clearFirstRunMessenger();
+    setArrivedFrom(null);
+    const arrival = offered.find(({ id }) => id === arrivedFrom);
+    if (arrival && !connections.data.links.some((link) => link.adapter === arrival.id)) setOpen(arrival.id);
+  }, [arrivedFrom, connections.data]);
   const busy = completing || !connected;
   const finish = () => { void onComplete(); };
 

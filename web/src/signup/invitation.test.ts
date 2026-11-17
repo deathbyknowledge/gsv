@@ -16,7 +16,7 @@ describe("signup contact handoff", () => {
     await first.save({ operationId: "signup-operation" });
     const reopened = new OwnerWelcome(snapshot, storage, origin);
     const restored = await captureContactInvitation(reopened, null);
-    const destination = new URL(signupDestination("https://friend.example", `onboard_${"x".repeat(43)}`, restored));
+    const destination = new URL(signupDestination("https://friend.example", `onboard_${"x".repeat(43)}`, { contact: restored }));
     expect(new URLSearchParams(destination.hash.slice(1)).get("contact")).toBe(contact);
     expect(reopened.state.operationId).toBe("signup-operation");
   });

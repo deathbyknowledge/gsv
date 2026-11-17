@@ -26,6 +26,14 @@ for your answer. If you answer a request that has ended, whether it timed out,
 was interrupted by a new message or was answered elsewhere, the messenger says
 your answer wasn't used; ask Ship to try again if it still needs doing.
 
+## Start from a messenger
+
+You can message the Ship number on WhatsApp or the Ship bot on Telegram before
+you have a Ship. When the operator offers signup, the reply links to it. Create
+your Ship there, and the first screen it shows has that messenger's connection
+open: tap **Open WhatsApp** (or **Open Telegram**) and send the message it
+fills in. Ship says hello there once you are connected.
+
 ## Ask Ship to connect
 
 Ask Ship to connect WhatsApp or Telegram, and it sends you a link to that
@@ -76,7 +84,8 @@ it can't see, and it asks rather than guesses.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the bot without a
-connection gets a reminder to connect from **Settings → Messengers**.
+connection gets a reminder to ask your Ship how to connect, and, when the
+operator offers signup, a link to create a Ship.
 
 If your Telegram account talks to another Ship, the bot asks whether to **Move
 it** to this Ship or **Keep it**; the route moves only when you choose to move it.
@@ -170,9 +179,9 @@ Platform. You message that number from your own WhatsApp account.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the Ship number
-without a connection gets a reminder to connect from **Settings → Messengers**,
-and a number that talks to another Ship is asked there whether to **Move it** or
-**Keep it**.
+without a connection gets a reminder to ask your Ship how to connect (with a
+link to create a Ship when the operator offers signup), and a number
+that talks to another Ship is asked there whether to **Move it** or **Keep it**.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several

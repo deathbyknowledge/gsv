@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { answersLinkMove, isPairingLinkMessage, pairingLinkCode, pairingLinkMessage, parsePairingLinkInput, shipHost } from "../src/pairing-link";
+import {
+  answersLinkMove,
+  isPairingLinkMessage,
+  messengerSignupUrl,
+  pairingLinkCode,
+  pairingLinkMessage,
+  pairingLinkText,
+  parsePairingLinkInput,
+  shipHost,
+} from "../src/pairing-link";
 
 describe("pairing link codes", () => {
   it("reads the code a link prefills, typed by hand or sent by Telegram's Start", () => {
@@ -36,6 +45,30 @@ describe("pairing link codes", () => {
 
   it("names a Ship by the host of its address", () => {
     expect(shipHost("https://esteve.ship.space")).toBe("esteve.ship.space");
+  });
+});
+
+describe("signup for strangers", () => {
+  it("sends someone without a Ship to the operator's signup, marked with the messenger they came from", () => {
+    expect(messengerSignupUrl("https://signup.gsv.space", "whatsapp")).toBe("https://signup.gsv.space/?utm_source=whatsapp");
+    expect(messengerSignupUrl(" https://gsv.space/owner/signup/?utm_campaign=launch&utm_source=ads ", "telegram"))
+      .toBe("https://gsv.space/owner/signup/?utm_campaign=launch&utm_source=telegram");
+    expect(messengerSignupUrl(undefined, "whatsapp")).toBeUndefined();
+    expect(messengerSignupUrl(" ", "whatsapp")).toBeUndefined();
+    expect(messengerSignupUrl("http://signup.gsv.space", "whatsapp")).toBeUndefined();
+    expect(messengerSignupUrl("signup.gsv.space", "whatsapp")).toBeUndefined();
+  });
+
+  it("tells an unlinked sender how to get a Ship when signup is open, and to ask their Ship either way", () => {
+    const text = pairingLinkText("WhatsApp");
+    // The address stands on its own line, so no messenger takes punctuation into the link.
+    expect(text.unlinked("https://signup.ship.space/?utm_source=whatsapp")).toBe([
+      "Hi! To talk to Ship here, click on this link:",
+      "https://signup.ship.space/?utm_source=whatsapp",
+      "",
+      "Already have a Ship? Ask it how to connect.",
+    ].join("\n"));
+    expect(text.unlinked()).toBe("To talk to your Ship here, ask it how to connect WhatsApp.");
   });
 });
 

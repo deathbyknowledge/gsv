@@ -147,6 +147,21 @@ describe("signup attribution", () => {
     expect((await props.load()).state.attribution).toEqual({ placement: "hero" });
   });
 
+  it("sends someone a messenger sent here to their new Ship with that messenger's connection to open", async () => {
+    const token = `onboard_${"x".repeat(43)}`;
+    window.location.href = `${origin}/?utm_source=whatsapp`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ utmSource: "whatsapp" });
+    await props.onConnect("https://nora.gsv.space", token);
+    const destination = new URL(assign.mock.lastCall![0]);
+    expect(destination.pathname).toBe("/onboarding");
+    expect(Object.fromEntries(new URLSearchParams(destination.hash.slice(1)))).toEqual({ onboarding: token, messenger: "whatsapp" });
+
+    window.location.href = `${origin}/?utm_source=facebook#from=hero`;
+    await (await screen()).onConnect("https://nora.gsv.space", token);
+    expect(new URL(assign.mock.lastCall![0]).hash).toBe(`#${token}`);
+  });
+
   it("ignores slugs that are not plain", async () => {
     window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
     const props = await screen();

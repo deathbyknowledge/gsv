@@ -23,6 +23,8 @@ export type ManagedWhatsAppConfigEnv = ManagedWhatsAppTemplateEnv & {
   WHATSAPP_WEBHOOK_BASE_URL?: string;
   WHATSAPP_DISPLAY_NUMBER?: string;
   WHATSAPP_UNREACHABLE_CALLING_CODES?: string;
+  /** Where someone without a Ship creates one; unlinked senders are pointed there. */
+  GSV_SIGNUP_URL?: string;
 };
 
 /** The notification template used outside the customer service window. */
