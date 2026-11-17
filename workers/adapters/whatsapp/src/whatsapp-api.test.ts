@@ -46,6 +46,25 @@ describe("WhatsApp Graph API client", () => {
     });
   });
 
+  it("addresses a business-scoped user ID as the recipient instead of a number", async () => {
+    const fetcher = vi.fn<ManagedWhatsAppFetch>(async () => Response.json({
+      messaging_product: "whatsapp",
+      messages: [{ id: "wamid.sent" }],
+    }));
+    await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, {
+      to: "US.13491208655302741918",
+      type: "text",
+      text: { preview_url: false, body: "hello" },
+    }, fetcher)).resolves.toEqual({ messageId: "wamid.sent" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      recipient: "US.13491208655302741918",
+      type: "text",
+      text: { preview_url: false, body: "hello" },
+    });
+  });
+
   it("classifies provider failures for a non-idempotent send", async () => {
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(400, 131047)))
       .rejects.toMatchObject({ kind: "permanent", windowClosed: true, message: expect.stringContaining(WHATSAPP_WINDOW_CLOSED_ERROR) });

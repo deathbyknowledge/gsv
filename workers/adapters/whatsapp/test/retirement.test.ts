@@ -19,13 +19,20 @@ type GraphRecord = {
   result: { id?: string };
 };
 
+/** Connects a sender through a link minted for `space`, as the Kernel and the person would. */
 async function pair(surfaceId: string, space: string) {
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31]).join("");
+  await bindings.MANAGED_WHATSAPP_PAIRING.getByName(`pair:${code}`).offer({
+    claimId: crypto.randomUUID(), expiresAt: Date.now() + 10 * 60_000,
+    link: { installationId: space, localUid: 1000, canonicalOrigin: "https://fixture.gsv.space" },
+  });
   const peer = bindings.MANAGED_WHATSAPP_PEER.getByName(`managed:${surfaceId}`);
   await peer.handleWebhook({ kind: "message", inbound: {
     deliveryId: `message:first-${surfaceId}`, messageId: `wamid.first.${surfaceId}`, actorId: surfaceId, surfaceId,
-    text: "/start", unsupportedContent: false, timestamp: Date.now(),
+    text: `Connect my Ship ${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`, unsupportedContent: false, timestamp: Date.now(),
   } });
   const pending = await runInDurableObject(peer, async (_instance, state) => (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pairing!);
+  expect(pending.code).toBe(code);
   const claim = bindings.MANAGED_WHATSAPP_PAIRING.getByName(`pair:${pending.code}`);
   const input = { code: pending.code, installationId: space, localUid: 1000, operationId: `pair-${surfaceId}`, canonicalOrigin: "https://fixture.gsv.space" };
   const prepared = await claim.prepare(input);

@@ -23,6 +23,8 @@ export type ManagedWhatsAppConfigEnv = ManagedWhatsAppTemplateEnv & {
   WHATSAPP_WEBHOOK_BASE_URL?: string;
   WHATSAPP_DISPLAY_NUMBER?: string;
   WHATSAPP_UNREACHABLE_CALLING_CODES?: string;
+  /** Where someone without a Ship creates one; unlinked senders are pointed there. */
+  GSV_SIGNUP_URL?: string;
 };
 
 /** The notification template used outside the customer service window. */
@@ -97,9 +99,11 @@ export function managedWhatsAppUnreachableCallingCodes(
 }
 
 /** The agent-facing sentence about who this number cannot reach; empty when it reaches everyone. */
-export function managedWhatsAppChatUrl(value: string | undefined): string | undefined {
+/** A chat with the platform number, with `text` ready to send when given. */
+export function managedWhatsAppChatUrl(value: string | undefined, text?: string): string | undefined {
   if (!validManagedWhatsAppDisplayNumber(value)) return undefined;
-  return `https://wa.me/${managedWhatsAppDisplayDigits(value)}?text=${encodeURIComponent("/link")}`;
+  const url = `https://wa.me/${managedWhatsAppDisplayDigits(value)}`;
+  return text === undefined ? url : `${url}?text=${encodeURIComponent(text)}`;
 }
 
 export function validManagedWhatsAppVerifyToken(value: string | undefined): boolean {

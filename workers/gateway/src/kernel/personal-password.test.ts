@@ -12,6 +12,7 @@ import { AdapterStatusStore } from "./adapter-status";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 import { ShipReplies } from "./ship-replies";
 import { RunRouteStore } from "./run-routes";
+import { AdapterPairingLinkStore } from "./adapter-pairing-links";
 import { handleAdapterPairConfirm, handleAdapterPairDisconnect } from "./adapter-pairing";
 import type { AdapterPairingWorkerInterface, AdapterServiceDescriptor } from "../adapter-interface";
 import { activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing, type AdapterPeerLink } from "../../../adapters/shared/src/pairing-route";
@@ -91,8 +92,10 @@ function directMember(ctx: KernelContext, uid: number): KernelContext {
 
 describe("personal password reset and messenger recovery", () => {
   it("resets personal credentials while retaining the account, home and root access", async () => {
-    await fixture(async (recovery, ctx) => {
+    await fixture(async (recovery, ctx, sql) => {
       const human = ctx.auth.getHumanAccount()!;
+      const links = new AdapterPairingLinkStore(sql);
+      links.create({ adapter: "whatsapp", ownerUid: human.uid, credentialEpoch: ctx.auth.credentialEpoch(human.uid), codeHash: "hash-before-reset", now: Date.now() });
       const token = await ctx.auth.issueToken({ uid: human.uid, kind: "human" });
       const prepared = await ctx.auth.prepareToken({ uid: human.uid, kind: "human" });
       ctx.adapters.identityLinks.link("telegram", "managed", "actor", human.uid, human.uid, { surfaceKind: "dm", surfaceId: "actor" });
@@ -105,6 +108,8 @@ describe("personal password reset and messenger recovery", () => {
       expect(await ctx.auth.authenticate("root", "root-password")).toMatchObject({ ok: true });
       expect(() => assertAdapterMessageDestinationAccess({ adapter: "telegram", accountId: "managed", actorId: "actor", surface: { kind: "dm", id: "actor" } }, human.uid, ctx)).toThrow("not authorized");
       expect(ctx.invalidateAccountConnections).toHaveBeenCalledWith(human.uid);
+      // A messenger link made with the old password connects no one.
+      expect(links.get("whatsapp", "hash-before-reset")).toMatchObject({ cancelled: true, redeemed: false });
     });
   });
 

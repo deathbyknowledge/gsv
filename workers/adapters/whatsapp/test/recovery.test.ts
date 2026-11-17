@@ -127,20 +127,25 @@ it.each([404, 503])("unblocks text after an obsolete approval, starting with err
   expect((await gatewayCalls()).filter((call) => call.args.requestId === requestId)).toHaveLength(approvalCalls.length);
 });
 
-it("offers pairing after revocation and changes the route only after confirmation", async () => {
+it("tells a revoked sender how to connect and changes the route only after a new link connects", async () => {
   const actorId = "34690101111";
   const { peer, route } = await seed(actorId);
   await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.recovery", "__identity_revoked__") });
-  let code = "";
   await vi.waitFor(async () => {
-    const text = (await messages(actorId)).find((message) => /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/.test(message.body.text?.body ?? ""))?.body.text?.body ?? "";
-    code = text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0]?.replaceAll("-", "") ?? "";
-    expect(code).toHaveLength(12);
+    expect((await messages(actorId)).map((message) => message.body.text?.body)).toContainEqual(
+      expect.stringContaining("Already have a Ship? Ask it how to connect."),
+    );
   });
   await runInDurableObject(peer, async (_instance, state) => {
     expect(await state.storage.get(stateKey)).toMatchObject({ activeRoute: route });
   });
+  const code = "RECXVERYL2NK";
   const pairing = bindings.MANAGED_WHATSAPP_PAIRING.getByName(`pair:${code}`);
+  await pairing.offer({
+    claimId: crypto.randomUUID(), expiresAt: Date.now() + 10 * 60_000,
+    link: { installationId: route.installationId, localUid: route.localUid, canonicalOrigin: route.canonicalOrigin },
+  });
+  await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.recovery.link", "Connect my Ship RECX-VERY-L2NK") });
   using candidate = await pairing.inspect();
   expect(candidate).toMatchObject({ actorId, linked: true });
   const operation = {
@@ -162,7 +167,7 @@ it("offers pairing after revocation and changes the route only after confirmatio
   });
 });
 
-it("does not issue pairing from a revoked result belonging to a replaced route", async () => {
+it("stays quiet about a revoked result belonging to a replaced route", async () => {
   const actorId = "34690102222";
   const { peer, route } = await seed(actorId);
   const inbound = incoming(actorId, "wamid.recovery.delayed", "__identity_revoked_delayed__");

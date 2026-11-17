@@ -230,6 +230,8 @@ import type {
   AdapterPairDisconnectResult,
   AdapterPairInfoArgs,
   AdapterPairInfoResult,
+  AdapterPairCreateArgs,
+  AdapterPairCreateResult,
   AdapterPairInspectArgs,
   AdapterPairInspectResult,
   AdapterSendArgs,
@@ -577,6 +579,7 @@ export type SyscallDomains = {
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
   "adapter.list": { args: AdapterListArgs; result: AdapterListResult };
   "adapter.pair.info": { args: AdapterPairInfoArgs; result: AdapterPairInfoResult };
+  "adapter.pair.create": { args: AdapterPairCreateArgs; result: AdapterPairCreateResult };
   "adapter.pair.inspect": { args: AdapterPairInspectArgs; result: AdapterPairInspectResult };
   "adapter.pair.confirm": { args: AdapterPairConfirmArgs; result: AdapterPairConfirmResult };
   "adapter.pair.disconnect": { args: AdapterPairDisconnectArgs; result: AdapterPairDisconnectResult };

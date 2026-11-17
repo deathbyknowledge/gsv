@@ -63,6 +63,26 @@ describe("AdapterGatewayEntrypoint", () => {
     expect("unlinkAdapterIdentity" in GatewayEntrypoint.prototype).toBe(false);
   });
 
+  it("hands a link's code to the installation the directory routes, as the binding's adapter", async () => {
+    const redeemAdapterPairing = vi.fn(async () => ({ paired: true }));
+    const getByName = vi.fn(() => ({ redeemAdapterPairing }));
+    const gateway = gatewayWithEnv(
+      { KERNEL: { getByName }, INSTALLATION_DIRECTORY: activeDirectory() },
+      { id: "whatsapp", calls: ["adapter.inbound"] },
+    );
+    await expect(gateway.redeemAdapterPairing({ installationId: "inst_link" }, { code: "ABCDEFGHJKLM" })).resolves.toEqual({ paired: true });
+    expect(getByName).toHaveBeenCalledWith("inst_link");
+    expect(redeemAdapterPairing).toHaveBeenCalledWith("whatsapp", { code: "ABCDEFGHJKLM" });
+
+    const unrouted = gatewayWithEnv(
+      { KERNEL: { getByName }, INSTALLATION_DIRECTORY: { resolveInstallation: vi.fn(async () => ({ found: false as const })) } },
+      { id: "whatsapp", calls: ["adapter.inbound"] },
+    );
+    await expect(unrouted.redeemAdapterPairing({ installationId: "inst_gone" }, { code: "ABCDEFGHJKLM" }))
+      .resolves.toMatchObject({ paired: false, reason: "unavailable" });
+    expect(redeemAdapterPairing).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps adapter RPC off the generic Gateway entrypoint", () => {
     const gateway = gatewayWithEnv({});
 

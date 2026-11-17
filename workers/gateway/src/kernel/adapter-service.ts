@@ -197,7 +197,7 @@ export async function handleAdapterList(
           entry.enabled = info.configured;
         } catch { /* A failed observation cannot advertise a working link flow. */ }
       }
-      entry.canLink = entry.enabled && canLinkAdapter(ctx);
+      entry.canLink = entry.enabled && canLinkAdapter(ctx, descriptor?.capabilities.pairingLinks === true);
     }
     entries.set(adapter, entry);
   }));

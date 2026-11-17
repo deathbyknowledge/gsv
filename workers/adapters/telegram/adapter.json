@@ -53,6 +53,9 @@
     "requiredVariables": [
       "TELEGRAM_BOT_USERNAME",
       "TELEGRAM_WEBHOOK_BASE_URL"
+    ],
+    "optionalVariables": [
+      "GSV_SIGNUP_URL"
     ]
   }
 }

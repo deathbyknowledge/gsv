@@ -230,7 +230,9 @@ explicit country rather than geolocating their own export request.
   otherwise `direct`. The signup page reads the placement slugs from the signup
   link's fragment and the campaign tags from its query, keeps them in its own
   signup state until the space request and takes them off the URL; a reload
-  keeps them, and only a link carrying its own replaces them. The owner
+  keeps them, and only a link carrying its own replaces them. A messenger's
+  reply to someone without a Ship tags its signup link with `utm_source` set
+  to the messenger (`whatsapp` or `telegram`). The owner
   API bounds every value to one slug shape and classifies the placement and
   example into the allowlist, so an unknown slug becomes `other`, a campaign
   tag outside the shape is dropped, and the raw string never enters a record.

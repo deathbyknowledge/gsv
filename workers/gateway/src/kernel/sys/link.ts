@@ -4,6 +4,14 @@ import type {
   SysLinkListArgs,
   SysLinkListResult,
 } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
+
+/** How a managed link names the person, recorded when it connected. */
+const linkDisplaySchema = z.object({
+  actorName: z.catch(z.optional(z.string()), undefined),
+  actorHandle: z.catch(z.optional(z.string()), undefined),
+  linkedAt: z.catch(z.optional(z.number()), undefined),
+});
 
 export function handleSysLinkList(
   args: SysLinkListArgs,
@@ -21,14 +29,21 @@ export function handleSysLinkList(
     uidFilter = identity.account.uid;
   }
 
-  const links = ctx.adapters.identityLinks.list(uidFilter).map((link) => ({
-    adapter: link.adapter,
-    accountId: link.accountId,
-    actorId: link.actorId,
-    uid: link.uid,
-    createdAt: link.createdAt,
-    linkedByUid: link.linkedByUid,
-  }));
+  const links = ctx.adapters.identityLinks.list(uidFilter).map((link) => {
+    const entry: SysLinkListResult["links"][number] = {
+      adapter: link.adapter,
+      accountId: link.accountId,
+      actorId: link.actorId,
+      uid: link.uid,
+      createdAt: link.createdAt,
+      linkedByUid: link.linkedByUid,
+    };
+    const display = linkDisplaySchema.parse(link.metadata ?? {});
+    if (display.actorName) entry.actorName = display.actorName;
+    if (display.actorHandle) entry.actorHandle = display.actorHandle;
+    if (display.linkedAt !== undefined) entry.linkedAt = display.linkedAt;
+    return entry;
+  });
 
   return { links };
 }

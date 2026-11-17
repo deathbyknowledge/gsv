@@ -321,6 +321,27 @@ describe("Kernel service peer identity", () => {
   });
 });
 
+describe("Kernel messenger link redemption", () => {
+  it("admits a code only for an active space and a well-formed adapter identity", async () => {
+    const kernel = bareKernel();
+    const get = vi.fn(() => null);
+    kernel.buildKernelContext = vi.fn(() => ({ installationId: TEST_INSTALLATION_ID, adapters: { pairingLinks: { get } } }));
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    await expect(kernel.redeemAdapterPairing("WhatsApp", { code: "ABCD-EFGH-JKLM" })).resolves.toMatchObject({ paired: false, reason: "unavailable" });
+    expect(get).toHaveBeenCalledWith("whatsapp", expect.any(String));
+    await expect(kernel.redeemAdapterPairing("not an adapter", { code: "ABCD-EFGH-JKLM" })).rejects.toThrow("identity is invalid");
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "A".repeat(65) })).rejects.toThrow();
+
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: false, code: 403, message: "This space is paused" }));
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "ABCD-EFGH-JKLM" }))
+      .resolves.toEqual({ paired: false, reason: "refused", message: "This space is paused" });
+    // A gate that cannot answer now leaves the code for the adapter's retry.
+    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: false, code: 503, message: "Space status is unavailable" }));
+    await expect(kernel.redeemAdapterPairing("whatsapp", { code: "ABCD-EFGH-JKLM" })).rejects.toThrow("Space status is unavailable");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Kernel managed adapter unlink", () => {
   it("cleans the exact revoked generation after a peer moves without deleting a successor", async () => {
     await runWithRealKernelSql(async (sql) => {
