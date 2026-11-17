@@ -165,6 +165,16 @@ describe("public operator composition", () => {
       expect(recorded.databases).toEqual([]);
     });
 
+  it("keeps the Gateway's signup, recovery and setup links on the administration origin with a signup hostname", async () => {
+    // The signup hostname serves only signup; /owner/recover answers 404 there.
+    await run(GsvDeployment({ ...input, installations: { ...input.installations,
+      ownerSignupOrigin: "https://signup.example.com",
+      ownerEmail: { from: "accounts@example.com", authSecret: "synthetic-test-secret" },
+    } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.GSV_OWNER_SIGNUP_URL)
+      .toBe(new URL("/owner/signup/?resume=1", input.adminOrigin).href);
+  });
+
   it.each([
     { monthlyRequests: 0, monthlyOutputTokens: 1000 },
     { monthlyRequests: 100, monthlyOutputTokens: 0 },

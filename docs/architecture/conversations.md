@@ -28,11 +28,8 @@ wide viewports.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
 
-The smallest `x` size, 75%, uses 15px rendered message text and tighter vertical
-spacing for a compact conversation overview. Older messages stay more readable
-in this mode. The size choice is stored on the current device.
 On devices that support hover, pointing at an older message restores its full
-brightness at every text size without changing the selected message or scroll position.
+brightness without changing the selected message or scroll position.
 The latest message and consecutive messages from the same sender stay fully bright
 when each adjacent pair is at most five minutes apart. A different sender or a longer
 gap ends the group; work receipts and internal notes do not split it. The latest
@@ -67,15 +64,22 @@ the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
 the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
-On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
-receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
-A receipt names the places the work touched; work that named no place reads "worked on this".
-Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
+On phones, the return-to-latest control is a down arrow at the right edge.
+Each message has a quiet row of icon controls under it: copy and, when Ship worked before sending it,
+the receipt. Hover, focus or selecting the message shows the row, and the selected message (the latest
+by default) keeps it shown. The receipt's hint names the places the work touched; work that named no
+place reads "worked on this". Opening it shows the work beneath the message, step by step. A receipt
+says what Ship did, never how each step went: a command that ran is an ordinary step whatever its exit
+code, which ends its output as a terminal would, and a step that could not finish shows its reason the
+same way. Only a step the person declined or stopped says so. Running work, a pending approval and a run
+that stopped on an error without sending anything stay in the conversation as a line that counts the
+errors. A run that finished cleanly without sending anything leaves no trace in the conversation; action
+records remain inspectable in Settings → Logs.
 Direct `$` commands use a compact target header on phones, with running, unavailable or failed
 states when relevant. Expand it to read the complete command, output and terminal controls.
 
 A very long message in Chat folds behind **read more** once it has finished arriving, and **show
-less** folds it again. Folding uses the rendered height at the current width and text size:
+less** folds it again. Folding uses the rendered height at the current width:
 messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
 with a short fade at the end. Newly received replies stay open, including messages delivered without streaming. Opening or folding
 keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
@@ -164,9 +168,14 @@ delivery and run completion are separate operations:
   way a Read does: a file that would need approval is refused until it has been read once.
 - `choices` offers up to ten replies with a message that asks something, each one line of at most 80
   characters. They are stored with the canonical Message, so every client and messenger sees the
-  same ones. Instrument shows them as buttons under Ship's latest message only; once anything follows,
-  they are gone. Tapping one sends its text as an ordinary message from the person, exactly as if they
-  had typed it. Only a Process message with text can offer choices.
+  same ones. Instrument shows them as buttons under Ship's latest message only; once anyone writes again,
+  they are gone. Work Ship does after sending the message, such as a command it runs before it ends
+  its turn, is not writing and leaves them in place. While they are on offer the composer's hint says the
+  person can write their own answer instead. Tapping one sends its text as an ordinary message
+  from the person, exactly as if they had typed it. Only a Process message with text can offer choices.
+  A reply takes a choice when it is the choice's own words, however they are cased or spaced, or its
+  number where a messenger wrote the choices as a list. The Conversation tells the Kernel which
+  position a person's message took, which telemetry reports without the words.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:

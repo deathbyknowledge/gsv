@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { vi } from "vitest";
 import { createTestHarness, unstable_readConfig, type Unstable_RawConfig } from "wrangler";
+import { z } from "zod";
 import { FakePlcDirectory } from "../../../workers/pds/test/plc.ts";
 
 export const PUBLIC_ROOT = resolve(import.meta.dirname, "../../..");
@@ -23,23 +24,39 @@ export const SCOPES = { accounts: [{ kind: "d1", namespace: "accounts-db" }],
   pds: [{ kind: "r2", namespace: "pds-blobs" }] } satisfies Record<string, { kind: "d1" | "r2" | "kv"; namespace: string; r2Prefix?: "installation-root" }[]>;
 /** The DID directory the stack registers Ships with. */
 export const TEST_PLC_URL = "https://plc.test";
+/** The Email Sending account the stack's mail Worker sends through; only this process answers for it. */
+const TEST_MAIL_SENDING = { accountId: "0".repeat(32), apiToken: "local-email-sending-token" };
+const sendRawSchema = z.object({ recipients: z.array(z.string()) });
 const origin = "https://accounts.example.invalid";
 const deletionProps = { authority: "installation-deletion" };
 function config(path: string): Unstable_RawConfig { return unstable_readConfig({ config: resolve(PUBLIC_ROOT, path) }, { hideWarnings: true }); }
 
 /**
  * The stack's Workers fetch through this process, so it serves their DID
- * directory. Nothing reaches plc.directory.
+ * directory and Email Sending. Nothing reaches plc.directory or the Cloudflare API.
  */
-export function serveTestPlc(): FakePlcDirectory {
+export function serveTestNetwork(): FakePlcDirectory {
   const plc = new FakePlcDirectory();
   const fetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.origin === "https://plc.directory") throw new Error("The deletion stack must not reach plc.directory");
+    if (url.origin === "https://api.cloudflare.com") return sendRaw(new Request(input, init));
     return url.origin === TEST_PLC_URL ? plc.handle(new Request(input, init)) : fetch(input, init);
   });
   return plc;
+}
+
+/** Email Sending delivers every message the stack sends to each of its recipients. */
+async function sendRaw(request: Request): Promise<Response> {
+  const { pathname } = new URL(request.url);
+  if (pathname !== `/client/v4/accounts/${TEST_MAIL_SENDING.accountId}/email/sending/send_raw`
+    || request.headers.get("authorization") !== `Bearer ${TEST_MAIL_SENDING.apiToken}`) {
+    throw new Error(`The deletion stack must not reach the Cloudflare API: ${request.method} ${pathname}`);
+  }
+  const { recipients } = sendRawSchema.parse(await request.json());
+  return Response.json({ success: true, errors: [], messages: [], result: { message_id: `local-${crypto.randomUUID()}`,
+    delivered: recipients, queued: [], permanent_bounces: [], suppressed_recipients: [] } });
 }
 
 export function deletionStackHarness() {
@@ -88,8 +105,9 @@ export function deletionStackHarness() {
   };
   const mailConfig: Unstable_RawConfig = {
     name: STACK.mail, main: mail.main, compatibility_date: mail.compatibility_date, compatibility_flags: mail.compatibility_flags,
-    vars: { ...mail.vars, MAIL_DOMAIN: "example.invalid", GSV_BASE_DOMAIN: "example.invalid" },
-    durable_objects: mail.durable_objects, migrations: mail.migrations, send_email: mail.send_email,
+    vars: { ...mail.vars, MAIL_DOMAIN: "example.invalid", GSV_BASE_DOMAIN: "example.invalid",
+      MAIL_SENDING_ACCOUNT_ID: TEST_MAIL_SENDING.accountId, MAIL_SENDING_API_TOKEN: TEST_MAIL_SENDING.apiToken },
+    durable_objects: mail.durable_objects, migrations: mail.migrations,
     queues: { consumers: [{ queue: "deletion-mail-queue", max_batch_size: 10, max_batch_timeout: 1 }] },
     services: [{ binding: "ACCOUNTS", service: STACK.accounts }, { binding: "GATEWAY", service: STACK.gateway, entrypoint: "GatewayEntrypoint" },
       { binding: "INFERENCE", service: STACK.inference }],

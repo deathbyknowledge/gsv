@@ -380,6 +380,24 @@ describe("createGenerationService", () => {
     );
   });
 
+  it("forwards session affinity to built-in providers that route by session", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    completePiAiSimpleMock.mockResolvedValueOnce(message);
+
+    await createGenerationService().generate({
+      config: { ...CONFIG, provider: "opencode-go", model: "deepseek-v4.1-flash" },
+      context: CONTEXT,
+      sessionAffinityKey: "process-1",
+    });
+
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "opencode-go" }),
+      CONTEXT,
+      expect.objectContaining({ sessionId: "process-1" }),
+      expect.anything(),
+    );
+  });
+
   it("rejects a routed fetch for binding-backed Workers AI", async () => {
     const fetchImpl = makeFetchFixture();
 

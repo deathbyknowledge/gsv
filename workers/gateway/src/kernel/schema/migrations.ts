@@ -26,7 +26,8 @@ import { KERNEL_V090_EVENT_SOURCES } from "./v090_event_sources";
 import { KERNEL_V091_OUTSIDE_TEXT_LABELS } from "./v091_outside_text_labels";
 import { KERNEL_V092_OUTBOUND_MAIL_COPIES } from "./v092_outbound_mail_copies";
 import { KERNEL_V093_AUTOMATIC_MAIL } from "./v093_automatic_mail";
-import { KERNEL_V094_REQUEST_SAVE_CONTACT } from "./v094_request_save_contact";
+import { KERNEL_V094_OUTBOUND_MAIL_INVITES } from "./v094_outbound_mail_invites";
+import { KERNEL_V095_REQUEST_SAVE_CONTACT } from "./v095_request_save_contact";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -237,7 +238,8 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V091_OUTSIDE_TEXT_LABELS,
   KERNEL_V092_OUTBOUND_MAIL_COPIES,
   KERNEL_V093_AUTOMATIC_MAIL,
-  KERNEL_V094_REQUEST_SAVE_CONTACT,
+  KERNEL_V094_OUTBOUND_MAIL_INVITES,
+  KERNEL_V095_REQUEST_SAVE_CONTACT,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

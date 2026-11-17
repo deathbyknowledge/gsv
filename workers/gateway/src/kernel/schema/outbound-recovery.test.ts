@@ -29,9 +29,10 @@ describe("outbound recovery migration", () => {
       runKernelSqlMigrations(storage);
       expect(listAppliedSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT).filter((migration) => migration.id < 51)).toEqual(migrations);
       expect(sql.exec("SELECT * FROM mail_outbound ORDER BY outbound_id").toArray())
-        .toEqual(rows.map((row) => ({ ...row, cc_addresses: null })));
+        .toEqual(rows.map((row) => ({ ...row, cc_addresses: null, invite_method: null, invite_text: null })));
       const store = new MailboxStore(sql);
       expect(store.getOutbound("accepted")).toMatchObject({ to: ["recipient@example.invalid"], cc: [], state: "accepted" });
+      expect(store.getOutbound("accepted")).not.toHaveProperty("invite");
       expect(store.pendingOutboundEnqueues()).toEqual([{ outboundId: "pending", nextAt: null }]);
       expect(sql.exec<{ outbound_id: string }>("SELECT outbound_id FROM mail_outbound INDEXED BY idx_mail_outbound_enqueue WHERE state = 'queued'").toArray())
         .toEqual([{ outbound_id: "pending" }]);

@@ -3,9 +3,6 @@
  * void ground, phosphor glyphs, square corners, tracked uppercase chrome. */
 
 .instrument {
-  /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
-   * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
-  --type-scale: 1;
   --instrument-safe-top: env(safe-area-inset-top, 0px);
   --instrument-safe-right: env(safe-area-inset-right, 0px);
   --instrument-safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - max(0px, 100lvh - var(--instrument-viewport-height, 100dvh))));
@@ -47,7 +44,7 @@
   text-decoration: underline;
   text-underline-offset: 0.25em;
 }
-.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .zen-copy-message, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
+.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: .25em;
@@ -86,7 +83,7 @@
   background: radial-gradient(ellipse 86% 84% at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.38) 100%);
 }
 
-/* Apply device insets before text zoom; background layers still fill the entire screen.
+/* Apply device insets to the content; background layers still fill the entire screen.
  * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
 /* Surfaces own the bottom inset as padding, letting their scroll panes reach the screen edge. */
 /* Size content directly from the visible viewport. Safari can resize the larger
@@ -102,23 +99,18 @@
 /* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
 /* Their bottom edge is relative to the browser viewport, not the taller star field. */
 .instrument-viewport dialog:modal {
-  inset: calc((var(--instrument-viewport-top, 0px) + var(--instrument-safe-top)) / var(--type-scale))
-    calc(var(--instrument-safe-right) / var(--type-scale))
-    calc(100% - (var(--instrument-viewport-top, 0px) + var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-bottom)) / var(--type-scale))
-    calc(var(--instrument-safe-left) / var(--type-scale));
-  max-width: calc((100vw - var(--instrument-safe-left) - var(--instrument-safe-right)) / var(--type-scale) - 12px);
+  inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
+    var(--instrument-safe-right)
+    calc(100% - (var(--instrument-viewport-top, 0px) + var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-bottom)))
+    var(--instrument-safe-left);
+  max-width: calc(100vw - var(--instrument-safe-left) - var(--instrument-safe-right) - 12px);
 }
 
-/* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
- * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
-/* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size.
- * Auto sizing between all four edges fills the parent; manually dividing viewport dimensions
- * again leaves WebKit's zoomed layer smaller than the window. */
-.instrument-scaled {
-  --instrument-bottom-padding: calc(var(--instrument-safe-bottom) / var(--type-scale));
+/* the content layer: the container queries below see its width */
+.instrument-content {
+  --instrument-bottom-padding: var(--instrument-safe-bottom);
   position: absolute;
   inset: 0;
-  zoom: var(--type-scale);
   container-type: inline-size;
   container-name: instrument;
 }
@@ -254,7 +246,7 @@
     gap: 0;
     background: var(--panel);
     border: 1px solid var(--border-raised);
-    max-height: calc(var(--instrument-height) / var(--type-scale) - var(--instrument-header-height) - 18px);
+    max-height: calc(var(--instrument-height) - var(--instrument-header-height) - 18px);
     overflow-y: auto;
     font-size: 14px;
   }
@@ -335,7 +327,7 @@
   display: block;
   min-width: 0;
   min-height: 1.4em;
-  max-height: min(168px, calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .3));
+  max-height: min(168px, calc((var(--instrument-height) - var(--instrument-header-height)) * .3));
   margin: 0;
   resize: none;
   overflow-y: auto;
@@ -454,10 +446,6 @@
 /* ---------- the light theme: the same identity on paper ----------
  * Tokens only. Glows and the scanlines belong to phosphor and switch off; the star field turns to
  * ink-colored glyphs at the same density. Toggled by the shell with the l key, or the system setting. */
-.instrument.is-scale-075 { --type-scale: .75; }
-.instrument.is-scale-085 { --type-scale: .85; }
-.instrument.is-scale-15 { --type-scale: 1.5; }
-.instrument.is-scale-2 { --type-scale: 2; }
 /* Design system fields (input, text area, select) sit on a raised surface in the app: white in light. */
 .instrument { --gsv-field-surface: var(--active); }
 .instrument.is-light { --gsv-field-surface: var(--panel); }

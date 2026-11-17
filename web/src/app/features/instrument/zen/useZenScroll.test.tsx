@@ -76,15 +76,15 @@ async function transcript(promptFocused = false) {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("transcript selection", () => {
-  it.each([1, 2])("holds a fold control through browser clamping at %sx text size", async (scale) => {
+  it("holds a fold control through browser clamping", async () => {
     const chat = await transcript();
     try {
-      Object.assign(chat.viewport, { offsetHeight: 300, getBoundingClientRect: () => ({ top: 50, height: 300 * scale }) });
+      Object.assign(chat.viewport, { offsetHeight: 300, getBoundingClientRect: () => ({ top: 50, height: 300 }) });
       chat.viewport.scrollTop = 700;
       await chat.emit("scroll");
       let controlTop = 800;
       // SAFETY: Pinning uses only connection state and this element's vertical rectangle.
-      const control = { isConnected: true, getBoundingClientRect: () => ({ top: 50 + (controlTop - chat.viewport.scrollTop) * scale }) } as HTMLElement;
+      const control = { isConnected: true, getBoundingClientRect: () => ({ top: 50 + controlTop - chat.viewport.scrollTop }) } as HTMLElement;
       await act(() => chat.state().pin(control));
       controlTop -= 500;
       chat.viewport.scrollHeight -= 500;

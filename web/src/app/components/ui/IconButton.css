@@ -29,7 +29,7 @@
 .gsv-ibtn-floating:active {
   color: var(--text-title);
 }
-.gsv-ibtn-floating[aria-pressed="true"] {
+.gsv-ibtn-floating:is([aria-pressed="true"], [aria-expanded="true"]) {
   color: var(--accent);
 }
 .gsv-ibtn-floating:focus-visible {

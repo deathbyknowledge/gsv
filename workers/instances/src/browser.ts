@@ -18,13 +18,22 @@ import { within } from "./browser-operation";
 import { BrowserScreencast, type CapturedBrowserFrame } from "./browser-view";
 import { exportBrowserStorage, restoreBrowserStorage, type BrowserSnapshot } from "./browser-storage";
 import { cloudBrowserCredentials } from "./browser-credentials";
-import { boundedBrowserOrigins, rememberBrowserOrigin } from "./browser-origins";
+import { boundedBrowserOrigins, browserStorageOrigin, rememberBrowserOrigin } from "./browser-origins";
 import { browserTabMetadata, browserViewTabs } from "./browser-metadata";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
-type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[] };
+type RuntimeState = {
+  contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[];
+  /**
+   * Tracked origins whose storage can differ from the last committed save: those with a page
+   * open or a service worker running since then. A reattached browser starts with every one.
+   */
+  unsaved: string[];
+};
 
 /** Owns one surviving Chromium session. Reconnection never launches a replacement. */
+export type BrowserRestore = { restoreMs: number; sitesRestored: number };
+
 export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, DebuggerBackend<CDPSession> {
   readonly fs: BrowserTargetFileSystem;
   readonly files: BrowserFsDriver;
@@ -47,17 +56,29 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     private readonly state: RuntimeState,
     private readonly record: CloudInstance,
     private readonly store: InstanceStore,
+    /** How long restoring the saved profile took, when this attachment restored one. */
+    readonly restored?: BrowserRestore,
   ) {
     this.state.origins = boundedBrowserOrigins(this.state.origins ?? []);
     const observe = (page: Page) => {
       const remember = (url: string) => {
-        if (!this.storagePages.has(page) && rememberBrowserOrigin(this.state.origins!, url)) this.persist();
+        if (this.storagePages.has(page)) return;
+        const tracked = rememberBrowserOrigin(this.state.origins!, url);
+        const origin = browserStorageOrigin(url);
+        if (this.addUnsaved(origin ? [origin] : []) || tracked) this.persist();
       };
       for (const frame of page.frames()) remember(frame.url());
       page.on("framenavigated", frame => remember(frame.url()));
     };
     for (const page of context.pages()) observe(page);
     context.on("page", observe);
+    // A site's service worker can change its storage while none of its pages is open.
+    const wake = (worker: { url(): string }) => {
+      const origin = browserStorageOrigin(worker.url());
+      if (origin && this.addUnsaved([origin])) this.persist();
+    };
+    for (const worker of context.serviceWorkers()) wake(worker);
+    context.on("serviceworker", wake);
     const pageBackend: BrowserPageBackend = {
       activeTab: () => this.activeTab(), getTab: id => this.getTab(id), captureTabPng: id => this.captureTabPng(id),
       executeInTab: (id, func, args) => this.executeInTab(id, func, args),
@@ -88,10 +109,14 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     const row = store.byId(record.instanceId);
     let state: RuntimeState;
     let context: BrowserContext;
+    let restored: BrowserRestore | undefined;
     if (row.runtime) {
       // SAFETY: persist() is the sole writer of this private runtime record.
       state = JSON.parse(row.runtime) as RuntimeState;
       state.origins = boundedBrowserOrigins(state.origins ?? [], savedState?.origins.map(origin => origin.origin) ?? []);
+      // Nothing observed the browser while no coordinator was attached, nor knows whether its
+      // last save was committed, so any tracked site may differ from the saved profile.
+      state.unsaved = [...state.origins];
       const candidates = await Promise.all(browser.contexts().map(async candidate => {
         const page = candidate.pages()[0];
         if (!page) return null;
@@ -118,16 +143,20 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       }
     } else {
       context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      if (savedState) await restoreBrowserStorage(context, savedState);
+      if (savedState) {
+        const started = Date.now();
+        const sitesRestored = await restoreBrowserStorage(context, savedState);
+        restored = { restoreMs: Date.now() - started, sitesRestored };
+      }
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
       await cdp.detach();
       if (!targetInfo.browserContextId) throw new Error("Browser did not provide an isolated context");
-      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: boundedBrowserOrigins(savedState?.origins.map(origin => origin.origin) ?? []) };
+      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: boundedBrowserOrigins(savedState?.origins.map(origin => origin.origin) ?? []), unsaved: [] };
     }
     await context.addInitScript(cloudBrowserCredentials);
-    const runtime = new CloudBrowser(browser, context, state, record, store);
+    const runtime = new CloudBrowser(browser, context, state, record, store, restored);
     runtime.persist();
     await runtime.refreshTabs();
     return runtime;
@@ -164,9 +193,13 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     this.debuggers.set(page, cdp);
     return cdp;
   }
+  /** A known open tab is used as is; only an unknown or closed tab rereads every tab. */
   private async page(id: number): Promise<Page> {
-    await this.refreshTabs();
-    const page = this.tabs.get(id);
+    let page = this.tabs.get(id);
+    if (!page || page.isClosed()) {
+      await this.refreshTabs();
+      page = this.tabs.get(id);
+    }
     if (!page || page.isClosed()) throw new Error(`Browser tab ${id} is closed`);
     return page;
   }
@@ -239,11 +272,43 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   async viewerUrlFor(path: string, contentType: string, _label: string, fs: TargetFileSystem): Promise<string> {
     return `data:${contentType};base64,${Buffer.from(await fs.read(path)).toString("base64")}`;
   }
+  /** Reads only sites whose storage can differ from the last committed save. */
   async save(maxBytes: number, signal: AbortSignal): Promise<BrowserSnapshot> {
-    return exportBrowserStorage(this.context, this.state.origins ?? [], maxBytes, signal, this.storagePages, (targetId, owned) => {
-      this.state.storageTargets = owned ? [...(this.state.storageTargets ?? []), targetId] : (this.state.storageTargets ?? []).filter(id => id !== targetId);
-      this.persist();
-    });
+    const open = new Set<string>();
+    const running = (url: string) => {
+      const origin = browserStorageOrigin(url);
+      if (origin && this.state.origins!.includes(origin)) open.add(origin);
+    };
+    for (const page of this.context.pages()) {
+      if (this.storagePages.has(page)) continue;
+      for (const frame of page.frames()) running(frame.url());
+    }
+    for (const worker of this.context.serviceWorkers()) running(worker.url());
+    const origins = [...new Set([...this.state.unsaved, ...open])];
+    // Open pages and running service workers can still change their site after the export reads it.
+    this.state.unsaved = [...open];
+    this.persist();
+    try {
+      const snapshot = await exportBrowserStorage(this.context, origins, maxBytes, signal, this.storagePages, (targetId, owned) => {
+        this.state.storageTargets = owned ? [...(this.state.storageTargets ?? []), targetId] : (this.state.storageTargets ?? []).filter(id => id !== targetId);
+        this.persist();
+      });
+      // An unreadable site keeps its earlier saved copy and is read again next time.
+      this.retrySave((snapshot.failures ?? []).map(({ issue }) => issue.origin));
+      return snapshot;
+    } catch (cause) {
+      this.retrySave(origins);
+      throw cause;
+    }
+  }
+  /** Keeps sites for the next save when the snapshot that read them was not committed. */
+  retrySave(origins: string[]): void {
+    if (this.addUnsaved(origins)) this.persist();
+  }
+  private addUnsaved(origins: string[]): boolean {
+    const added = origins.filter(origin => this.state.origins!.includes(origin) && !this.state.unsaved.includes(origin));
+    this.state.unsaved.push(...new Set(added));
+    return added.length > 0;
   }
   async documentId(id: number): Promise<string> {
     const cdp = await this.debuggerFor(await this.page(id));

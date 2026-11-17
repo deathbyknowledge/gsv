@@ -48,26 +48,26 @@
 }
 .gsv-sp-dot.is-done {
   background: #443c82;
-  border: 1.5px solid #6b62c4;
+  border: 1.5px solid var(--primary-hi);
   color: #fff;
   box-shadow: 0 0 9px rgba(120, 110, 230, 0.35);
 }
 .gsv-sp-dot.is-cur {
-  background: #0a0822;
-  border: 1.5px solid #b3aeff;
-  color: #f4f2ff;
+  background: var(--panel-2);
+  border: 1.5px solid var(--accent);
+  color: var(--text-hi);
   box-shadow: 0 0 12px rgba(150, 140, 255, 0.6);
 }
 .gsv-sp-dot.is-next {
-  background: #0a0822;
-  border: 1.5px solid #4a449e;
+  background: var(--panel-2);
+  border: 1.5px solid var(--border-raised);
   color: #7d78b8;
 }
 .gsv-sp-line.is-done {
-  background: #6b62c4;
+  background: var(--primary-hi);
 }
 .gsv-sp-line.is-next {
-  background: #322e74;
+  background: var(--border);
 }
 .gsv-sp-label {
   letter-spacing: 0.1em;
@@ -79,10 +79,10 @@
   color: #a8a2dc;
 }
 .gsv-sp-label.is-cur {
-  color: #e2dfff;
+  color: var(--text-title);
 }
 .gsv-sp-label.is-next {
-  color: #565199;
+  color: var(--placeholder);
 }
 .gsv-sp-sm .gsv-sp-dot {
   width: 22px;
@@ -116,4 +116,23 @@
 }
 .gsv-sp-lg .gsv-sp-label {
   font-size: 11px;
+}
+
+/* — light theme —
+   The tokens above follow the theme; the three fills without a token, and the
+   phosphor glows, switch here. :where() keeps each rule at the dark rule's
+   specificity, as in Button.css. */
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-sp-dot.is-done {
+  background: var(--accent);
+  color: var(--panel);
+  box-shadow: none;
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-sp-dot.is-cur {
+  box-shadow: none;
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-sp-dot.is-next {
+  color: var(--text-dim);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-sp-label.is-done {
+  color: var(--text-muted);
 }

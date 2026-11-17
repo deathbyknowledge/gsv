@@ -77,15 +77,6 @@ function environment(input: {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
       INFERENCE: {} as MailEnv["INFERENCE"],
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-      EMAIL: {} as MailEnv["EMAIL"],
     },
     getByName,
     resolveHostname,
@@ -278,15 +269,6 @@ function outboundEnvironment(input: {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
     INFERENCE: {} as MailEnv["INFERENCE"],
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
-    EMAIL: {} as MailEnv["EMAIL"],
   } satisfies MailEnv;
   return {
     env,

@@ -12,7 +12,7 @@ const THEME_OPTIONS: ReadonlyArray<{ value: ColorThemePreference; label: TextKey
 /** A per-device choice kept in browser storage; it never goes through server settings. */
 export function ThemePreference() {
   const t = useT();
-  const { preference, setPreference } = useColorTheme("light");
+  const { preference, setPreference } = useColorTheme();
   const { showStars, setStars } = useStarsPreference();
   return <div class="settings-form settings-appearance">
     <h2>{t("settings.appearance.title")}</h2>

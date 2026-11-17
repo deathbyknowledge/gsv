@@ -87,7 +87,20 @@ export type ManagedOutboundMailQuote = {
   text: string;
 };
 
-export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
+/** An invite sent with a message, as iCalendar over email (RFC 6047) carries it. */
+export type ManagedOutboundMailInvite = {
+  /** REQUEST invites or updates; CANCEL withdraws the event. */
+  method: "REQUEST" | "CANCEL";
+  /** The iCalendar object with CRLF line endings and this method, at most MAIL_MAX_INVITE_BYTES. */
+  text: string;
+};
+
+export type ManagedOutboundMailDraft = Omit<ManagedOutboundMailReference, "version"> & {
+  /**
+   * 2 when the message carries an invite, which a Worker that predates invites
+   * refuses rather than sending the message without it; 1 otherwise.
+   */
+  version: 1 | 2;
   from: string;
   /**
    * The recipient, or the list of To recipients. The Kernel sends a list
@@ -110,6 +123,7 @@ export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
    */
   fromName?: string;
   quote?: ManagedOutboundMailQuote;
+  invite?: ManagedOutboundMailInvite;
 };
 
 export type ManagedOutboundMailClaim = {

@@ -12,6 +12,8 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
+  installationAttributedProperties,
+  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -26,6 +28,18 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("allows only coarse owner country codes from the Gateway", () => {
+    const event = { stream: "product", name: "ship.owner.connected", properties: { country: "CH" } };
+    assert.equal(createTelemetryRecord({ ...INPUT, event }).event.properties.country, "CH");
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const country of ["XX", "T1", "ch", "Switzerland", "1.2.3.4", "", null]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { country } } }));
+    }
+    for (const field of ["ip", "email", "timezone", "latitude", "longitude"]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, [field]: "private" } } }));
+    }
+  });
+
   it("classifies custom inference transports without exporting their names", () => {
     for (const name of ["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]) {
       assert.equal(inferenceProviderFromName(name), name);
@@ -439,6 +453,50 @@ describe("ship.message.committed", () => {
   });
 });
 
+describe("installation.attributed", () => {
+  const record = (component, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name: "installation.attributed", properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch (error) {
+      return { success: false, error };
+    }
+  };
+
+  it("accepts only the closed placement and example classes and slug-shaped campaign tags", () => {
+    assert.equal(record("accounts", { origin: "direct" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "tickets" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "example", example: "other" }).success, true);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "facebook", utmCampaign: "launch-nov" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero-heading" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "Face Book" }).success, false);
+    assert.equal(record("accounts", { origin: "campaign", utmSource: "facebook", utmContent: "photo" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
+    assert.equal(record("gateway", { origin: "direct" }).success, false);
+  });
+
+  it("classifies the website's link slugs into the allowlist and keeps only slug-shaped campaign tags", () => {
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "hero-heading" }), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "early-access" }), { placement: "final-call" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "details-tickets", example: "tickets" }), { placement: "example", example: "tickets" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: "sidebar-promo", example: "plan-a-trip" }), { placement: "other", example: "other" });
+    assert.deepEqual(signupAttributionFromSlugs({ placement: " HERO " }), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs({ utmSource: "facebook", utmCampaign: "launch" }), { utmSource: "facebook", utmCampaign: "launch" });
+    assert.deepEqual(signupAttributionFromSlugs({ utmSource: "Face Book", utmCampaign: "x".repeat(33) }), {});
+  });
+
+  it("names the origin by what the link carried: placement first, then a campaign, otherwise direct", () => {
+    assert.deepEqual(installationAttributedProperties(undefined), { origin: "direct" });
+    assert.deepEqual(installationAttributedProperties({}), { origin: "direct" });
+    assert.deepEqual(installationAttributedProperties({ utmCampaign: "launch" }), { origin: "campaign", utmCampaign: "launch" });
+    assert.deepEqual(installationAttributedProperties({ placement: "hero", utmSource: "facebook" }), { origin: "website", placement: "hero", utmSource: "facebook" });
+  });
+});
+
 describe("onboarding funnel events", () => {
   const record = (component, name, properties) => {
     try {
@@ -480,8 +538,70 @@ describe("onboarding funnel events", () => {
     assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
   });
 
+  it("counts the choices a Ship message offers, never their words", () => {
+    const committed = { delivery: "client", hasMedia: false, platform: "web" };
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 3 }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 10 }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 0 }).success, false);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choicesOffered: 11 }).success, false);
+    assert.equal(record("gateway", "ship.message.committed", { ...committed, choices: ["Plan my weekend"] }).success, false);
+  });
+
+  it("reports which offered choice a person's message took by position only", () => {
+    const received = { source: "client", platform: "phone", hasText: true, hasMedia: false };
+    // answered a message offering three choices with the second one
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 2 }).success, true);
+    // answered it by writing something else
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3 }).success, true);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 0 }).success, false);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: 11 }).success, false);
+    assert.equal(record("gateway", "ship.message.received", { ...received, choicesOffered: 3, choiceTaken: "Plan my weekend" }).success, false);
+  });
+
+  it("reports how the welcome ended from a closed list, with the time it took", () => {
+    for (const outcome of ["connected", "messenger_declined", "declined", "cancelled", "other"]) {
+      assert.equal(record("gateway", "onboarding.welcome.finished", { outcome, durationMs: 420_000 }).success, true);
+    }
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "booked a table", durationMs: 1 }).success, false);
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "connected" }).success, false);
+    assert.equal(record("gateway", "onboarding.welcome.finished", { outcome: "connected", durationMs: 1, resolution: { outcome: "connected" } }).success, false);
+  });
+
   it("keeps each funnel event with its owning component", () => {
     assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
     assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);
+    assert.equal(record("accounts", "onboarding.welcome.finished", { outcome: "connected", durationMs: 1 }).success, false);
+  });
+});
+
+describe("cloud browser timings", () => {
+  const events = [
+    { stream: "operational", name: "browser.save.finished", properties: { outcome: "saved", trigger: "handoff", durationMs: 860, sitesRead: 2, sitesKept: 60 } },
+    { stream: "operational", name: "browser.start.finished", properties: { outcome: "ready", durationMs: 6500, restoreMs: 5100, sitesRestored: 61 } },
+    { stream: "operational", name: "browser.handoff.finished", properties: { outcome: "completed", durationMs: 90000, inputs: 80, inputFailures: 0, inputMedianMs: 149, inputMaxMs: 192 } },
+  ];
+
+  it("accepts browser timings only from Instances and never a site or input", () => {
+    for (const event of events) {
+      const record = createTelemetryRecord({ ...INPUT, component: "instances", event });
+      assert.equal(telemetryRecordSchema.safeParse(record).success, true);
+      assert.equal(telemetryRecordSchema.safeParse({ ...record, component: "gateway" }).success, false);
+      for (const field of ["origin", "url", "text", "profileId"]) {
+        assert.equal(telemetryRecordSchema.safeParse({ ...record, event: { ...event, properties: { ...event.properties, [field]: "https://bank.example" } } }).success, false);
+      }
+    }
+  });
+
+  it("keeps outcomes and triggers closed and the counts optional", () => {
+    const [save, start, handoff] = events;
+    const valid = (event) => telemetryRecordSchema.safeParse({ ...createTelemetryRecord(INPUT), component: "instances", event }).success;
+    assert.equal(valid({ ...save, properties: { ...save.properties, trigger: "background" } }), false);
+    assert.equal(valid({ ...start, properties: { ...start.properties, outcome: "slow" } }), false);
+    assert.equal(valid({ ...handoff, properties: { ...handoff.properties, inputMaxMs: -1 } }), false);
+    // A save that failed before reading, a start with nothing to restore and a handoff
+    // whose input counts a coordinator restart lost report no counts.
+    assert.equal(valid({ ...save, properties: { outcome: "failed", trigger: "stop", durationMs: 20000 } }), true);
+    assert.equal(valid({ ...start, properties: { outcome: "stopped", durationMs: 900 } }), true);
+    assert.equal(valid({ ...handoff, properties: { outcome: "expired", durationMs: 900000 } }), true);
   });
 });

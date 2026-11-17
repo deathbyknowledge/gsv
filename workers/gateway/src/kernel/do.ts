@@ -3,7 +3,7 @@ import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, telemetryEnabled } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -178,6 +178,7 @@ import {
 import type { GatewayEnv } from "../runtime-env";
 import {
   acceptKernelWebSocket,
+  connectionCountry,
   KernelConnection,
   type KernelConnectionState as ConnectionState,
   type KernelWebSocketMessage,
@@ -574,7 +575,17 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid, updated) => {
+      this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed");
+      // However the welcome's record ends, it is reported once. Tracked even with telemetry off, like its delivery.
+      const finished = updated ? this.welcome.markWelcomeFinished(updated) : null;
+      if (finished) {
+        emitTelemetry(this.bindings, {
+          installationId: this.installationId, component: "gateway",
+          event: { stream: "product", name: "onboarding.welcome.finished", properties: finished },
+        });
+      }
+    });
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
@@ -942,6 +953,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const initial: ConnectionState = { step: "pending" };
       const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
       if (source) initial.source = source;
+      const country = telemetryEnabled(this.bindings) ? connectionCountry(request) : undefined;
+      if (country) initial.country = country;
       const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;
@@ -1219,6 +1232,27 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
     if (!target) throw new Error(`Target unavailable for tool approval: ${targetId}`);
     return approvalTargetIdentity(target);
+  }
+
+  /**
+   * RPC method — a Process request answered on this call, wherever it runs.
+   * It is the same dispatch as `recvFrame`, under the same grant, approval
+   * target and ledger line, except that a routed call's answer comes back here
+   * rather than to the Process later. The Process cancels it by request id,
+   * which also cancels the request on the target.
+   */
+  async requestProcessFrame(
+    processId: string,
+    frame: RequestFrame,
+    approvedTarget?: ProcessApprovalTarget,
+  ): Promise<ResponseFrame> {
+    try {
+      this.retirement.assertActive();
+      return await this.handleProcessReq(processId, frame, approvedTarget, true)
+        ?? errFrame(frame.id, 499, "Request cancelled");
+    } finally {
+      await cancelUnlockedBody(frame.body, "Process request completed");
+    }
   }
 
   async requestProcessNetFetch(
@@ -1613,7 +1647,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-                                      async handleProcessReq(processId: string, frame: RequestFrame, approvedTarget?: ProcessApprovalTarget): Promise<ResponseFrame | null> {
+                                      async handleProcessReq(
+    processId: string,
+    frame: RequestFrame,
+    approvedTarget?: ProcessApprovalTarget,
+    awaitRouted = false,
+  ): Promise<ResponseFrame | null> {
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
@@ -1624,7 +1663,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       frame,
       { type: "process", id: processId },
       ctx,
-      { awaitRouted: false },
+      { awaitRouted },
     );
   }
 
@@ -1879,6 +1918,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const pending = options.awaitRouted
       ? this.transport.createPendingKernelResponse(inputFrame.id)
       : null;
+    // an awaited request's routed answer comes back to the pending response here; cancelling stays with its origin
+    const routeOrigin: RouteOrigin = pending ? { type: "kernel", id: inputFrame.id } : origin;
     const cancel = () => {
       this.transport.cancelRequest(
         origin,
@@ -1893,7 +1934,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const result = await raceWithAbort(
         dispatch(
           frame,
-          origin,
+          routeOrigin,
           { ...ctx, requestSignal },
           this.buildDispatchDeps(),
         ),

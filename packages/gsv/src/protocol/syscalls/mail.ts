@@ -18,6 +18,59 @@ export type MailSendArgs = {
   replyToMessageId?: string;
   /** With `replyToMessageId`, also copy everyone else the original was sent to. */
   replyAll?: boolean;
+  /**
+   * iCalendar text of an event this account organizes, with METHOD:REQUEST to
+   * invite or update and METHOD:CANCEL to withdraw it. Mail apps show it as an
+   * invitation. A repeating event comes whole, with the dates changed from it.
+   * The message goes to the event's guests: without `to`, they become the
+   * recipients; otherwise To and Cc, or a reply's recipients, must be them.
+   */
+  invite?: string;
+};
+
+/**
+ * How an approval for `mail.send` shows its invite: the event as the owner reads
+ * it, times like 2026-11-27T21:15:00+01:00[Europe/Amsterdam] in their time zone
+ * and all-day events by their first and last day. A repeating event adds its rule,
+ * the dates it skips, and the dates changed from it.
+ */
+export type MailInviteApproval = {
+  method: "REQUEST" | "CANCEL";
+  title?: string;
+  allDay: boolean;
+  start: string;
+  end?: string;
+  /**
+   * The zone every time is in when it isn't the owner's: a repeating event's rule
+   * counts days in its own zone (or UTC), so its times are shown there.
+   */
+  timeZone?: string;
+  location?: string;
+  repeats?: MailInviteRepeat;
+  /** Dates the event skips, by the start each would have had. */
+  skipped?: string[];
+  /** Dates changed from the rule: the start each would have had, and when it happens now. */
+  changed?: Array<{ from: string; start: string; end?: string }>;
+};
+
+/**
+ * An invite's repeat rule (RFC 5545 RRULE) with what it leaves to the start written
+ * out: a weekly rule's day, a monthly rule's day of the month, a yearly rule's date.
+ * Its weeks start on Monday.
+ */
+export type MailInviteRepeat = {
+  freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+  /** Every how many days, weeks, months or years. */
+  interval: number;
+  /** Weekdays such as MO, or within a month its 4th (4FR) or last (-1FR) one. */
+  byDay?: string[];
+  /** Days of the month, -1 for the last. */
+  byMonthDay?: number[];
+  byMonth?: number[];
+  /** How many times it happens, counting the first. */
+  count?: number;
+  /** The last date or time it may start, as `start` reads. */
+  until?: string;
 };
 
 export type MailSendResult =

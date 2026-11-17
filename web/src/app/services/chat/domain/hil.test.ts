@@ -74,6 +74,13 @@ describe("HIL request wording", () => {
     expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
+  it("says what a shell request without command text does to a running command", () => {
+    expect(hilRequestSentence({ ...shell, args: { input: "", sessionId: "b45f" } }, "my mac")).toBe("Read a running command’s output on my mac");
+    expect(describeCall({ ...shell, args: { input: "\n", sessionId: "b45f" } }, "my mac")).toBe("send input to a running command on my mac");
+    expect(describeCall({ ...shell, args: { input: "", sessionId: "b45f", start: true } }, "my mac")).toBe("run a command on my mac");
+    expect(describeCall({ ...shell, args: { input: "" } }, "my mac")).toBe("run a command on my mac");
+  });
+
   it("shows a crontab's file and jobs, and a plain sentence when the model wrote none", () => {
     const crontab = {
       ...BASE_REQUEST,
@@ -109,6 +116,20 @@ describe("HIL request wording", () => {
     expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
       replyToMessageId: "mail:abc", to: "mike@example.com", subject: "Re: Contract",
     } })?.text).toBe("to mike@example.com · Re: Contract");
+    const invite = {
+      method: "REQUEST", title: "Dinner", allDay: false, location: "Casa Lucio",
+      start: "2026-11-27T21:15:00+01:00[Europe/Amsterdam]", end: "2026-11-27T23:15:00+01:00[Europe/Amsterdam]",
+    };
+    // The owner's wall-clock times, whatever zone this device is in; ICU spaces the range with narrow spaces.
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: { to: "anna@example.com", subject: "Dinner on Friday", invite } })?.text)
+      .toMatch(/^to anna@example\.com · Dinner on Friday · invitation: Dinner, Fri, Nov 27, 9:15\s?–\s?11:15\sPM$/u);
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
+      to: "anna@example.com", subject: "Offsite", invite: { method: "CANCEL", allDay: true, start: "2026-12-01", end: "2026-12-02" },
+    } })?.text).toMatch(/^to anna@example\.com · Offsite · cancellation: Tue, Dec 1\s?–\s?Wed, Dec 2$/u);
+    expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "anna@example.com", subject: "Dinner", invite } }, "gsv"))
+      .toBe("send anna@example.com an invitation");
+    expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "anna@example.com", subject: "Dinner", invite: "BEGIN:VCALENDAR\r\nMETHOD:CANCEL\r\n" } }, "gsv"))
+      .toBe("send anna@example.com a cancellation");
     expect(hilRequestLine({ ...shell, syscall: "net.fetch", toolName: "net.fetch", args: { url: "https://example.com" } }))
       .toEqual({ lead: "place", text: "fetch https://example.com" });
     expect(hilRequestLine({ ...shell, syscall: "sys.mcp.call", toolName: "sys.mcp.call", args: { serverId: "s1", name: "search_docs", arguments: { q: "granola" } } })?.text)

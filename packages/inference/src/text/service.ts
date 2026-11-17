@@ -379,16 +379,17 @@ function resolvePiAiTransportOptions(
   provider: string,
   sessionAffinityKey?: string,
 ): PiAiTransportOptions {
+  // pi-ai owns how each provider uses the session: prompt cache keys, affinity
+  // headers, or a required routing header such as OpenCode's x-opencode-session.
+  const session = sessionAffinityKey ? { sessionId: sessionAffinityKey } : {};
   if (isWorkersAiProvider(provider)) {
     // pi-ai retries only request acquisition, with abortable backoff inside our deadline.
-    return { maxRetries: 2, sessionId: sessionAffinityKey };
+    return { maxRetries: 2, ...session };
   }
   if (provider !== OPENAI_CODEX_PROVIDER) {
-    return {};
+    return session;
   }
-  return sessionAffinityKey
-    ? { transport: "sse", sessionId: sessionAffinityKey }
-    : { transport: "sse" };
+  return { transport: "sse", ...session };
 }
 
 function assertOpenAiCodexCredential(provider: string, apiKey: string): void {

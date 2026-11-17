@@ -860,7 +860,7 @@ main() {
     fi
     echo "  Next: finish setting up your space in your browser."
     echo "  CLI login: gsv login your-space.example"
-    echo "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
+    echo "  Connect this computer: create an invitation in Work, then run gsv pair CODE"
     echo "  Open: gsv desktop"
     if [ "$OS" = "linux" ]; then
         echo "  Desktop runtime: WebKitGTK 4.1 and GStreamer base/good/libav plugins."

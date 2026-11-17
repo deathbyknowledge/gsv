@@ -82,7 +82,11 @@ fn stage_runtime(target_os: &str) -> Result<(), Box<dyn Error>> {
             std::fs::copy(entry.path(), test_runtime.join(&name))?;
         }
     }
-    if target_os != "windows" {
+    if target_os == "windows" {
+        // Windows has no rpath. `cargo test` and `cargo run` put search paths inside
+        // OUT_DIR on PATH, so test binaries load the runtime wherever Cargo builds them.
+        println!("cargo:rustc-link-search=native={}", test_runtime.display());
+    } else {
         let origin = if target_os == "macos" {
             "@loader_path"
         } else {

@@ -18,7 +18,8 @@ export function isLocalTime(value: string): boolean {
   return LOCAL_TIME.test(value);
 }
 
-function utcOffsetReader(timezone: string): (ms: number) => number {
+/** The UTC offset in force at an instant, in milliseconds, as this runtime's zone data has it. */
+export function utcOffsetReader(timezone: string): (ms: number) => number {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -41,8 +42,10 @@ function utcOffsetReader(timezone: string): (ms: number) => number {
  * The instant a wall clock in `timezone` reads `localTime`, using the offset in
  * force on that date. A time skipped by a clock change resolves to the first
  * valid minute after the gap; a time that happens twice, to its first occurrence.
+ * Calendars instead read a skipped time with the offset before the gap, as RFC 5545
+ * has it (`gap: "offset-before"`): 02:30 in a gap from 02:00 to 03:00 is 03:30.
  */
-export function resolveLocalTime(localTime: string, timezone: string): number {
+export function resolveLocalTime(localTime: string, timezone: string, gap: "changeover" | "offset-before" = "changeover"): number {
   const match = LOCAL_TIME.exec(localTime);
   if (!match) {
     throw new Error(`invalid local time, expected a form such as 2026-10-26T10:00: ${localTime}`);
@@ -62,6 +65,7 @@ export function resolveLocalTime(localTime: string, timezone: string): number {
   if (valid.length > 0) {
     return Math.min(...valid);
   }
+  if (gap === "offset-before") return wall - before;
 
   // Neither offset produces this wall clock: it is in a gap, whose end is the changeover itself.
   let lo = Math.min(...candidates);

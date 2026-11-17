@@ -39,6 +39,18 @@ function expectContactNavigation() {
 }
 
 describe("signup entrypoint recovery", () => {
+  it.each([false, true])("opens signup or the shared welcome screen (welcome: %s)", async (welcome) => {
+    window.location.href = `${origin}/owner/signup/`;
+    window.location.search = welcome ? "?view=welcome" : "";
+    const props = await screen();
+    expect(props.initialStep).toBe(welcome ? "welcome" : "claim");
+    expect(props.resume).toBe(!welcome);
+    expect(props.homeHref).toBe("https://example.com/");
+    expect((await props.load()).state.flow).toBe(welcome ? "open" : "create");
+    if (welcome) expect(props.addressPanel).toBeTypeOf("function");
+    else expect(props.addressPanel).toBeUndefined();
+  });
+
   it.each([contact, encodeURIComponent(contact)])("accepts a legacy invitation fragment", async (value) => {
     window.location.href = `${origin}/#contact=${value}`;
     const props = await screen();
@@ -89,5 +101,55 @@ describe("signup entrypoint recovery", () => {
     storage.save.mockRejectedValue(new Error("Signup changed in another tab"));
     await expect(props.onConnect("https://custom.example.com")).rejects.toThrow("Signup changed");
     expectContactNavigation();
+  });
+});
+
+describe("signup attribution", () => {
+  it("keeps the website's placement and the campaign tags for the reservation and takes them off the URL", async () => {
+    window.location.href = `${origin}/?utm_source=Facebook&utm_campaign=launch-nov&utm_content=photo#from=hero&example=plan-a-trip`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", example: "plan-a-trip", utmSource: "facebook", utmCampaign: "launch-nov" });
+    // SAFETY: the page passes the URL object it rewrote as the third replaceState argument.
+    const replaced = vi.mocked(window.history.replaceState).mock.lastCall![2] as URL;
+    expect(replaced.hash).toBe("");
+    expect(replaced.search).toBe("?utm_content=photo");
+  });
+
+  it("keeps a campaign tag from an ad link that never touched the website", async () => {
+    window.location.href = `${origin}/?utm_source=facebook`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ utmSource: "facebook" });
+  });
+
+  it("keeps the stored origin when the page loads again without one, as a reload or a restored tab does", async () => {
+    window.location.href = `${origin}/owner/signup/`;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: { id: "challenge-1", email: "ada@example.com", browserSecret: "a".repeat(64) }, operationId: null, handle: null,
+      attribution: { placement: "hero", utmSource: "facebook" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", utmSource: "facebook" });
+  });
+
+  it("replaces the stored origin with a new link's own", async () => {
+    window.location.href = `${origin}/?utm_source=linkedin`;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: null, handle: null, attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ utmSource: "linkedin" });
+  });
+
+  it("keeps the stored origin when a signup resumes without a fragment", async () => {
+    window.location.href = `${origin}/?resume=1`;
+    window.location.search = "?resume=1";
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: "op-1", handle: "resumed", attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero" });
+  });
+
+  it("ignores slugs that are not plain", async () => {
+    window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toBeUndefined();
   });
 });

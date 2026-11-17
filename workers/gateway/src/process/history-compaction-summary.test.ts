@@ -34,7 +34,7 @@ it("fits cumulative summary passes into a small fallback context", async () => {
     const inputs: string[] = [];
     const summary = "Keep this first constraint.";
     vi.spyOn(process.run, "generateCompactionText").mockImplementation(async ({ context, options }) => {
-      expect(options.maxTokens).toBe(125);
+      expect(options.maxTokens).toBe(250);
       expect(estimateContextInputTokens(context) + options.maxTokens!).toBeLessThanOrEqual(1_000);
       if (inputs.length) expect(JSON.stringify(context)).toContain(summary);
       inputs.push(JSON.stringify(context));
@@ -172,7 +172,7 @@ describe("compaction summary completion", () => {
       });
       expect(outcome.result).toMatchObject({ ok: true, archivedMessages: 4 });
       expect(outcome.calls).toBe(1);
-      expect(outcome.maxTokens).toEqual([4_096]);
+      expect(outcome.maxTokens).toEqual([16_384]);
       expect(outcome.record).toMatchObject({
         kind: "event",
         payload: {
@@ -186,6 +186,28 @@ describe("compaction summary completion", () => {
       expect(outcome.archiveKeys).toEqual([outcome.result.archivedTo.replace(/^\/+/, "")]);
     },
   );
+
+  it("leaves room for reasoning a provider spends despite reasoning off", async () => {
+    const pid = "compaction-summary-reasoning-headroom";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    const reasoningTokens = 6_000;
+    const summaryTokens = 400;
+    const outcome = await runInProcess(stub, async (process) => {
+      seedConversation(process);
+      const provider: ProviderCalls = installCompactionProvider(process, pid, "process", () => (
+        provider.maxTokens.at(-1)! >= reasoningTokens + summaryTokens
+          ? thinkingThenSummary()
+          : cerebrasResponse([
+            { type: "thinking", thinking: PLANNING },
+            { type: "text", text: SUMMARY.slice(0, 48) },
+          ], { stopReason: "length" })
+      ));
+      return { ...(await compact(process)), calls: provider.calls };
+    });
+    expect(outcome.result).toMatchObject({ ok: true, archivedMessages: 4 });
+    expect(outcome.calls).toBe(1);
+    expect(outcome.record).toMatchObject({ payload: { kind: "history.compacted", payload: { summary: SUMMARY } } });
+  });
 
   it("retries a reasoning-only result once and installs the completed retry", async () => {
     const pid = "compaction-summary-retry";

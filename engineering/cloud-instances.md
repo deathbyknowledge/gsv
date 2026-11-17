@@ -46,8 +46,9 @@ and cleanup.
 
 This proposal defines the contracts before implementation. It excludes importing
 sessions from extensions, an always-running default browser, and automatic
-recreation behind an existing target ID. The first Linux release uses disposable
-workspaces with explicit file export.
+recreation behind an existing target ID. Linux computers use disposable
+workspaces with explicit file export; expiry keeps a short-lived save of
+`/workspace`.
 
 ## Ownership and integration
 
@@ -100,7 +101,7 @@ command on the native `gsv` target and through CodeMode. It adds no model tool.
 | Call | Input and result |
 | --- | --- |
 | `sys.instance.catalog` | Return entitled templates, supported capabilities, lifetime bounds, and usage units. Initially offer one browser and one Linux template. |
-| `sys.instance.start` | Accept a persisted `requestId`, `templateId`, optional label, requested lifetime, and optional browser `profileId`; return the durable instance record. |
+| `sys.instance.start` | Accept a persisted `requestId`, `templateId`, optional label, requested lifetime, and optional browser `profileId` or computer `fromInstanceId`; return the durable instance record. |
 | `sys.instance.list` | Return visible instance records, including starting instances and retained terminal records. |
 | `sys.instance.get` | Resolve an instance by `instanceId` or its `startRequestId`, including when the original start response was lost. |
 | `sys.instance.stop` | Stop by either identity above; return the current record. Repeated calls have the same effect. |
@@ -125,14 +126,20 @@ type Instance = {
   stoppedAt?: number;
   reason?: string;
   diagnosticRef?: string;
+  workspace?: { saveStatus: "saving" | "saved" | "failed" | "deleted"; savedAt?: number; bytes?: number; expiresAt?: number };
+  restore?: { fromInstanceId: string; status: "pending" | "restored" | "failed" };
 };
 ```
 
-Times are epoch milliseconds. `expiresAt` is fixed at admission and covers the
-whole allocation, including startup. The catalog defines lifetime defaults and
-bounds; the admitted record makes the accepted deadline explicit. The first
-version has no lease-extension API. A longer job must request enough time or
-checkpoint its outputs before expiry.
+Times are epoch milliseconds. `expiresAt` covers the whole allocation,
+including startup. The catalog defines lifetime defaults and bounds; the
+admitted record makes the accepted deadline explicit. A browser's expiry is
+fixed at admission. A computer's moves later while it is in use: each command,
+or a command still running after its call returned, detached or past its yield
+window, keeps it up for the idle window (30 minutes), within the maximum lifetime counted from admission and the period
+allowance. Each extension reserves its added time. The computer accepts a new
+expiry before the coordinator records it, so it never stops before the recorded
+expiry. There is no extension API; use is the only signal.
 
 ### Start and readiness
 
@@ -408,10 +415,24 @@ Cloudflare Containers provide isolated Linux execution; their native lifecycle
 API is the initial integration point. A second Sandbox command/session runtime
 is unnecessary for this design. [Container architecture](https://developers.cloudflare.com/containers/concepts/architecture/)
 
-Initial persistence is explicit `fs.copy` of inputs and outputs to an existing
-durable GSV target. Live process state dies with the instance. Filesystem
-snapshots can be added later as a separately named workspace feature.
-Cloudflare's current snapshots require the `durable_object` scheduling policy,
+Persistence is explicit `fs.copy` of inputs and outputs to an existing durable
+GSV target. Live process state dies with the instance. An earlier stop means the
+work is done and saves nothing.
+
+Expiry is different: it can cut work off. An expired computer saves
+`/workspace` before it is destroyed. Its Durable Object closes admission, runs
+`tar` inside the computer through the machine protocol, and streams the archive
+into the installation's profile bucket, sealed in 1 MiB AES-GCM chunks under a
+key the coordinator holds for that computer alone. Each chunk's associated data
+binds the object address, its position and whether it is the last chunk, so
+reordering, truncation or another object's chunks fail to open. The reservation
+stays held while the save runs; charges still end at the expiry. A save is kept
+for seven days; then the coordinator deletes the object and forgets the key.
+`fromInstanceId` restores a kept save into a new computer before that computer
+reports ready, and a failed restore fails the start rather than continuing
+empty. Installation deletion sweeps saves with the rest of the bucket prefix.
+
+Container snapshots are not used for this. Cloudflare's current snapshots require the `durable_object` scheduling policy,
 are tied to an image version, omit process memory, and expire after thirty days
 unless restored. They cannot by themselves be GSV's permanent workspace store. [Container snapshots](https://developers.cloudflare.com/containers/guides/snapshots/)
 
@@ -425,7 +446,7 @@ following are proposed keys, not existing allowances or product prices:
 | `browser.enabled`, `compute.enabled` | Admit the corresponding resource kind. |
 | `browser.concurrent_instances`, `compute.concurrent_instances` | Maximum admitted instances, including startup and unconfirmed shutdown. |
 | `browser.period_seconds`, `compute.period_unit_seconds` | Usage allowance per service-owned billing period. |
-| `browser.max_instance_seconds`, `compute.max_instance_seconds` | Maximum admitted lifetime. |
+| `browser.max_instance_seconds`, `compute.max_instance_seconds` | Maximum lifetime from admission, including a computer's extensions. |
 | `browser.saved_profiles`, `browser.profile_storage_bytes` | Count and total retained storage bounds, including retained revisions. |
 | `compute.capacity_units`, `compute.template.<id>` | Concurrent compute capacity and permitted templates. |
 

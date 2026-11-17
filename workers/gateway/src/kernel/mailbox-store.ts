@@ -96,7 +96,8 @@ export type MailOutboundPage = {
   next?: string;
 };
 
-export type MailOutboundRecord = Omit<ManagedOutboundMailDraft, "to" | "cc" | "fromName" | "quote"> & {
+export type MailOutboundRecord = Omit<ManagedOutboundMailDraft, "version" | "to" | "cc" | "fromName" | "quote"> & {
+  version: 1;
   to: string[];
   cc: string[];
   ownerUid: number;
@@ -482,10 +483,10 @@ export class MailboxStore {
       `INSERT OR IGNORE INTO mail_outbound (
          outbound_id, owner_uid, delivery_id, fingerprint,
          from_address, to_address, cc_addresses, subject, body_digest, body_path, text_size,
-         reply_to_message_id, in_reply_to_header, references_header,
+         reply_to_message_id, in_reply_to_header, references_header, invite_method, invite_text,
          state, provider_message_id, error_code,
          created_at, queued_at, completed_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staging', NULL, NULL, ?, NULL, NULL)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staging', NULL, NULL, ?, NULL, NULL)`,
       input.outboundId,
       input.ownerUid,
       input.deliveryId,
@@ -500,6 +501,8 @@ export class MailboxStore {
       input.replyToMessageId ?? null,
       input.inReplyTo ?? null,
       input.references ?? null,
+      input.invite?.method ?? null,
+      input.invite?.text ?? null,
       input.createdAt,
     );
     const outbound = this.getOutboundForDelivery(input.ownerUid, input.deliveryId);
@@ -797,6 +800,8 @@ type MailOutboundRow = {
   reply_to_message_id: string | null;
   in_reply_to_header: string | null;
   references_header: string | null;
+  invite_method: "REQUEST" | "CANCEL" | null;
+  invite_text: string | null;
   state: MailOutboundRecord["state"];
   provider_message_id: string | null;
   error_code: string | null;
@@ -890,6 +895,9 @@ function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
   if (row.reply_to_message_id !== null) outbound.replyToMessageId = row.reply_to_message_id;
   if (row.in_reply_to_header !== null) outbound.inReplyTo = row.in_reply_to_header;
   if (row.references_header !== null) outbound.references = row.references_header;
+  if (row.invite_method !== null && row.invite_text !== null) {
+    outbound.invite = { method: row.invite_method, text: row.invite_text };
+  }
   return outbound;
 }
 

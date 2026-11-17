@@ -8,6 +8,7 @@ import discovery from "./system/context.d/20-discovery.md";
 import processes from "./system/context.d/30-process-orchestration.md";
 import shipRole from "./ship/context.d/00-role.md";
 import voice from "./ship/context.d/05-voice.md";
+import speakingForOwner from "./ship/context.d/06-speaking-for-the-owner.md";
 import delegation from "./ship/context.d/10-delegation.md";
 import crewRole from "./crew/context.d/00-role.md";
 import personal from "./user/context.d/10-personal.md";
@@ -30,6 +31,7 @@ export const CONTEXT_SOURCES = {
   "system/context.d/30-process-orchestration.md": processes,
   "ship/context.d/00-role.md": shipRole,
   "ship/context.d/05-voice.md": voice,
+  "ship/context.d/06-speaking-for-the-owner.md": speakingForOwner,
   "ship/context.d/10-delegation.md": delegation,
   "crew/context.d/00-role.md": crewRole,
   "user/context.d/10-personal.md": personal,

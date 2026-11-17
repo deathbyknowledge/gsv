@@ -203,10 +203,19 @@ describe("instance admission", () => {
     const first = store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits);
     const key = store.ownedProfile(actor, saved.profileId)!.key;
     migrate(store.storage); migrate(store.storage);
-    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }]);
+    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }, { id: 2 }]);
     expect(instance(store.byId(first.instanceId))).toEqual(first);
     expect(store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits)).toEqual(first);
     expect(store.ownedProfile(actor, saved.profileId)?.key).toEqual(key);
+  }));
+  it("adds saved workspaces to an installation created before them", () => inStore(store => {
+    const first = store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    store.sql.exec("DROP TABLE workspaces");
+    store.sql.exec("DELETE FROM instance_schema WHERE id = 2");
+    migrate(store.storage);
+    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(store.sql.exec("SELECT count(*) AS count FROM workspaces").one()).toEqual({ count: 0 });
+    expect(instance(store.byId(first.instanceId))).toEqual(first);
   }));
 });
 
@@ -294,6 +303,25 @@ describe("saved profile encryption", () => {
     expect(recovered.object_key).toBe(first.object_key);
     expect(profile(recovered).saveStatus).toBe("saved");
     expect(profile(recovered).issues).toBeUndefined();
+  }));
+  it("keeps every site a save did not read, with its earlier data and save time", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "unread", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("unread", bucket, store);
+    const site = (origin: string, value: string) => ({ origin, localStorage: [{ name: "session", value }] });
+    const usage = (...origins: string[]) => ({ bytes: 2, cookieBytes: 2, cookies: 0, sites: origins.map(origin => ({ origin, bytes: 1, localStorageBytes: 1, indexedDBBytes: 2, localStorageEntries: 1, databases: 0, records: 0 })) });
+    const kept = "https://kept.example", read = "https://read.example";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await storage.save(started, { cookies: [], origins: [site(kept, "old"), site(read, "old")] }, 10000, undefined, usage(kept, read));
+      const earlier = profile(store.ownedProfile(actor, started.profileId!)!).savedAt;
+      vi.setSystemTime(Date.now() + 60_000);
+      await storage.save(started, { cookies: [], origins: [site(read, "new")] }, 10000, undefined, usage(read));
+      const row = store.ownedProfile(actor, started.profileId!)!;
+      expect((await storage.restore(row))?.origins).toEqual([site(kept, "old"), site(read, "new")]);
+      expect(profile(row).saveStatus).toBe("saved");
+      expect(profile(row).usage?.sites.map(({ origin, savedAt }) => ({ origin, savedAt })).sort((x, y) => x.origin.localeCompare(y.origin)))
+        .toEqual([{ origin: kept, savedAt: earlier }, { origin: read, savedAt: profile(row).savedAt }]);
+    } finally { vi.useRealTimers(); }
   }));
   it("reports a new unsavable site without claiming an older copy exists", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "new-partial", templateId: "browser" }, limits);

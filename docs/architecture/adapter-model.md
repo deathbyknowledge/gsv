@@ -341,25 +341,37 @@ Operators must enable Email Sending for each allowed domain. Receiving aliases
 alone grant no sending authority. Existing mailbox addresses and immutable
 drafts keep their original sender; a domain promotion can retain that domain
 without invalidating pending claims. Handle changes still fail closed.
-Each attempt calls Cloudflare Email Sending at most once, after the DO durably
-records it. Provider acceptance records `accepted`.
+Each attempt calls Cloudflare Email Sending's raw MIME API at most once, after
+the DO durably records it, with the sender and every To and Cc address as the
+envelope. The Worker authenticates with `MAIL_SENDING_ACCOUNT_ID` and a
+`MAIL_SENDING_API_TOKEN` secret holding a token for that account with the Email
+Sending: Edit permission. Missing or malformed credentials pause claims instead
+of failing mail. Provider acceptance records `accepted` unless the result shows
+that nobody will get the message.
 Terminal lifecycle, quota, and draft validation failures before an attempt
 record `failed`; recoverable nonactive installation states pause delivery.
-A provider error code that refuses the send before handing it on, such as a
-suppressed or disallowed recipient, an unverified sender, a suspended account,
-the provider's daily limit, or an invalid request, also records `failed` with
-the owner-facing code (`recipient_suppressed`, `recipient_not_allowed`,
-`sender_unavailable`, `provider_quota`, `provider_rejected`) and returns the
-attempt's share of the daily allowance. A rate limit instead returns the
-delivery to claiming for a later attempt with the claim backoff.
-A crash, a delivery or service error, any other binding throw, or a malformed
-provider result after the attempt records `unknown` and is never replayed,
-because the message may already have left the provider boundary. The provider's
-code and redacted message reach the operator's logs and diagnostic telemetry;
-recipients' addresses do not.
+An API error that refuses the request before handing it on also records
+`failed` and returns the attempt's share of the daily allowance:
+`sender_unavailable` for a credential or account problem (HTTP 401, 403 or 404)
+and `provider_rejected` for any other refusal. While a sending domain's **Drop
+suppressed recipients** setting is off, Cloudflare's default, a suppressed
+recipient refuses the whole request this way. With it on, a message whose every
+recipient was dropped records `recipient_suppressed`, also returned to the
+allowance. A result in which every recipient bounced permanently records
+`recipient_rejected` and stays counted. A rate limit (HTTP 429) instead returns
+the delivery to claiming for a later attempt with the claim backoff.
+A crash, a timeout, a server error, a lost connection, or a malformed provider
+result after the attempt records `unknown` and is never replayed, because the
+message may already have left the provider boundary. The provider's status,
+code, request id and redacted message reach the operator's logs and diagnostic
+telemetry; recipients' addresses and the token do not.
 
-The email Worker owns presentation. A body is Markdown as written in chat; the
-Worker sends it as an HTML part and a plain-text part without the marks. Raw
+The email Worker owns presentation and writes each MIME message itself. A body
+is Markdown as written in chat; the Worker sends it as an HTML part and a
+plain-text part without the marks, both quoted-printable, with header text
+outside ASCII as RFC 2047 encoded words. Email Sending adds the Date,
+Message-ID and DKIM signature; a reply threads on the original's Message-ID only
+when it is printable ASCII, as headers carry it unencoded. Raw
 HTML stays visible text, only web and mail links survive, and images become
 links, so a message carries no markup or remote content of its own. When the
 Worker claims a draft, the Kernel adds the owner's current display name for the
@@ -371,8 +383,19 @@ optionally an HTTPS `MAIL_FOOTER_URL`, to add one line under every message,
 above any quote. An invalid footer configuration pauses claims instead of
 sending without it.
 
+A message with a calendar invite reaches the Worker as a version 2 draft holding
+the invite's iTIP method and iCalendar text, which the Kernel has already
+checked against its organizer and guests. The Worker sends it as calendar
+services do: a `multipart/mixed` message whose `multipart/alternative` part
+carries `text/calendar; method=REQUEST` or `method=CANCEL` beside the text and
+HTML, followed by the same calendar as an `invite.ics` attachment, both in
+base64 so the calendar's own CRLF lines survive. A version 1 draft never carries
+an invite, and a version 2 draft always does; a Worker that predates invites
+refuses version 2 as `invalid_draft` rather than sending the message without its
+invite, so deploy the email Worker before a Gateway that sends them.
+
 Email is an optional operator-composed service. The Humans & Machines graph
-supplies the email Worker, Queue, provider binding, and `mail.send` transport;
+supplies the email Worker, Queue, Email Sending credentials, and `mail.send` transport;
 chat pairing does not implicitly enable a mailbox.
 
 Existing Mail deployments must follow the [two-stage queue upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md)

@@ -401,7 +401,7 @@ if ($Headless) {
 Write-Host ""
 Write-Host "  Next: finish setting up your space in your browser."
 Write-Host "  CLI login: gsv login your-space.example"
-Write-Host "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
+Write-Host "  Connect this computer: create an invitation in Work, then run gsv pair CODE"
 Write-Host ""
 if (-not $Headless -and $env:GSV_NO_LAUNCH -ne "1" -and -not $env:CI -and
     -not $env:SSH_CONNECTION -and -not $env:SSH_TTY -and [Environment]::UserInteractive -and

@@ -34,7 +34,8 @@ Use **expand** for a larger view and **more → stop browser** to stop it;
 The view follows the tab Ship is reading or interacting with, including text
 reads and screenshots, and shows its cursor and clicks. Opening a background tab
 leaves the view in place until Ship uses it. You can click, scroll, paste and type
-directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
+directly in that view. Text you type while earlier input is still on its way is
+sent together, so typing keeps pace on a slow connection. Clicking pins the view to that tab; choose **Follow Ship**
 to follow again. Watching leaves Ship running. Your input gets brief priority
 while you are interacting, and browser actions run in sequence so a human click
 cannot split Ship's click or typing action. Closing the view leaves the
@@ -90,10 +91,20 @@ embedded frames. Already tracked origins keep their places; additional origins
 do not expand the save workload or displace earlier sign-ins. Local storage and
 IndexedDB from additional origins are not saved. Cookies are saved separately.
 
-Ship saves periodically, after human input settles, when you finish a login
-handoff, and before an ordinary stop. Closing a website tab does not forget its
-saved data. Restore completes before the next browser becomes ready. If restore
-fails, that start fails visibly rather than opening an empty replacement.
+Ship saves when you finish a login handoff, before an ordinary stop, when the
+browser's lifetime ends and on `browser profile save`. It never saves in the
+background while the browser is in use, so saving cannot hold up the live view.
+If the browser fails before one of those saves, changes since the last save are
+lost. Each save reads only the sites that had a page open, or whose service
+worker ran, since the previous save, and every other site keeps its saved data,
+so saving takes as long as the sites you used rather than every site the
+browser remembers. When Ship reconnects to a browser that kept running, for
+example after an update, the next save reads every site once, because changes
+made while it was disconnected cannot be seen. Closing a website
+tab does not forget its saved data. Saves and restores visit several sites at
+once, and a restore skips sites with nothing stored. Restore completes
+before the next browser becomes ready. If restore fails, that start fails
+visibly rather than opening an empty replacement.
 
 **I’m done, resume Ship** finishes a login handoff only after its save succeeds.
 If saving fails, human control and the waiting Ship task stay open; retry
@@ -256,6 +267,8 @@ leaves the instance available for inspection by the saved request ID. Instance
 commands accept either the displayed eight-character target ID or the full
 instance ID. An unknown instance ID is an error, including for stop.
 For stop, `--wait` returns after termination and release of the saved-state lease.
+Release follows within seconds of a successful save, so a new browser can start
+right away.
 Ordinary stop fails if the final save fails. `instance stop <browser-id> --force
 --wait` explicitly discards unsaved changes. `browser profile save` retries a save
 and returns its status; instance results also include compact persistence status.

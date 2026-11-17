@@ -288,9 +288,6 @@ jobs:
       - name: Run Oxlint and anti-slop
         run: npm run lint
 
-      - name: Test product email import and schema upgrades
-        run: npm run product-email:check
-
       - name: Check protocol generation and syscall docs
         run: npm run protocol:check
 

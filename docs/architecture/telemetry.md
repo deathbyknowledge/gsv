@@ -17,6 +17,8 @@ allowlist. Each event has a closed property schema; there is no arbitrary
 metadata field. Records may contain:
 
 - event names, bounded categories, timings, outcomes, and aggregate counts;
+- the trusted edge's coarse, two-letter IP country code after an owner's
+  successful sign-in, without the address or location coordinates;
 - content-free inference failure categories, lifecycle stages, retryability,
   HTTP status codes, and workload classes;
 - bounded, redacted exception names, messages, stacks, immediate causes, provider
@@ -141,16 +143,29 @@ installation gets only the kind and ID: the public `/git/` proxy answers any
 without the parentheses when ripgit did not diagnose it, and deletion errors
 add them after the status.
 
-The component allowlist includes Gateway, Accounts, Inference, Search, Mail and
-ripgit.
+The component allowlist includes Gateway, Accounts, Inference, Search, Mail,
+ripgit and Instances.
 Event ownership is validated as well as the producing Worker: a mail producer
 cannot emit an inference or activation event. The deployment must wire both the
 producer switch and tail consumer; schema support alone does not export anything.
 
 `GsvRuntime` attaches an enabled tail consumer to Gateway and ripgit, sets
-`GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted.
+`GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted. The instances
+Worker is composed by its operator, whose deployment does the same for it.
 `GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
 without granting those adapters ownership of another component's application events.
+
+When deployment telemetry is enabled, `ship.owner.connected` reports Cloudflare's country code after a personal human
+successfully authenticates over WebSocket and passes the final credential-epoch
+check. The code comes only from `request.cf.country`, never from headers, the
+sign-in frame or an adapter's server address. Unknown and Tor country values are
+omitted. The pending WebSocket attachment carries the code across hibernation;
+the connected attachment drops it. Root, machine and service sign-ins do not
+report an owner's country. Reconnects can update the observed country, which is
+an IP-based estimate and may reflect a VPN rather than residence or signup
+location. No database, migration or historical country backfill is involved.
+Device timezone is not part of this event. Deployment consumers must use this
+explicit country rather than geolocating their own export request.
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.
@@ -187,11 +202,43 @@ without granting those adapters ownership of another component's application eve
   before a sign-in does; later sign-ins do not report it again.
   `onboarding.welcome.delivered` reports the first Ship message accepted after
   it, once per owner, with the time between them, so it measures first sign-in
-  to Ship's first message. The Kernel keeps both marks in its private
-  `initial-onboarding` record, so an owner whose welcome predates the record is
-  never reported.
-- Accounts: activation. This is not a full signup funnel; anonymous invite/email
-  steps intentionally do not invent an installation identity or export addresses.
+  to Ship's first message. `onboarding.welcome.finished` reports the welcome
+  responsibility being resolved or cancelled, once per owner, with the time
+  since it opened and a closed outcome: `connected`, `messenger_declined` or
+  `declined` as the welcome names them, `cancelled`, or `other` for anything
+  else Ship or the person recorded. The resolution itself stays in the ledger,
+  and a welcome nobody closes reports nothing. The Kernel keeps the three marks
+  in its private `initial-onboarding` record, so an owner whose welcome predates
+  the record is never reported.
+  Choices are reported by count and position, never by their words. A Ship
+  message that offers them carries `choicesOffered`. A person's message that
+  follows one carries the same count and, when it takes a choice, `choiceTaken`,
+  its position counted from 1; other words leave it out. A message takes a
+  choice by its own words, which is what a tap sends, or by its number where a
+  messenger wrote the choices as a list. The Conversation decides this when it
+  accepts the message, so every client and messenger is measured the same way.
+- Accounts: activation and attribution. `installation.attributed` is reported
+  once, by the request that first reserves a self-service signup's Ship, under
+  the same pseudonym as `installation.activated` and the Ship's later Gateway
+  events, so signups, activations and first messages break down by the same
+  properties; a replayed or resumed request reports nothing again, and a Ship
+  an operator created or reset never passes through it. The properties are a
+  closed placement class (`hero`, `final-call`, `example` or `other`) and, for
+  example cards, a closed example id, plus the campaign's `utm_source` and
+  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `website` when
+  the link carried a placement, `campaign` when it carried only a campaign tag,
+  otherwise `direct`. The signup page reads the placement slugs from the signup
+  link's fragment and the campaign tags from its query, keeps them in its own
+  signup state until the space request and takes them off the URL; a reload
+  keeps them, and only a link carrying its own replaces them. The owner
+  API bounds every value to one slug shape and classifies the placement and
+  example into the allowlist, so an unknown slug becomes `other`, a campaign
+  tag outside the shape is dropped, and the raw string never enters a record.
+  Campaign tags are the operator's own names for an ad or a post, not a
+  visitor's; the click ids and other tags on the link stay out. Accounts keeps
+  no copy: the record is the only one. This is not a full signup funnel;
+  anonymous invite/email steps intentionally do not invent an installation
+  identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and
@@ -208,6 +255,19 @@ without granting those adapters ownership of another component's application eve
   failure or unknown delivery; deferred processing; entitlement-refresh health.
 - ripgit: unexpected request failures by route class and failure kind, joined to
   the caller's error by diagnostic ID.
+- Instances: cloud browser timings. `browser.save.finished` reports each save's
+  outcome, what started it (a finished handoff, a stop, expiry or a request),
+  its duration, and how many sites it read and how many kept their earlier data.
+  `browser.start.finished` reports once per start whether the browser became
+  ready, was stopped or failed, the time since the start was requested, and the
+  time and site count of restoring a saved profile. `browser.handoff.finished`
+  reports how a login handoff ended, its duration, and how many inputs it took,
+  how many failed, and their median and slowest times. A handoff that ends
+  while an input is still running reports once that input settles, at most about
+  10 seconds later, so a slow last input is counted. Input timings stay in
+  coordinator memory, so a handoff that outlives a coordinator restart reports
+  no input counts rather than partial ones. No record carries a site, URL,
+  input or profile.
 
 A provider accepting outgoing mail does not prove recipient delivery. Unknown
 outcomes stay unknown. A successful intake does not mean summarization has

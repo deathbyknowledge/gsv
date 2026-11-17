@@ -55,6 +55,24 @@ async function fixture() {
 }
 
 describe("desktop owner API", () => {
+  it("checks handles before email verification without granting space creation", async () => {
+    const f = await fixture();
+    const handle = `public-${crypto.randomUUID()}`;
+    const check = await f.request(`/handle?value=${handle.toUpperCase()}`);
+    expect(check.status).toBe(200);
+    expect(await check.json()).toEqual({ available: true });
+    expect((await f.request("/handle?value=not_a_handle")).status).toBe(400);
+    const reserved = await f.request("/handle?value=signup");
+    expect(reserved.status).toBe(200);
+    expect(await reserved.json()).toEqual({ available: false });
+    expect((await f.request("/session")).status).toBe(401);
+    expect((await f.request("/spaces", undefined, { operationId: crypto.randomUUID(), handle })).status).toBe(401);
+    expect(f.send).not.toHaveBeenCalled();
+    await f.signIn();
+    await f.request("/spaces", f.sessionSecret, { operationId: crypto.randomUUID(), handle });
+    expect(await (await f.request(`/handle?value=${handle}`)).json()).toEqual({ available: false });
+  });
+
   it.each([false, true])("replays verified signup without duplicating mail, spaces or optional marketing (opt-in: %s)", async (optedIn) => {
     const f = await fixture();
     const verify = await f.signIn();
@@ -158,3 +176,21 @@ it("returns unavailable for normalized policy matches and rejects direct creatio
   }
 });
 
+describe("signup attribution body", () => {
+  it("accepts closed slugs and rejects anything else with the request", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const operationId = crypto.randomUUID();
+    const handle = `attr-${crypto.randomUUID()}`;
+    const malformed: Array<Record<string, string>> = [{ placement: "Hero Banner" }, { utmSource: "face_book" }, { utmSource: "facebook", utmContent: "photo" }];
+    for (const attribution of malformed) {
+      const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution });
+      expect(rejected.status).toBe(400);
+    }
+    expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle,
+      attribution: { placement: "details-tickets", example: "tickets", utmSource: "facebook", utmCampaign: "launch" } });
+    expect(accepted.status).toBe(200);
+    expect(await f.accounts.getReservationByOperation(operationId)).not.toBeNull();
+  });
+});

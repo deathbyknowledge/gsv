@@ -187,6 +187,9 @@ export const COMPACTION_SUMMARY_CHUNK_CHARS = 256_000;
 
 export const COMPACTION_SUMMARY_MAX_TOKENS = 4_096;
 
+/** Output a provider may spend reasoning before the handover when it ignores reasoning "off". */
+export const COMPACTION_REASONING_HEADROOM_TOKENS = 12_288;
+
 export const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 
 export const CONTEXT_RUNWAY_ALERT_EPOCH_KEY = "contextRunwayAlertEpoch";

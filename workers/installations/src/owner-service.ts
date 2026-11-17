@@ -21,6 +21,7 @@ export type InstallationOwnerEnvironment = ProductEmailEnvironment & {
   GSV_OWNER_EMAIL_REPLY_TO?: string;
   GSV_OWNER_AUTH_SECRET?: string;
   GSV_OWNER_SIGNUP_ORIGIN?: string;
+  GSV_OWNER_SIGNUP_ORIGIN_ALIASES?: string;
   ASSETS?: Fetcher;
 };
 

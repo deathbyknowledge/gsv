@@ -313,6 +313,10 @@ export default defineConfig({
             `,
           },
         ],
+        bindings: {
+          MAIL_SENDING_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+          MAIL_SENDING_API_TOKEN: "test-email-sending-token",
+        },
         serviceBindings: {
           ACCOUNTS: "gsv-mail-accounts-test",
           ENTITLEMENTS: "gsv-mail-accounts-test",

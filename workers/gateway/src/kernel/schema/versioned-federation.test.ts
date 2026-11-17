@@ -143,7 +143,7 @@ describe("message requests from before the sender could save the person", () => 
   it("keeps an earlier outgoing request unsaved, and records the choice on a new one", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
-      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 94));
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 95));
       const did = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
       sql.exec(`INSERT INTO social_approaches (
         approach_id, owner_uid, direction, request_id, remote_did, remote_display_name, local_display_name,

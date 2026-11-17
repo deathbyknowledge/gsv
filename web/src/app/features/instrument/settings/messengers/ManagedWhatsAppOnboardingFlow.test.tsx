@@ -126,15 +126,15 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(currentFlow().title).toBe("Connect WhatsApp");
     const allNodes = currentFlow().steps.flatMap((step) => flowStepNodes(currentFlow(), step.key));
     expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
-    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Connect\""));
+    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Send message\""));
     expect(instructions?.props.text).toBe(
-      "Clicking \"Connect\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
+      "Clicking \"Send message\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
     );
     expect(collectText(nodes())).toContain("To message Ship manually, send \"/link\" to +34600000000.");
-    const open = nodeWithLabel(nodes(), "CONNECT");
+    const open = nodeWithLabel(nodes(), "SEND MESSAGE");
     expect(open.props.href).toBe("https://wa.me/34600000000?text=%2Flink");
-    expect(open.props.variant).toBe("primary");
-    expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
+    expect(open.props.variant).toBe("secondary");
+    expect(nodeWithLabel(nodes(), "WHATSAPP CODE").props.disabled).toBe(false);
   });
 
   it("disables the launch link while the host suspends pairing", async () => {
@@ -148,11 +148,14 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
         dependencies={dependencies}
       />,
     );
-    expect(nodeWithLabel(nodes(), "CONNECT").props.disabled).toBe(true);
+    expect(nodeWithLabel(nodes(), "SEND MESSAGE").props.disabled).toBe(true);
   });
 
-  it("warns about the blocked countries this device's languages place it in", async () => {
-    const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
+  it("notes the blocked countries this device's languages place it in, flagged and folded away", async () => {
+    const warning = () => {
+      const text = collectText(nodes());
+      return text.includes("cannot connect") ? text : undefined;
+    };
     const remount = async (languages: string[], codes: string[]) => {
       await root?.unmount();
       vi.stubGlobal("navigator", { languages });
@@ -166,33 +169,34 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
         />,
       );
     };
-    expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
+    expect(warning()).toContain("🇧🇷 🇮🇩 Read this if your WhatsApp number is from Brazil or Indonesia");
+    expect(warning()).toContain("Brazil (+55) and Indonesia (+62)");
+    expect(nodes().some((node) => node.props.variant === "warning")).toBe(false);
 
     await remount(["pt-BR", "id"], ["62"]);
-    expect(warning()?.props.text).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
-    expect(warning()?.props.text).not.toContain("Brazil");
+    expect(warning()).toContain("🇮🇩 Read this if your WhatsApp number is from Indonesia");
+    expect(warning()).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
+    expect(warning()).not.toContain("Brazil");
 
     await remount(["en-GB", "pt-BR"], ["55", "62"]);
-    expect(warning()?.props.text).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
-    expect(warning()?.props.text).not.toContain("Indonesia");
+    expect(warning()).toContain("🇧🇷 Read this if your WhatsApp number is from Brazil");
+    expect(warning()).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
+    expect(warning()).not.toContain("Indonesia");
 
     await remount(["en-US", "es-ES", "not a tag"], ["55", "62"]);
     expect(warning()).toBeUndefined();
   });
 
-  it("warns where the code is submitted that it replaces a link to another Ship", async () => {
+  it("warns where the code is submitted that it replaces a link to another Ship", () => {
     const relink = "Already connected to another Ship from your number? Submitting a fresh code will end that connection and replace it with this one.";
-    expect(collectText(nodes())).not.toContain(relink);
-    await click("I HAVE A CODE");
     expect(collectText(nodes())).toContain(relink);
   });
 
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {
-    await click("I HAVE A CODE");
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "WHATSAPP CODE").props.onChange?.("abcd-efgh-jklm");
     });
-    await click("CHECK CODE");
+    await click("CONNECT");
 
     expect(mocks.inspect).toHaveBeenCalledWith({
       adapter: "whatsapp",

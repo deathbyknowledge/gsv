@@ -658,10 +658,12 @@ logins, recovery after a lost response, and the complete sign-in flow.
 
 When computers are enabled, `instance start computer --request-id ID --wait`
 creates a temporary Linux target. `--name NAME` and `--seconds N` choose its label
-and lifetime. A new request ID creates a new computer; retrying the same request
+and first expiry. A new request ID creates a new computer; retrying the same request
 recovers that operation. Computers do not accept browser profile or `--new`
 options. Use the same list, get and stop commands; stopping destroys the files
-and running commands. See [cloud computers](/how-to/cloud-computers).
+and running commands. A computer whose lifetime expires saves `/workspace` for
+7 days first, and `--from ID` starts a new computer with that save. See
+[cloud computers](/how-to/cloud-computers).
 
 Inside the Ship's shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
@@ -808,9 +810,51 @@ public service), which the runtime facts also list; `man --search` ranks `mail`
 for sign-up, verification code, receipt and tracking questions, and reports it
 unavailable when the installation has no mailbox. `mail send` and `mail reply`
 take the body in Markdown: recipients see it formatted, with a plain-text copy,
-and a reply quotes the original below it.
+and a reply quotes the original below it. `--invite PATH` sends an event file
+from `cal` as a calendar invitation to exactly that event's guests; without
+`--to` they are the recipients.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
+
+`cal` writes and reads iCalendar (`.ics`) event files:
+
+```bash
+cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
+cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
+cal cancel PATH [--occurrence WHEN]
+cal show PATH [--timezone ZONE] [--next COUNT | --from WHEN [--until WHEN]]
+```
+
+`add` gives a new event a fresh UID, the account's managed mail address as its
+organizer, and each `--attendee` as an invited guest. It reads local times in
+the owner's time zone, or `--timezone`, and stores a single event's times in
+UTC; a date makes an all-day event. A time a clock change skips reads as
+RFC 5545 has it, with the offset before the change: 02:30 on a night the clocks
+go from 02:00 to 03:00 is 03:30. `update` and `cancel` rewrite the file in
+place with the same UID and the next SEQUENCE, so a calendar that already has
+the event replaces it. Only the event's organizer can change it. `show` prints
+any calendar file, one field per line, with a repeating event's next dates.
+Send a new or changed event to its guests with `mail send --invite PATH`.
+
+`show --from WHEN --until WHEN` lists what a calendar file holds between two
+times instead, such as a whole calendar fetched from a private calendar link:
+each event, and each date of a repeating one, that overlaps the range, in the
+order they start. A date stands for its whole day in the owner's time zone, so
+`--from 2026-11-16 --until 2026-11-22` is that week; `--from` alone shows one
+day. An event already under way at `--from` is included. A range covers at most
+366 days and 500 events; skipped dates are left out and moved ones appear at
+their new time, with the date they replace as `occurrence=`.
+
+`--repeat` takes an RFC 5545 RRULE in the forms calendar apps offer: daily,
+weekly on given days, monthly on a day of the month (`-1` for the last) or a
+weekday such as `4FR` or `-1FR`, or yearly on a date, every `INTERVAL` of them,
+ending with `COUNT` or `UNTIL`. A repeating event is stored in its time zone,
+with that zone's VTIMEZONE, so it keeps its clock time across daylight saving
+changes. A date whose clock time a change skips stays in the series, later by
+the gap. `--occurrence WHEN` names one of its dates: `update --occurrence`
+moves or changes that date alone, and `cancel --occurrence` skips it (EXDATE).
+When the whole series moves, each skipped or changed date follows its day, and
+one the new rule no longer has is dropped and reported.
 
 `skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
 before the owner's and the agent's own. `skills create` writes to the current

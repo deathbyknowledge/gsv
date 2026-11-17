@@ -7,24 +7,33 @@ import {
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
-import { browserTemplate, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
+import { browserTemplate, COMPUTER_IDLE_SECONDS, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
 import { CloudBrowser } from "./browser";
 import { computerName, type ComputerControl } from "./computer";
 import { ComputerRequest } from "./computer-request";
 import { migrate } from "./schema";
 import { instance, InstanceStore, profile, type InstanceRow } from "./store";
 import { ProfileStorage } from "./profiles";
+import { ComputerWorkspaces } from "./workspaces";
 import { BrowserProvider } from "./provider";
 import { InstanceRetirement } from "./retirement";
 import { BrowserOperationGate, within } from "./browser-operation";
 import { BrowserWatch } from "./browser-watch";
 import { BrowserStorageError, SAVE_TIMEOUT_MS } from "./browser-storage";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
+import { emitTelemetry, type TelemetryEvent } from "@humansandmachines/gsv/telemetry";
 
 const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
+const STARTING_POLL_MS = 1_000;
+/** A closed browser's shutdown is confirmed this soon, so its profile and slot free promptly. */
+const SHUTDOWN_CONFIRM_MS = 1_000;
+// Commands extend a computer at most once a minute, not on every request.
+const EXTENSION_STEP_MS = 60_000;
 const PENDING_CHANGES_KEY = "pending_instance_changes";
+// Only expiry saves a computer's workspace; any other stop means the work is done.
+const COMPUTER_EXPIRED = "Computer lifetime expired";
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
   z.strictObject({ kind: z.literal("click"), x: z.number().min(0).max(1280), y: z.number().min(0).max(800) }),
@@ -40,10 +49,54 @@ function isBrowserRequest(frame: InstanceTargetRequest): frame is Extract<Instan
   return IMPLEMENTATIONS.some(call => call === frame.call);
 }
 
+/** Stops a person asked for. Any other stop of a starting browser is a failed start. */
+const REQUESTED_STOPS = new Set(["Stopped without saving", "Profile deleted", "Space deleted"]);
+/** A handoff's median input time covers this many inputs; its counts and slowest time cover every input. */
+const INPUT_SAMPLES = 1_000;
+type SaveTrigger = Extract<TelemetryEvent, { name: "browser.save.finished" }>["properties"]["trigger"];
+
+type InputSummary = { inputs: number; inputFailures: number; inputMedianMs?: number; inputMaxMs?: number };
+
+/** Input timings for one handoff, kept in memory, so a coordinator restart loses them. */
+class HandoffInputs {
+  #inputs = 0;
+  #failures = 0;
+  #slowestMs = 0;
+  #pending = 0;
+  #closed?: (summary: InputSummary) => void;
+  readonly #samples: number[] = [];
+  /** Admits one input and returns the call that records its outcome. */
+  admit(): (ok: boolean) => void {
+    const started = Date.now();
+    this.#pending++;
+    return ok => {
+      const durationMs = Date.now() - started;
+      this.#inputs++;
+      if (!ok) this.#failures++;
+      this.#slowestMs = Math.max(this.#slowestMs, durationMs);
+      if (this.#samples.length < INPUT_SAMPLES) this.#samples.push(durationMs);
+      if (--this.#pending === 0) this.#closed?.(this.summary());
+    };
+  }
+  /** Reports once every admitted input has settled, so a slow input ending the handoff is still counted. */
+  close(report: (summary: InputSummary) => void): void {
+    if (this.#pending === 0) report(this.summary());
+    else this.#closed = report;
+  }
+  private summary(): InputSummary {
+    const samples = [...this.#samples].sort((a, b) => a - b);
+    return {
+      inputs: this.#inputs, inputFailures: this.#failures,
+      ...(samples.length > 0 && { inputMedianMs: samples[Math.floor((samples.length - 1) / 2)], inputMaxMs: this.#slowestMs }),
+    };
+  }
+}
+
 export class InstanceCoordinator extends DurableObject<Environment> implements InstallationInstances {
   readonly #store: InstanceStore;
   readonly #policy: InstancePolicy;
   readonly #profiles: ProfileStorage;
+  readonly #workspaces: ComputerWorkspaces;
   readonly #provider: BrowserProvider;
   readonly #retirement: InstanceRetirement;
   readonly #browsers = new Map<string, Promise<CloudBrowser>>();
@@ -54,8 +107,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #saves = new Map<string, { done: Promise<void>; outcome: Promise<boolean>; abort: AbortController }>();
   readonly #stops = new Map<string, Promise<void>>();
   readonly #handoffBarriers = new Map<string, Promise<void>>();
-  readonly #autosaveAfter = new Map<string, number>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
+  // An instance has at most one live handoff; its input timings are reported when it ends.
+  readonly #handoffInputs = new Map<string, { requestId: string; timings: HandoffInputs }>();
   readonly #watches = new Map<string, { instanceId: string; watch: BrowserWatch }>();
   #notifying: Promise<void> | null = null;
   readonly #installationId: string;
@@ -67,6 +121,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#store = new InstanceStore(ctx.storage, ownerUid => this.notifyChange(ownerUid));
     this.#policy = new InstancePolicy(env, this.#installationId);
     this.#profiles = new ProfileStorage(this.#installationId, env.PROFILES, this.#store);
+    this.#workspaces = new ComputerWorkspaces(this.#installationId, env.PROFILES, this.#store);
     this.#provider = new BrowserProvider(env.BROWSER);
     this.#retirement = new InstanceRetirement(ctx.storage, this.#installationId);
   }
@@ -134,6 +189,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     await this.ctx.storage.setAlarm(Date.now() + 1);
     this.#retirement.requireLive();
     const value = this.#store.admit(actor, args, limits, Date.now(), new Set(this.#stops.keys()));
+    if (value.kind === "linux" && value.state === "starting" && value.startRequestId === args.requestId) this.#workspaces.create(value);
     return { instance: value, disposition: value.startRequestId === args.requestId ? "created" as const : "reused" as const };
   }
   async list(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["list"]>[1]) {
@@ -173,11 +229,13 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
               throw new Error("Browser work has not settled. The browser is still running; retry stopping or use force to stop without saving.");
             }
             if (instance(this.#store.byId(row.id)).state !== "ready") return;
-            if (!await this.save(row.id)) {
+            if (!await this.save(row.id, "stop")) {
               const saved = instance(this.#store.byId(row.id)).persistence;
               throw new Error(`${saved?.error ?? "Browser data could not be saved."} The browser is still running. Inspect instance get ${instance(row).targetId} before retrying; --force discards unsaved changes.${saved?.diagnosticRef ? ` Diagnostic: ${saved.diagnosticRef}.` : ""}`);
             }
             this.fenceStop(instance(this.#store.byId(row.id)), "Stopped by owner");
+            // Shutdown starts once the save commits, not at the next maintenance pass.
+            await this.ctx.storage.setAlarm(Date.now() + 1);
           })().finally(() => { this.#stops.delete(row.id); });
           this.#stops.set(row.id, stopping);
         }
@@ -207,7 +265,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     await this.browser(row.id);
     this.requireBrowser(actor, row.id, true);
     if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
-    await this.save(row.id);
+    await this.save(row.id, "request");
     const profileId = instance(row).profileId;
     return profileId ? this.getProfile(actor, profileId) : { profile: null };
   }
@@ -265,6 +323,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const value: BrowserHandoff = existing ?? { ...args, site: "", state: "pending", revision: 1, createdAt: Date.now(), expiresAt: Math.min(instance(row).expiresAt, Date.now() + 15 * 60_000) };
     // Fence before awaiting CDP or cancellation. No new automation can enter now.
     this.#store.putHandoff(value);
+    if (!existing) this.#handoffInputs.set(row.id, { requestId: args.requestId, timings: new HandoffInputs() });
     try {
       const saving = this.#saves.get(row.id)?.done;
       if (!await this.settleOperations(row.id) || !await boundedSettlement(saving ? [saving] : [], 10000)) {
@@ -281,7 +340,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       return { handoff: prepared, actionPath: actionPath(prepared) };
     } catch (error) {
       const current = this.handoff(actor, { instanceId: args.instanceId, requestId: args.requestId });
-      if (liveHandoff(current)) this.#store.putHandoff({ ...current, state: "failed", revision: current.revision + 1, diagnosticRef: this.#store.diagnostic(row.id, error) });
+      if (liveHandoff(current)) this.closeHandoff(current, "failed", { diagnosticRef: this.#store.diagnostic(row.id, error) });
       throw error;
     }
   }
@@ -304,8 +363,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (!liveHandoff(value)) return { handoff: value };
     const pending = this.#handoffBarriers.get(args.instanceId);
     if (state !== "completed") {
-      const terminal: BrowserHandoff = { ...value, state, completedAt: Date.now(), revision: value.revision + 1 };
-      this.#store.putHandoff(terminal);
+      const terminal = this.closeHandoff(value, state, { completedAt: Date.now() });
       if (pending) return { handoff: terminal };
     } else if (pending) {
       await pending;
@@ -319,14 +377,14 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         throw new Error("Browser input did not settle; the instance is stopping");
       }
       if (state === "completed") {
-        const saved = await this.save(args.instanceId);
+        const saved = await this.save(args.instanceId, "handoff");
         const current = this.handoff(actor, args);
         if (!liveHandoff(current)) return;
         if (!saved) {
           const persistence = instance(this.#store.byId(args.instanceId)).persistence;
           throw new Error(`${persistence?.error ?? "Browser data could not be saved."} Human control is still active. Retry finishing or cancel the request.${persistence?.diagnosticRef ? ` Diagnostic: ${persistence.diagnosticRef}.` : ""}`);
         }
-        this.#store.putHandoff({ ...current, state, completedAt: Date.now(), revision: current.revision + 1 });
+        this.closeHandoff(current, state, { completedAt: Date.now() });
       }
     })();
     this.#handoffBarriers.set(args.instanceId, barrier);
@@ -362,6 +420,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       else if (this.#store.liveHandoffs(args.instanceId).length) throw new Error("Open the pending browser request before entering input");
     };
     check();
+    const live = this.#handoffInputs.get(args.instanceId);
+    const settle = args.handoffRequestId && live?.requestId === args.handoffRequestId ? live.timings.admit() : undefined;
     const deadline = AbortSignal.timeout(10000);
     const previous = this.#humanInputs.get(args.instanceId);
     const operation = (async () => {
@@ -384,22 +444,20 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         }, deadline, "human");
       }, deadline);
     })();
-    const settled = operation.finally(async () => {
-      try {
-        if (!this.#retirement.get() && this.#store.byId(args.instanceId).active) {
-          this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
-          const alarm = await this.ctx.storage.getAlarm();
-          if (!this.#retirement.get() && (alarm === null || alarm > Date.now() + 3000)) await this.ctx.storage.setAlarm(Date.now() + 3000);
-        }
-      } finally {
-        if (this.#humanInputs.get(args.instanceId) === settled) this.#humanInputs.delete(args.instanceId);
-      }
+    const settled = operation.finally(() => {
+      if (this.#humanInputs.get(args.instanceId) === settled) this.#humanInputs.delete(args.instanceId);
     });
     this.#humanInputs.set(args.instanceId, settled);
     this.ctx.waitUntil(settled.catch(cause => {
       if (!this.#retirement.get()) this.#store.diagnostic(args.instanceId, cause);
     }));
-    await within(settled, 10000, "Browser input", deadline);
+    try {
+      await within(settled, 10000, "Browser input", deadline);
+    } catch (error) {
+      settle?.(false);
+      throw error;
+    }
+    settle?.(true);
     return { accepted: true as const };
   }
 
@@ -409,7 +467,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const value = instance(this.#store.byId(id));
       if (value.kind === "linux") {
         if (!COMPUTER_IMPLEMENTATIONS.some(call => call === frame.call)) throw new Error("Unsupported computer syscall");
-        deadlineAt = Math.min(deadlineAt, value.expiresAt);
+        // Use may move the expiry before dispatch; expiry itself aborts the request through fenceStop.
         if (deadlineAt <= Date.now()) throw new Error("Computer request deadline exceeded");
         let operations = this.#operations.get(id);
         if (!operations) { operations = new Map(); this.#operations.set(id, operations); }
@@ -427,8 +485,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           return await request.run(async signal => {
             await this.#policy.requireActive();
             this.requireInstance(actor, id, true);
+            await this.extendComputer(id);
             signal.throwIfAborted();
-            return this.computer(id).execute(frame, deadlineAt);
+            return this.computer(id).execute(frame, Math.min(deadlineAt, instance(this.#store.byId(id)).expiresAt));
           });
         }
         catch (cause) {
@@ -527,7 +586,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // A caller may stop waiting, but the actual attachment retains the memory slot.
     return within(attached, 30000, "Browser attachment");
   }
-  private save(id: string): Promise<boolean> {
+  // Saves run only when a handoff finishes, before an ordinary stop, at expiry or on request.
+  // A save holds the operation gate for a whole export, so a background save would stall live input.
+  private save(id: string, trigger: SaveTrigger): Promise<boolean> {
     const pending = this.#saves.get(id)?.outcome;
     if (pending) return pending;
     const value = instance(this.#store.byId(id));
@@ -535,17 +596,24 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const abort = new AbortController();
     const started = Date.now();
     this.updatePersistence(id, { saveStatus: "saving", attemptedAt: started, error: undefined, diagnosticRef: undefined });
+    let sites: { sitesRead: number; sitesKept: number } | undefined;
     const work = this.operationGate(id).save(async () => {
       const limits = await this.#policy.limits();
       abort.signal.throwIfAborted();
       this.updatePersistence(id, { limitBytes: limits.profileStorageBytes });
       const browser = await this.browser(id);
       await this.#profileWork.save(async () => {
-        const { state, usage, failures } = await browser.save(limits.profileStorageBytes, abort.signal);
-        abort.signal.throwIfAborted();
-        const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
-        await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
-        abort.signal.throwIfAborted();
+        const { state, usage, failures, exported } = await browser.save(limits.profileStorageBytes, abort.signal);
+        try {
+          abort.signal.throwIfAborted();
+          const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
+          const sitesKept = await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
+          abort.signal.throwIfAborted();
+          sites = { sitesRead: exported.length, sitesKept };
+        } catch (error) {
+          browser.retrySave(exported);
+          throw error;
+        }
       }, abort.signal);
     }, abort.signal);
     // Retain the actual operation after a timeout: deletion and later saves must
@@ -557,17 +625,21 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const outcome = (async () => {
       try {
         await within(work, SAVE_TIMEOUT_MS, "Saving browser data", abort.signal);
-        this.updatePersistence(id, { durationMs: Date.now() - started });
+        const durationMs = Date.now() - started;
+        this.updatePersistence(id, { durationMs });
+        this.report({ stream: "operational", name: "browser.save.finished", properties: { outcome: "saved", trigger, durationMs, ...sites } });
         return true;
       } catch (error) {
         abort.abort(error);
+        const durationMs = Date.now() - started;
         const diagnosticRef = this.#store.diagnostic(id, error);
         const failure: Partial<BrowserProfile> = {
-          saveStatus: "failed", durationMs: Date.now() - started, diagnosticRef,
+          saveStatus: "failed", durationMs, diagnosticRef,
           error: error instanceof BrowserStorageError ? error.message : "Browser data could not be saved. The previous saved state is intact.",
         };
         if (error instanceof BrowserStorageError && error.usage) failure.usage = error.usage;
         this.updatePersistence(id, failure);
+        this.report({ stream: "operational", name: "browser.save.finished", properties: { outcome: "failed", trigger, durationMs } });
         return false;
       } finally {
         this.#store.pruneDiagnostics([...this.#saves.keys()]);
@@ -589,12 +661,31 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private profileSaving(profileId: string): boolean {
     return [...this.#saves.keys()].some(id => instance(this.#store.byId(id)).profileId === profileId);
   }
+  /** Ends a live handoff at once and reports how it went, in durations and counts only. */
+  private closeHandoff(value: BrowserHandoff, state: "completed" | "cancelled" | "expired" | "failed", change: Partial<BrowserHandoff> = {}): BrowserHandoff {
+    const closed: BrowserHandoff = { ...value, ...change, state, revision: value.revision + 1 };
+    this.#store.putHandoff(closed);
+    const durationMs = Date.now() - value.createdAt;
+    const report = (inputs?: InputSummary) => this.report({ stream: "operational", name: "browser.handoff.finished", properties: { outcome: state, durationMs, ...inputs } });
+    const live = this.#handoffInputs.get(value.instanceId);
+    if (live?.requestId !== value.requestId) return report(), closed;
+    this.#handoffInputs.delete(value.instanceId);
+    // Inputs admitted before the end still settle, within their 10 s deadline, and count toward it.
+    live.timings.close(report);
+    return closed;
+  }
+  private report(event: TelemetryEvent): void {
+    emitTelemetry(this.env, { installationId: this.#installationId, component: "instances", event });
+  }
   private fenceStop(value: CloudInstance, reason: string, overrideReason = false): void {
     this.#saves.get(value.instanceId)?.abort.abort(new Error(reason));
     for (const item of this.#watches.values()) if (item.instanceId === value.instanceId) item.watch.view.close();
     if (value.state === "stopped" || value.state === "failed") return;
+    if (value.kind === "browser" && value.state === "starting") {
+      this.report({ stream: "operational", name: "browser.start.finished", properties: { outcome: REQUESTED_STOPS.has(reason) ? "stopped" : "failed", durationMs: Date.now() - value.createdAt } });
+    }
     if (value.state !== "stopping" || (overrideReason && value.reason !== reason)) this.#store.update({ ...value, state: "stopping", reason, revision: value.revision + 1 });
-    for (const handoff of this.#store.liveHandoffs(value.instanceId)) this.#store.putHandoff({ ...handoff, state: "cancelled", reason, revision: handoff.revision + 1 });
+    for (const handoff of this.#store.liveHandoffs(value.instanceId)) this.closeHandoff(handoff, "cancelled", { reason });
     for (const operation of this.#operations.get(value.instanceId)?.values() ?? []) operation.abort.abort(new Error(reason));
   }
   async alarm(): Promise<void> {
@@ -604,7 +695,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const rows = this.#store.sql.exec<Pick<InstanceRow, "id">>("SELECT id FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray();
     for (const row of rows) {
       const value = instance(this.#store.byId(row.id));
-      if (value.expiresAt <= started) this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
+      if (value.expiresAt <= started) this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : COMPUTER_EXPIRED);
     }
     const stopping = (row: Pick<InstanceRow, "id">) => instance(this.#store.byId(row.id)).state === "stopping";
     const prioritized = [...rows.filter(stopping), ...rows.filter(row => !stopping(row))];
@@ -625,9 +716,19 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (!profile(saved).activeInstanceId && !this.profileSaving(saved.id)) await this.#profiles.erase(saved);
     }
     await this.#profiles.cleanup();
+    const workspaceExpiry = await this.#workspaces.sweep();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
     this.ctx.waitUntil(this.publishChanges());
-    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) await this.ctx.storage.deleteAlarm();
+    // A starting instance is checked again soon: its readiness must not wait for the next maintenance pass.
+    if (this.#store.activeRows().some(row => instance(row).state === "starting")) {
+      const next = await this.ctx.storage.getAlarm();
+      if (next === null || next > Date.now() + STARTING_POLL_MS) await this.ctx.storage.setAlarm(Date.now() + STARTING_POLL_MS);
+    }
+    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) {
+      // A kept workspace is deleted when its retention ends, even with nothing running.
+      if (workspaceExpiry === null) await this.ctx.storage.deleteAlarm();
+      else await this.ctx.storage.setAlarm(workspaceExpiry);
+    }
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
     this.#retirement.begin(input);
@@ -658,7 +759,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     for (const row of computers) await this.computer(row.id).erase();
     await this.ctx.storage.delete("maintenance_cursor");
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "instance_usage", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
+      for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "workspaces", "instance_usage", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");
     });
     await this.ctx.storage.deleteAlarm();
@@ -671,7 +772,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private expireIfDue(id: string): InstanceRow {
     const row = this.#store.byId(id), value = instance(row);
     if (row.active && value.state !== "stopping" && value.expiresAt <= Date.now()) {
-      this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
+      this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : COMPUTER_EXPIRED);
       return this.#store.byId(id);
     }
     return row;
@@ -681,12 +782,28 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- Workers RPC recursively maps the syscall union beyond TypeScript's instantiation limit.
     return this.env.COMPUTERS.getByName(computerName(this.#installationId, id)) as unknown as ComputerControl;
   }
+  /**
+   * A command or running job keeps its computer up for the idle window, within
+   * its maximum lifetime and the allowance. The computer accepts the new expiry
+   * before it is recorded, so it never stops before the recorded expiry.
+   */
+  private async extendComputer(id: string): Promise<void> {
+    const now = Date.now();
+    if (instance(this.#store.byId(id)).expiresAt + EXTENSION_STEP_MS > now + COMPUTER_IDLE_SECONDS * 1000) return;
+    const limits = await this.#policy.computerLimits();
+    const target = this.#store.extensionTarget(id, limits, now);
+    if (target === null || !await this.computer(id).extend(target)) return;
+    this.#store.extend(id, target, limits);
+  }
   private async maintainComputer(id: string): Promise<void> {
     let value = instance(this.expireIfDue(id));
     const computer = this.computer(id);
     try {
       if (value.state === "stopping") {
-        await computer.stop({ installationId: this.#installationId, instanceId: id });
+        const stopped = await computer.stop({ installationId: this.#installationId, instanceId: id }, value.reason === COMPUTER_EXPIRED);
+        // The reservation is held while the computer saves; usable time already ended at the expiry.
+        if (stopped.state === "stopping") { this.#workspaces.saving(id); return; }
+        this.#workspaces.settle(id, stopped.workspace);
         this.#store.terminal(id, Boolean(value.diagnosticRef));
         return;
       }
@@ -695,24 +812,34 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         this.#retirement.requireLive();
         value = instance(this.expireIfDue(id));
         if (value.state !== "starting") return;
-        await computer.provision({ installationId: this.#installationId, instanceId: id, targetId: value.targetId, ownerUid: value.ownerUid, expiresAt: value.expiresAt });
+        const restore = value.restore && this.#workspaces.address(value.restore.fromInstanceId);
+        if (value.restore && !restore) return this.failRestore(value, "The saved workspace was deleted before it was restored");
+        await computer.provision({ installationId: this.#installationId, instanceId: id, targetId: value.targetId, ownerUid: value.ownerUid, expiresAt: value.expiresAt,
+          workspace: this.#workspaces.address(id), restore });
       }
       const status = await computer.status();
       value = instance(this.expireIfDue(id));
       if (value.state === "stopping") return;
+      if (status.state === "stopped" && status.restoreError) return this.failRestore(value, status.restoreError);
       if (status.state === "stopped") throw new Error("Computer stopped unexpectedly");
       if (status.state === "ready" && value.state === "starting") {
-        this.#store.update({ ...value, state: "ready", readyAt: Date.now(), diagnosticRef: undefined, revision: value.revision + 1 });
+        this.#store.update({ ...value, state: "ready", readyAt: Date.now(), diagnosticRef: undefined, restore: value.restore && { ...value.restore, status: "restored" }, revision: value.revision + 1 });
       } else if (this.#store.byId(id).provider_failed_at !== null) {
         this.#store.update({ ...value, diagnosticRef: undefined, revision: value.revision + 1 });
       }
       this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
+      if (status.busy) await this.extendComputer(id);
     } catch (cause) {
       value = instance(this.expireIfDue(id));
       this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, cause), revision: value.revision + 1 });
       this.#store.sql.exec("UPDATE instances SET provider_failed_at = COALESCE(provider_failed_at, ?) WHERE id = ?", Date.now(), id);
       if (Date.now() - this.#store.byId(id).provider_failed_at! >= PROVIDER_RECOVERY_MS) this.fenceStop(instance(this.#store.byId(id)), "Computer provider failed");
     }
+  }
+  private failRestore(value: CloudInstance, error: string): void {
+    const diagnosticRef = this.#store.diagnostic(value.instanceId, new Error(error));
+    this.#store.update({ ...value, restore: value.restore && { ...value.restore, status: "failed", error: error.slice(0, 500) }, diagnosticRef, revision: value.revision + 1 });
+    this.fenceStop(instance(this.#store.byId(value.instanceId)), "The saved workspace could not be restored");
   }
   private async maintain(id: string): Promise<void> {
     if (instance(this.#store.byId(id)).kind === "linux") return this.maintainComputer(id);
@@ -732,9 +859,13 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         }
         value = instance(this.expireIfDue(id));
         if (value.state === "starting") {
-          await this.browser(id);
+          const browser = await this.browser(id);
           value = instance(this.expireIfDue(id));
-          if (value.state === "starting") this.#store.update({ ...value, state: "ready", readyAt: Date.now(), revision: value.revision + 1 });
+          if (value.state === "starting") {
+            const readyAt = Date.now();
+            this.#store.update({ ...value, state: "ready", readyAt, revision: value.revision + 1 });
+            this.report({ stream: "operational", name: "browser.start.finished", properties: { outcome: "ready", durationMs: readyAt - value.createdAt, ...browser.restored } });
+          }
         }
       }
       row = this.expireIfDue(id); value = instance(row);
@@ -753,14 +884,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
           const current = instance(row);
           this.#store.update({ ...current, diagnosticRef: undefined, revision: current.revision + 1 });
-        }
-        const autosaveAfter = this.#autosaveAfter.get(id) ?? 0;
-        if (!this.#stops.has(id) && !this.#humanInputs.has(id) && !(this.#operations.get(id)?.size) && Date.now() >= autosaveAfter) {
-          await this.save(id);
-          this.#autosaveAfter.delete(id);
-        } else if (autosaveAfter > Date.now()) {
-          const next = await this.ctx.storage.getAlarm();
-          if (next === null || next > autosaveAfter) await this.ctx.storage.setAlarm(autosaveAfter);
         }
       }
       if (value.state === "stopping") await this.cleanup(row);
@@ -790,10 +913,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         const current = instance(this.#store.byId(row.id));
         if (settled && quiet && current.state === "stopping" && current.readyAt !== undefined && current.reason === "Browser lifetime expired") {
           // Shutdown may stop waiting, but deletion must still own the actual save.
-          await this.save(row.id);
+          await this.save(row.id, "expiry");
         }
         await this.#provider.close(row.session_id);
-        // Confirmation happens on the next alarm, before releasing reservations.
+        // A prompt pass confirms the session ended before releasing reservations.
+        await this.ctx.storage.setAlarm(Date.now() + SHUTDOWN_CONFIRM_MS);
         this.#browsers.delete(row.id);
         return;
       }
@@ -801,7 +925,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#browsers.delete(row.id);
     this.#store.terminal(row.id, Boolean(instance(this.#store.byId(row.id)).diagnosticRef));
     this.#operationGates.delete(row.id);
-    this.#autosaveAfter.delete(row.id);
   }
 }
 

@@ -25,7 +25,7 @@ import {
 } from "../internal/messages";
 import { storedHistoryPolicySchema } from "../internal/schemas";
 import {
-  type ArchivedMessageRecord, COMPACTION_SUMMARY_MAX_TOKENS, COMPACTION_SUMMARY_CHUNK_CHARS, CONTEXT_PROVIDER_OVERFLOW_REASON,
+  type ArchivedMessageRecord, COMPACTION_REASONING_HEADROOM_TOKENS, COMPACTION_SUMMARY_MAX_TOKENS, COMPACTION_SUMMARY_CHUNK_CHARS, CONTEXT_PROVIDER_OVERFLOW_REASON,
   CONTEXT_RUNWAY_ALERT_EPOCH_KEY, MAX_KILL_ARCHIVE_ATTEMPTS,
 } from "../internal/lifecycle";
 import type {
@@ -1412,9 +1412,12 @@ export class ProcessHistory {
     const contextWindow = Math.min(...[primary, ...(primary.fallbacks ?? [])].map((config) =>
       config.contextWindowTokens ?? 32_768,
     ));
-    const maxTokens = Math.min(COMPACTION_SUMMARY_MAX_TOKENS, Math.floor(contextWindow / 8));
+    const summaryTokens = Math.min(COMPACTION_SUMMARY_MAX_TOKENS, Math.floor(contextWindow / 8));
+    // Not every provider honours reasoning "off", and reasoning counts against
+    // the same output limit as the handover it precedes.
+    const maxTokens = summaryTokens + Math.min(COMPACTION_REASONING_HEADROOM_TOKENS, Math.floor(contextWindow / 8));
     const promptTokens = estimateContextInputTokens(buildCompactionSummaryContext(
-      "", undefined, "x".repeat(maxTokens * 4),
+      "", undefined, "x".repeat(summaryTokens * 4),
     ));
     const chunkChars = Math.min(COMPACTION_SUMMARY_CHUNK_CHARS, Math.floor((contextWindow - maxTokens - promptTokens) * 2));
     if (chunkChars <= 0) throw new Error("Model context is too small for a compaction handover");

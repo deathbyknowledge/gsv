@@ -1,4 +1,5 @@
 import { t } from "../app/i18n/locale";
+import { publicDeployment } from "../app/services/deployment";
 
 /** Marks a space opened straight from signup; it carries no authority, so setup may still require terms. */
 export const SIGNUP_ARRIVAL_PARAM = "signup";
@@ -7,6 +8,11 @@ export const SIGNUP_ARRIVAL_PARAM = "signup";
 export function presumedSpaceDomain(hostname: string): string | undefined {
   const labels = hostname.split(".");
   return labels.length >= 3 && !hostname.endsWith(".localhost") ? labels.slice(1).join(".") : undefined;
+}
+
+export function signupHomepage(accountsOrigin: string): string | undefined {
+  const domain = publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname);
+  return domain ? `https://${domain}/` : undefined;
 }
 
 export function signupDestination(origin: string, onboardingToken?: string | null, contactInvitation?: string | null): string {

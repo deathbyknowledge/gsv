@@ -35,10 +35,5 @@
       "tag": "v1",
       "new_sqlite_classes": ["MailInstallation"]
     }
-  ],
-  "send_email": [
-    {
-      "name": "EMAIL"
-    }
   ]
 }

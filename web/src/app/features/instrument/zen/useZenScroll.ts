@@ -84,10 +84,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     pinned.current = null;
     if (pin?.element.isConnected) {
       following.current = false;
-      // Rectangles are in zoomed pixels; scrollTop is in the viewport's own.
-      const bounds = element.getBoundingClientRect();
-      const scale = bounds.height / element.offsetHeight || 1;
-      write(element.scrollTop + (pin.element.getBoundingClientRect().top - bounds.top - pin.offset) / scale);
+      write(element.scrollTop + pin.element.getBoundingClientRect().top - element.getBoundingClientRect().top - pin.offset);
     } else if (following.current) write(element.scrollHeight);
     else {
       for (const anchor of anchors.current) {

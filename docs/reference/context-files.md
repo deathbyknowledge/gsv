@@ -36,6 +36,7 @@ Conventional files include:
 ```text
 <agent home>/context.d/00-role.md
 <agent home>/context.d/05-voice.md
+<personal agent home>/context.d/06-speaking-for-the-owner.md
 <personal agent home>/context.d/10-delegation.md
 <human home>/context.d/10-personal.md
 ```

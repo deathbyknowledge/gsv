@@ -93,6 +93,23 @@ export async function sendFrameToKernel(
   return await kernel.recvFrame(processId, frame, approvedTarget);
 }
 
+/** A Process request whose response the Kernel returns on this call, even when a target answers it. */
+export function requestFromKernel<S extends SyscallName>(
+  installationId: string,
+  processId: string,
+  frame: RequestFrame<S>,
+  approvedTarget?: ProcessApprovalTarget,
+): Promise<ResponseFrame<S>>;
+export async function requestFromKernel(
+  installationId: string,
+  processId: string,
+  frame: RequestFrame,
+  approvedTarget?: ProcessApprovalTarget,
+): Promise<ResponseFrame> {
+  const kernel = await getKernelPtr(installationId);
+  return await kernel.requestProcessFrame(processId, frame, approvedTarget);
+}
+
 export async function attachProcessRunStream(
   installationId: string,
   processId: string,

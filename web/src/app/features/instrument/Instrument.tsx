@@ -60,18 +60,6 @@ function distanceForPath(path: string): Distance {
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
 }
 
-const SCALE_KEY = "gsv.instrument.scale";
-const SCALES = [0.75, 0.85, 1, 1.5, 2] as const;
-type Scale = (typeof SCALES)[number];
-
-function storedScale(): Scale {
-  try {
-    const value = Number(window.localStorage.getItem(SCALE_KEY));
-    return SCALES.find((scale) => scale === value) ?? 1;
-  } catch {
-    return 1;
-  }
-}
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
   const [handsfreeDirty, setHandsfreeDirty] = useState(false);
@@ -119,10 +107,9 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [peopleDirty, setPeopleDirty] = useState(false);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
-  const { theme, toggleTheme } = useColorTheme("light");
+  const { theme, toggleTheme } = useColorTheme();
   /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
   useTabAttention();
-  const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
@@ -132,17 +119,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<HTMLElement>(null);
   const navigationButtonRef = useRef<HTMLButtonElement>(null);
-  const cycleScale = useCallback(() => {
-    setScale((current) => {
-      const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
-      try {
-        window.localStorage.setItem(SCALE_KEY, String(next));
-      } catch {
-        // storage blocked: the choice lasts for this page only
-      }
-      return next;
-    });
-  }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
   const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
@@ -280,10 +256,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         event.preventDefault();
         toggleTheme();
       }
-      if (event.key === "x") {
-        event.preventDefault();
-        cycleScale();
-      }
       if (event.key === "?") {
         event.preventDefault();
         setNavigationOpen(false);
@@ -292,14 +264,14 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, move, openSearch, status.state, toggleTheme]);
+  }, [move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 0.75 ? " is-scale-075" : scale === 0.85 ? " is-scale-085" : scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
       <div class="instrument-viewport">
-      <div class="instrument-scaled">
+      <div class="instrument-content">
       <HandsfreeStatus />
       <InstrumentHeader distance={distance} feedbackRequest={feedbackRequest} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();

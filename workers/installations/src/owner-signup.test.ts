@@ -26,14 +26,39 @@ describe("browser signup assets", () => {
     expect((await handleOwnerSignupRequest(new Request(`${origin}/owner/signup/missing`), config, true))?.status).toBe(404);
   });
 
-  it("exposes only the redirect on the alias and leaves other owner routes with their existing handler", async () => {
-    const response = await handleOwnerSignupRequest(new Request(alias), config, true);
-    expect(response?.headers.get("location")).toBe(`${origin}/owner/signup/`);
-    for (const path of ["/admin", "/owner/api/session", "/owner/signup/"]) {
+  it("serves signup and its assets on the dedicated hostname without redirecting", async () => {
+    const response = await handleOwnerSignupRequest(new Request(`${alias}/?resume=1`), config, true);
+    expect(response?.status).toBe(200);
+    expect(response?.headers.has("location")).toBe(false);
+    const html = await response!.text();
+    expect(html).toContain('id="gsv-deployment"');
+    const script = html.match(/src="(\/owner\/signup\/assets\/[^"]+\.js)"/)?.[1];
+    expect(script).toBeTruthy();
+    expect((await handleOwnerSignupRequest(new Request(alias + script), config, true))?.status).toBe(200);
+    expect((await handleOwnerSignupRequest(new Request(`${alias}/owner/signup/fonts/DepartureMono-Regular.woff2`), config, true))?.status).toBe(200);
+    expect((await handleOwnerSignupRequest(new Request(alias, { method: "HEAD" }), config, true))?.status).toBe(200);
+    expect((await handleOwnerSignupRequest(new Request(alias), config, false))?.status).toBe(503);
+    expect((await handleOwnerSignupRequest(new Request(alias, { method: "POST" }), config, true))?.status).toBe(404);
+    for (const path of ["/admin", "/owner/login", "/owner/recover", "/other"]) {
       expect((await handleOwnerSignupRequest(new Request(alias + path), config, true))?.status).toBe(404);
     }
+    expect(await handleOwnerSignupRequest(new Request(`${alias}/owner/api/session`), config, true)).toBeNull();
     expect(await handleOwnerSignupRequest(new Request(`${origin}/owner/api/session`), config, true)).toBeNull();
     expect(() => parseHandle("signup")).toThrow("reserved");
+  });
+
+  it("keeps old signup paths on the dedicated host at its root and preserves query parameters", async () => {
+    for (const path of ["/owner/signup", "/owner/signup/"]) {
+      const response = await handleOwnerSignupRequest(new Request(`${alias}${path}?resume=1&ref=friend`), config, true);
+      expect(response?.headers.get("location")).toBe("/?resume=1&ref=friend");
+    }
+  });
+
+  it("redirects explicitly configured legacy signup links to the new hostname", async () => {
+    const legacy = { ...config, GSV_OWNER_SIGNUP_ORIGIN_ALIASES: '["https://signup.legacy.example"]' };
+    const response = await handleOwnerSignupRequest(new Request("https://signup.legacy.example/?resume=1&ref=friend"), legacy, true);
+    expect(response?.headers.get("location")).toBe(`${alias}/?resume=1&ref=friend`);
+    expect((await handleOwnerSignupRequest(new Request("https://signup.legacy.example/owner/api/session"), legacy, true))?.status).toBe(404);
   });
 
   it("requires configured signup, the canonical origin and a read request", async () => {

@@ -762,7 +762,6 @@ describe("managed WhatsApp clean-instance flow", () => {
       name: "gsv_message", language: { code: "en" },
       components: [
         { type: "body", parameters: [{ type: "text", text: "outside window marker quick note" }] },
-        { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: "gsvt:show" }] },
       ],
     });
     expect((await SELF.fetch(await text("wamid.in.8", "back again"))).status).toBe(200);
@@ -773,7 +772,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(await heldKeys(stub)).toEqual([]);
   });
 
-  it("delivers each closed-window message or preview and forwards button replies once to Ship", async () => {
+  it("delivers each closed-window message or preview and forwards an earlier template's button tap once to Ship", async () => {
     const { stub, peer, route } = await linkedPeer("closed");
     const templatesBefore = (await templateMessages()).length;
     const surface = { kind: "dm" as const, id: ACTOR };
