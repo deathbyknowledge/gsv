@@ -73,6 +73,7 @@ import {
   KEEP_LINK_CHOICE,
   MOVE_LINK_CHOICE,
   answersLinkMove,
+  messengerSignupUrl,
   pairingLinkCode,
   pairingLinkText,
   shipHost,
@@ -134,6 +135,7 @@ export interface ManagedWhatsAppPeerEnv extends ManagedWhatsAppPairingEnv, Manag
   WHATSAPP_ACCESS_TOKEN?: string;
   WHATSAPP_PHONE_NUMBER_ID?: string;
   WHATSAPP_API?: Fetcher;
+  GSV_SIGNUP_URL?: string;
 }
 
 type InboundPayload =
@@ -932,7 +934,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return true;
     });
     if (!hint) return { terminal: true };
-    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, LINK_TEXT.unlinked, { kind: "platform", routeGeneration });
+    const text = LINK_TEXT.unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "whatsapp"));
+    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, text, { kind: "platform", routeGeneration });
   }
 
   /**

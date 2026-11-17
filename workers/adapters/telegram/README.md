@@ -56,6 +56,9 @@ The platform operator configures these Worker secrets and variables:
 - `TELEGRAM_BOT_USERNAME` — the public bot username shown in GSV
 - `TELEGRAM_WEBHOOK_BASE_URL` — the adapter Worker’s public origin
 - `TELEGRAM_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
+- `GSV_SIGNUP_URL` — optional HTTPS signup page offered to a sender with no
+  link, tagged with `utm_source=telegram`; unset, the reply only says how to
+  connect an existing Ship
 
 The Worker accepts only `POST /webhook`. It verifies the secret header
 before reading a bounded request body and rejects group, channel, and bot
@@ -73,7 +76,8 @@ Durable Objects, and both Gateway service bindings are healthy.
    Ship conversation.
 
 A sender with no link gets a reminder to connect from Settings, at most every ten
-minutes. A sender linked to another space is asked to **Move it** or **Keep it**
+minutes, and the signup page when `GSV_SIGNUP_URL` is set; a Ship created from it
+opens its Telegram link first. A sender linked to another space is asked to **Move it** or **Keep it**
 before the code is redeemed. Making a link never suspends an existing link.
 Connecting activates a new route with a fresh generation, and cleanup of the
 previous installation is retried until it is complete. A queued inbound message

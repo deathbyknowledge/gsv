@@ -65,6 +65,7 @@ import {
   KEEP_LINK_CHOICE,
   MOVE_LINK_CHOICE,
   answersLinkMove,
+  messengerSignupUrl,
   pairingLinkCode,
   pairingLinkText,
   shipHost,
@@ -106,6 +107,8 @@ export interface ManagedTelegramPeerEnv extends ManagedTelegramPairingEnv {
   ACCOUNTS: InstallationDirectoryService;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_API?: Fetcher;
+  /** Where someone without a Ship creates one; unlinked senders are pointed there. */
+  GSV_SIGNUP_URL?: string;
 }
 
 type InboundPayload =
@@ -620,7 +623,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return true;
     });
     if (!hint) return { terminal: true };
-    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, LINK_TEXT.unlinked);
+    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, LINK_TEXT.unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "telegram")));
   }
 
   /**

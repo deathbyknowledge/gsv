@@ -153,6 +153,9 @@ The platform operator configures these Worker secrets and variables:
   window; defaults to `gsv_message`, and an empty value switches templates off
 - `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
 - `WHATSAPP_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
+- `GSV_SIGNUP_URL` — optional HTTPS signup page offered to a number with no
+  link, tagged with `utm_source=whatsapp`; unset, the reply only says how to
+  connect an existing Ship
 
 The template values are declared with their defaults in
 `wrangler.managed.jsonc`; the operator stack overrides them only when the
@@ -174,7 +177,8 @@ numbers on the same account are acknowledged and ignored.
    conversation.
 
 A number with no link gets a reminder to connect from Settings, at most every
-ten minutes. A number linked to another space is asked to **Move it** or
+ten minutes, and the signup page when `GSV_SIGNUP_URL` is set; a Ship created
+from it opens its WhatsApp link first. A number linked to another space is asked to **Move it** or
 **Keep it** before the code is redeemed. Making a link never suspends an
 existing link. Connecting activates a new route with a fresh generation, and
 cleanup of the previous installation is retried until it is complete. A queued
