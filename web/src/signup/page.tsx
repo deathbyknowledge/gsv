@@ -5,7 +5,7 @@ import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage, signupMessenger } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
@@ -57,7 +57,9 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     }
   };
   const connect = async (origin: string, onboardingToken?: string | null) => {
-    const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
+    // Someone a messenger sent here finds its connection open on their new Ship.
+    const messenger = signupMessenger(client?.state.attribution?.utmSource);
+    const destination = onboardingToken ? signupDestination(origin, onboardingToken, { contact: contactInvitation, messenger })
       : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
     await leave(destination);
   };

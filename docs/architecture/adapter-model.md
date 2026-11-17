@@ -581,7 +581,10 @@ pairing operation without a separate UI confirmation protocol or model tool.
 
 Without a link, addressed messages may request pairing, or, for `pairingLinks`
 adapters, get a reminder to connect from Settings at most every ten minutes; they
-do not enter a Process. The first message that requested the code is not replayed as agent
+do not enter a Process. When the operator sets the adapter's `GSV_SIGNUP_URL`,
+the reminder first offers that signup page, tagged with `utm_source` set to the
+adapter. Signup carries the tag to the new Ship's setup link as `messenger`, and
+its first-run screen opens that messenger's link flow once. The first message that requested the code is not replayed as agent
 input. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
 
