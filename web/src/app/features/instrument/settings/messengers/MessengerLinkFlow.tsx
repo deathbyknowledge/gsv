@@ -1,23 +1,17 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
 import { Alert } from "../../../../components/ui/Alert";
 import { Button } from "../../../../components/ui/Button";
 import { ListRow } from "../../../../components/ui/ListRow";
 import type { ConnectFlowDef } from "../../../../components/connect-flow/connectFlowTypes";
 import type { ConsoleIdentityLink } from "../../../../domain/system/consoleModels";
-import type { ConsoleAdapterPairingLink } from "../../../../services/system/consoleService";
 import { useT, type Translate } from "../../../../i18n/locale";
 import type { ManagedMessengerId, ManagedTelegramDependencies } from "./ManagedTelegramOnboardingFlow";
 import { LinkQrCode } from "./LinkQrCode";
 import { MESSENGER_CAPABILITIES } from "./messengerDocs";
+import { useMessengerLink } from "./useMessengerLink";
 import { whatsAppAccountLabel, whatsAppNumberFromChatUrl, whatsAppReachForDevice, whatsAppReachNotice } from "./whatsapp";
 
-/** How often the page looks for the new connection while it waits, in case it misses the live notice. */
-const LINK_POLL_MS = 5_000;
-
 type PairingInfo = ReturnType<ManagedTelegramDependencies["useConsoleAdapterPairingInfo"]>;
-/** A minted link and when it stops working by this device's clock. */
-type HeldLink = ConsoleAdapterPairingLink & { localExpiresAt: number };
 
 export type MessengerLinkFlowProps = {
   adapterId: ManagedMessengerId;
@@ -66,69 +60,13 @@ export function MessengerLinkFlow({
   const t = useT();
   const create = dependencies.useCreateConsoleAdapterPairingLink();
   const disconnect = dependencies.useDisconnectConsoleAdapterPairing();
-  const [link, setLink] = useState<HeldLink | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [formError, setFormError] = useState("");
   const isWhatsApp = adapterId === "whatsapp";
   const loud = platform.toUpperCase();
   const configured = info.data?.configured === true;
-  const expired = link !== null && now >= link.localExpiresAt;
-  const connected = link
-    ? links?.find((entry) => entry.adapter === adapterId && entry.linkedAt !== undefined && entry.linkedAt >= link.createdAt) ?? null
-    : null;
-  const waiting = link !== null && !expired && connected === null;
+  const { link, connected, waiting, expired, error: formError, mint, disconnectWrongAccount } = useMessengerLink({
+    adapterId, ready: !disabled && configured, links, onRefreshLinks, create, disconnect,
+  });
   const unreachable = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
-
-  const mint = async () => {
-    if (create.isPending) return;
-    setFormError("");
-    try {
-      const next = await create.mutateAsync(adapterId);
-      const received = Date.now();
-      setNow(received);
-      setLink({ ...next, localExpiresAt: received + (next.expiresAt - next.createdAt) });
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  // Opening the flow is the choice to connect, so the link is ready before the person reaches for it.
-  const requested = useRef(false);
-  useEffect(() => {
-    if (requested.current || disabled || !configured) return;
-    requested.current = true;
-    void mint();
-  }, [disabled, configured]);
-
-  useEffect(() => {
-    if (!waiting || !link) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, link.localExpiresAt - Date.now()) + 50);
-    return () => clearTimeout(timer);
-  }, [waiting, link]);
-
-  const refresh = useRef(onRefreshLinks);
-  refresh.current = onRefreshLinks;
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = setInterval(() => {
-      // A hidden tab hears the live notice when it returns, so it does not need to ask.
-      if (document.visibilityState !== "hidden") refresh.current?.();
-    }, LINK_POLL_MS);
-    return () => clearInterval(timer);
-  }, [waiting]);
-
-  const disconnectWrongAccount = async () => {
-    if (!connected || disconnect.isPending) return;
-    setFormError("");
-    try {
-      await disconnect.mutateAsync({ adapter: connected.adapter, accountId: connected.accountId, actorId: connected.actorId });
-      setLink(null);
-      refresh.current?.();
-      await mint();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : String(error));
-    }
-  };
 
   const destination = isWhatsApp
     ? whatsAppNumberFromChatUrl(link?.url ?? info.data?.installUrl) || t("settings.pairing.shipNumber")

@@ -1626,9 +1626,9 @@ export const en = {
   "onboarding.surface.skip": "Skip for now, chat with Ship here",
   "onboarding.surface.chatOn": "Chat on {name}",
   "onboarding.surface.sendStep": "Send Ship a message on {platform}",
-  "onboarding.surface.codeStep": "Paste the code Ship replies with",
+  "onboarding.surface.helloStep": "Ship says hello on {platform}",
   "onboarding.surface.trouble": "Trouble connecting?",
-  "onboarding.surface.troubleText": "No code, or it expired? Send /link to {contact} on {platform} for a new one.",
+  "onboarding.surface.notYou": "Not you?",
 
   // Shell: feedback
   "shell.feedback.trigger": "feedback",

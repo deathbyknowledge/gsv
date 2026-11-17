@@ -95,14 +95,14 @@ describe("first-run screen", () => {
     expect(pairings()).toEqual([]);
   });
 
-  it("shows a linked messenger as connected, and its pairing refreshes the links and finishes", async () => {
+  it("shows a linked messenger as connected, and its pairing sees the links, refreshes them, and finishes", async () => {
     links = [whatsAppLink];
     await mount();
     await vi.waitFor(() => expect(collectNodes(header("WhatsApp")!.props.children).find((node) => node.type === Tag)?.props.label).toBe("Connected"));
     await click(header("WhatsApp"));
-    expect(pairings()[0]?.props.linked).toBe(true);
+    expect(pairings()[0]?.props).toMatchObject({ linked: true, links: [whatsAppLink] });
     request.mockClear();
-    await act(async () => { pairings()[0]!.props.onPaired!(); });
+    await act(async () => { pairings()[0]!.props.onRefreshLinks!(); });
     expect(request).toHaveBeenCalledWith("sys.link.list", {});
     await act(async () => { pairings()[0]!.props.onFinish!(); });
     expect(onComplete).toHaveBeenCalledOnce();

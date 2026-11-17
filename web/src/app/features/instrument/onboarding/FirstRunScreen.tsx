@@ -81,8 +81,8 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
               </span>
             </Surface>
             {expanded && <Surface id={`first-run-${id}`} level={2}>
-              <FirstRunPairing adapter={id} name={name} linked={linked} disabled={busy}
-                onPaired={() => { void connections.refetch(); }} onFinish={finish} />
+              <FirstRunPairing adapter={id} name={name} linked={linked} disabled={busy} links={connections.data?.links}
+                onRefreshLinks={() => { void connections.refetch(); }} onFinish={finish} />
             </Surface>}
           </section>;
         })}

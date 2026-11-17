@@ -1627,9 +1627,9 @@ export const es = {
   "onboarding.surface.skip": "Saltar por ahora y chatear con Ship aquí",
   "onboarding.surface.chatOn": "Chatear por {name}",
   "onboarding.surface.sendStep": "Envía un mensaje a Ship en {platform}",
-  "onboarding.surface.codeStep": "Pega el código que te responde Ship",
+  "onboarding.surface.helloStep": "Ship te saluda en {platform}",
   "onboarding.surface.trouble": "¿Problemas para conectar?",
-  "onboarding.surface.troubleText": "¿No te llega el código o ha caducado? Envía /link a {contact} en {platform} para recibir uno nuevo.",
+  "onboarding.surface.notYou": "¿No eres tú?",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentarios",

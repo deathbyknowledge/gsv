@@ -31,18 +31,13 @@
 /* the pairing reuses the connect flow's numbered rail; titles read as prose, controls keep their own width */
 .first-run-pairing .gsv-cf-rail-body { gap: 14px; align-items: flex-start; }
 .first-run-pairing .gsv-cf-rail-step:not(:last-child) > .gsv-cf-rail-body { padding-bottom: 28px; }
-.first-run-pairing .gsv-alert, .first-run-code { align-self: stretch; }
+.first-run-pairing .gsv-alert { align-self: stretch; }
 div.first-run-pairing { display: flex; flex-direction: column; gap: 20px; }
 .first-run-step-title { margin: 4px 0 0; color: var(--text-hi); }
-.first-run-code { display: flex; align-items: flex-start; gap: 12px; }
-.first-run-code > .gsv-ti { flex: 1; max-width: 360px; }
-/* the whole field box takes the tap, not just the text line */
-.first-run-code .gsv-ti-wrap { padding-block: 0; }
-.first-run-code .gsv-ti-input { min-height: 44px; }
+.first-run-who { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
 .first-run-trouble > summary { padding-block: 12px; }
 .first-run-trouble-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
 .first-run-trouble-line > p { margin: 0; }
-.first-run-contact { color: var(--text); user-select: all; }
 .first-run .gsv-btn { min-height: 44px; }
 .first-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .first-run-continue { display: flex; flex-direction: column; align-items: center; gap: 1rem; margin-top: 2.5rem; text-align: center; }
@@ -78,6 +73,9 @@ div.first-run-pairing { display: flex; flex-direction: column; gap: 20px; }
   .first-run-card-head { grid-template-columns: auto minmax(0, 1fr); }
   .first-run-card-state { grid-column: 3; grid-row: 1; }
   .first-run-card-action { grid-column: 1 / -1; grid-row: 3; margin-top: 12px; }
-  .first-run-pairing .gsv-cf-rail-body, .first-run-code { align-items: stretch; flex-direction: column; }
-  .first-run-code > .gsv-ti { max-width: none; }
+  .first-run-pairing .gsv-cf-rail-body { align-items: stretch; flex-direction: column; }
+}
+/* the link's QR code is for a computer's screen; a phone opens the link itself */
+@media (max-width: 520px), (pointer: coarse) {
+  .first-run-pairing .gsv-cf-scan { display: none; }
 }

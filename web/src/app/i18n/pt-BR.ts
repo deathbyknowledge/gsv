@@ -1632,9 +1632,9 @@ export const ptBR = {
   "onboarding.surface.skip": "Pular por enquanto e conversar com o Ship aqui",
   "onboarding.surface.chatOn": "Conversar pelo {name}",
   "onboarding.surface.sendStep": "Envie uma mensagem para o Ship no {platform}",
-  "onboarding.surface.codeStep": "Cole o código que o Ship responder",
+  "onboarding.surface.helloStep": "O Ship diz oi no {platform}",
   "onboarding.surface.trouble": "Problemas para conectar?",
-  "onboarding.surface.troubleText": "Não recebeu o código ou ele expirou? Envie /link para {contact} no {platform} para receber um novo.",
+  "onboarding.surface.notYou": "Não é você?",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentários",
