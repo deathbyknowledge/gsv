@@ -13,6 +13,11 @@ export interface SurfaceProps {
   /** Element to render. Use "button" for clickable cards. */
   as?: "div" | "button";
   onClick?: () => void;
+  /** A button surface that opens a panel: whether it is open, and the panel's id. */
+  "aria-expanded"?: boolean;
+  "aria-controls"?: string;
+  disabled?: boolean;
+  id?: string;
   /** Extra classes appended to the surface. */
   class?: string;
   /** Extra data-* attributes spread onto the root (e.g. focus markers). */
@@ -30,6 +35,10 @@ export function Surface({
   // SAFETY: Component boundary provides the asserted DOM/test shape.
   as = "div",
   onClick,
+  "aria-expanded": expanded,
+  "aria-controls": controls,
+  disabled,
+  id,
   class: extraClass,
   dataAttrs,
   children,
@@ -47,13 +56,13 @@ export function Surface({
 
   if (as === "button") {
     return (
-      <button {...dataAttrs} type="button" class={cls} onClick={onClick}>
+      <button {...dataAttrs} id={id} type="button" class={cls} disabled={disabled} aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
         {children}
       </button>
     );
   }
   return (
-    <div {...dataAttrs} class={cls} onClick={onClick}>
+    <div {...dataAttrs} id={id} class={cls} onClick={onClick}>
       {children}
     </div>
   );

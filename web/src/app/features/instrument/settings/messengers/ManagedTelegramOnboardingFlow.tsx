@@ -117,6 +117,13 @@ export function whatsAppReachForDevice(codes: readonly string[], languages: read
 
 const WHATSAPP_CALLING_CODE_FLAGS = new Map([["55", "🇧🇷"], ["62", "🇮🇩"]]);
 
+/** The folded note's summary: the flags of the unreachable countries, then whom it concerns. */
+export function whatsAppReachSummary(unreachable: readonly string[], t: Translate): string {
+  return `${unreachable.map((callingCode) => WHATSAPP_CALLING_CODE_FLAGS.get(callingCode)).join(" ")} ${t(unreachable.length > 1
+    ? "settings.pairing.whatsappReach.both"
+    : unreachable[0] === "55" ? "settings.pairing.whatsappReach.brazil" : "settings.pairing.whatsappReach.indonesia")}`;
+}
+
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
 export function whatsAppCountryList(codes: readonly string[], t: Translate): string {
   const sorted = [...codes].sort();
@@ -129,7 +136,7 @@ export function whatsAppCountryList(codes: readonly string[], t: Translate): str
 }
 
 /** The operator's WhatsApp number travels as a wa.me chat link; show it as a number. */
-function whatsAppNumberFromChatUrl(value: string | undefined): string {
+export function whatsAppNumberFromChatUrl(value: string | undefined): string {
   if (!value) return "";
   try {
     const url = new URL(value);
@@ -269,11 +276,7 @@ function ManagedMessengerOnboardingFlow({
                   ) : null}
                   {info.data?.configured && unreachable.length ? (
                     <details class="gsv-cf-aside gsv-prose">
-                      <summary>
-                        {`${unreachable.map((callingCode) => WHATSAPP_CALLING_CODE_FLAGS.get(callingCode)).join(" ")} ${t(unreachable.length > 1
-                          ? "settings.pairing.whatsappReach.both"
-                          : unreachable[0] === "55" ? "settings.pairing.whatsappReach.brazil" : "settings.pairing.whatsappReach.indonesia")}`}
-                      </summary>
+                      <summary>{whatsAppReachSummary(unreachable, t)}</summary>
                       <p>{t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}</p>
                     </details>
                   ) : null}
