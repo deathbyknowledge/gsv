@@ -155,8 +155,9 @@ Platform. You message that number from your own WhatsApp account.
 2. Send that message. It replies with instructions and a separate code-only
    message you can copy. The code expires in 10 minutes.
 3. Enter the code in the **WhatsApp code** field and choose **Connect**. Ship
-   shows the WhatsApp profile name and the masked number that requested it.
-4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
+   shows the WhatsApp profile name and the masked number that requested it, or
+   your WhatsApp username if you keep your number private.
+4. Confirm only if that is your WhatsApp account. The code alone cannot choose a
    Ship or user; your signed-in session supplies both.
 5. Send another message. It reaches the same Ship conversation you use in Ship.
 

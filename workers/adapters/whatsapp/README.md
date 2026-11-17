@@ -9,8 +9,12 @@ identity from a direct signed-in GSV session. The access token and app secret
 stay on the adapter Worker; individual spaces never accept or store them.
 
 The Worker is `src/managed.ts` with `wrangler.managed.jsonc`. It keeps one
-peer Durable Object per WhatsApp number that writes to the platform number and
-a separate short-lived pairing object per code. Use separate Meta apps and
+peer Durable Object per person who writes to the platform number, named by
+Meta's business-scoped user ID, and a separate short-lived pairing object per
+code. Meta sends the user ID with every message, and instead of the number when
+a person with a WhatsApp username keeps their number private. People paired by
+number before Meta sent user IDs keep their number's peer; the user ID's peer
+forwards to it. Use separate Meta apps and
 phone numbers when staging and production run concurrently, so each stage has
 its own webhook configuration and credentials.
 
@@ -33,8 +37,9 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   correlated to the prompt through the adapter-owned token.
 - A tapped choice, a reply button or list row whose id starts with `gsvc:`,
   is relayed as an ordinary message carrying the reply's title.
-- Reactions, contact cards, other list replies, and other message types
-  receive a short reply explaining they are not relayed.
+- Contact cards, other list replies, and other message types receive a short
+  reply explaining they are not relayed. Reactions and Meta's system notices
+  about a changed number or user ID are ignored without a reply.
 - Each accepted message is marked read.
 
 ## Outbound
@@ -163,7 +168,7 @@ numbers on the same account are acknowledged and ignored.
    code when the number is already connected somewhere.
 2. Copy the code-only message that follows the instructions. It expires in 10 minutes.
 3. Open **GSV → Settings → Messengers → WhatsApp**, enter the code, inspect the
-   name and masked number, and explicitly confirm it.
+   name and the masked number or username, and explicitly confirm it.
 4. Send another WhatsApp message. It enters the space's canonical Ship
    conversation.
 

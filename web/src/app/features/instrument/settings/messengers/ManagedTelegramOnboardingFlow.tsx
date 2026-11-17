@@ -135,6 +135,19 @@ export function whatsAppCountryList(codes: readonly string[], t: Translate): str
     .join(", ");
 }
 
+/**
+ * How the confirm step names a WhatsApp account: by its masked number, or by its username when
+ * the person keeps their number private and WhatsApp identifies them only by a user ID.
+ */
+function whatsAppAccountLabel(candidate: ConsoleAdapterPairingCandidate, t: Translate): string {
+  const handle = candidate.actorHandle;
+  if (handle?.startsWith("@")) return t("settings.pairing.whatsappUsername", { id: handle });
+  if (handle) return t("settings.pairing.whatsappNumber", { id: handle });
+  return /^[0-9]+$/.test(candidate.actorId)
+    ? t("settings.pairing.whatsappNumber", { id: candidate.actorId })
+    : t("settings.pairing.whatsappIdentity");
+}
+
 /** The operator's WhatsApp number travels as a wa.me chat link; show it as a number. */
 export function whatsAppNumberFromChatUrl(value: string | undefined): string {
   if (!value) return "";
@@ -178,16 +191,15 @@ function ManagedMessengerOnboardingFlow({
   const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
+  const whatsAppAccount = candidate ? whatsAppAccountLabel(candidate, t) : t("settings.pairing.whatsappIdentity");
   const displayIdentity = isWhatsApp
-    ? candidate?.actorName
-      || candidate?.actorHandle
-      || (candidate ? t("settings.pairing.whatsappNumber", { id: candidate.actorId }) : t("settings.pairing.whatsappIdentity"))
+    ? candidate?.actorName || candidate?.actorHandle || whatsAppAccount
     : candidate?.actorHandle
       || candidate?.actorName
       || (candidate ? t("settings.messengers.user", { platform, id: candidate.actorId }) : t("settings.pairing.identity", { platform }));
   const identityDetail = candidate
     ? isWhatsApp
-      ? t("settings.pairing.whatsappNumber", { id: candidate.actorHandle ?? candidate.actorId })
+      ? whatsAppAccount
       : `${t("settings.pairing.platformId", { platform, id: candidate.actorId })}${isDiscord ? ` · ${candidate.accountId}` : ""}`
     : t("settings.pairing.noIdentity");
   const firstStepText = installsApp

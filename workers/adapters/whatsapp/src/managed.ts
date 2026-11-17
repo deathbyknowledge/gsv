@@ -41,6 +41,7 @@ import {
 } from "./managed-config";
 import { handleManagedWhatsAppRequest } from "./managed-http";
 import { MANAGED_WHATSAPP_ACCOUNT_ID } from "./managed-peer-state";
+import { isWhatsAppAddress } from "./whatsapp-address";
 
 export { ManagedWhatsAppPairing } from "./managed-pairing";
 export { ManagedWhatsAppPeer } from "./managed-peer";
@@ -261,7 +262,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
   }
 
   private peer(surfaceId: string): ManagedWhatsAppPeerStub {
-    if (!/^[1-9][0-9]{4,14}$/.test(surfaceId)) {
+    if (!isWhatsAppAddress(surfaceId)) {
       throw new Error("Managed WhatsApp surface ID is invalid");
     }
     const id = this.env.MANAGED_WHATSAPP_PEER.idFromName(`managed:${surfaceId}`);

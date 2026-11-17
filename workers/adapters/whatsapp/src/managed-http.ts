@@ -4,6 +4,7 @@ import {
   validManagedWhatsAppVerifyToken,
   type ManagedWhatsAppConfigEnv,
 } from "./managed-config";
+import { isWhatsAppAddress } from "./whatsapp-address";
 import {
   answerWhatsAppVerification,
   normalizeWhatsAppWebhook,
@@ -88,8 +89,8 @@ export async function handleManagedWhatsAppRequest(
   const allowlist = allowedActorIds(env.WHATSAPP_ALLOWED_ACTOR_IDS);
   let rejected = 0;
   for (const event of normalized.events) {
-    const { actorId, surfaceId } = whatsAppEventActor(event);
-    if (allowlist && !allowlist.has(actorId)) continue;
+    const { actorId, surfaceId, phoneNumber } = whatsAppEventActor(event);
+    if (allowlist && !allowlist.has(actorId) && !(phoneNumber && allowlist.has(phoneNumber))) continue;
     const id = env.MANAGED_WHATSAPP_PEER.idFromName(`managed:${surfaceId}`);
     // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.
     const peer = env.MANAGED_WHATSAPP_PEER.get(id) as ManagedWhatsAppPeerStub;
@@ -115,7 +116,7 @@ export async function handleManagedWhatsAppRequest(
 function allowedActorIds(value: string | undefined): Set<string> | null {
   if (!value?.trim()) return null;
   const ids = value.split(",").map((id) => id.trim()).filter(Boolean);
-  if (ids.some((id) => !/^[1-9][0-9]{4,14}$/.test(id))) {
+  if (ids.some((id) => !isWhatsAppAddress(id))) {
     throw new Error("Managed WhatsApp actor allowlist is invalid");
   }
   return new Set(ids);

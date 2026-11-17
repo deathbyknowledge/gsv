@@ -213,4 +213,24 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     await click("VIEW WHATSAPP");
     expect(mocks.onConnected).toHaveBeenCalledWith("whatsapp:managed");
   });
+
+  it("names a username sender by username when WhatsApp keeps their number private", async () => {
+    mocks.inspect.mockResolvedValue({
+      adapter: "whatsapp",
+      accountId: "managed",
+      actorId: "US.13491208655302741918",
+      surfaceId: "US.13491208655302741918",
+      actorName: "Sheena Nelson",
+      actorHandle: "@realsheenanelson",
+      expiresAt: Date.now() + 60_000,
+      linked: false,
+    });
+    await act(() => {
+      nodeWithLabel(nodes(), "WHATSAPP CODE").props.onChange?.("abcd-efgh-jklm");
+    });
+    await click("CONNECT");
+    expect(nodeWithLabel(nodes(), "Sheena Nelson").props.sub).toBe("WhatsApp username @realsheenanelson");
+    expect(collectText(nodes())).not.toContain("WhatsApp number");
+    expect(collectText(nodes())).not.toContain("US.13491208655302741918");
+  });
 });

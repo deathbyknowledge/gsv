@@ -149,8 +149,14 @@ one peer Durable Object from the authenticated private Telegram identity. Slack
 admits the signed event through its installed workspace record, then derives a
 peer from that workspace and human author. Discord uses a shared application
 connection plus a separate peer for the author's direct-message or server route.
-WhatsApp derives one peer from the sender's number after verifying Meta's
-webhook signature for the operator's WhatsApp Business number.
+WhatsApp verifies Meta's webhook signature for the operator's WhatsApp Business
+number, then derives one peer from the sender's business-scoped user ID, which
+Meta sends with every message and sends instead of the number when a person with
+a WhatsApp username keeps their number private. A person the adapter knew by
+number before Meta sent user IDs keeps that number's peer: the first message
+carrying both records the user ID as an alias for it, so later messages reach the
+same route even when Meta withholds the number. Replies address a user ID as
+Meta's `recipient` and a number as `to`.
 Each peer owns an exclusive route containing the installation, local uid, and a
 fresh generation. Inbound records and queued replies retain that generation and
 recheck it immediately before crossing the Gateway or provider boundary, so

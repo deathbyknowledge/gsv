@@ -3,20 +3,23 @@ import {
   type WhatsAppInboundMediaSource,
 } from "./whatsapp-inbound-media";
 import { maskWhatsAppNumber } from "./managed-config";
+import { isWhatsAppPhoneNumber, isWhatsAppUserId } from "./whatsapp-address";
 import { WHATSAPP_CHOICE_REPLY_PREFIX } from "./whatsapp-choices";
 import { WHATSAPP_TEMPLATE_REPLY_PAYLOAD } from "./whatsapp-template";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
 const MAX_DISPLAY_NAME_LENGTH = 160;
-const WA_ID_PATTERN = /^[1-9][0-9]{4,14}$/;
+const MAX_USERNAME_LENGTH = 64;
 const WAMID_PATTERN = /^[A-Za-z0-9+/=._-]{1,180}$/;
 const SIGNATURE_PATTERN = /^sha256=[0-9a-f]{64}$/;
 const APPROVAL_REPLY_PREFIX = "gsvh:";
 
 const whatsAppMessageSchema = z.object({
   id: z.string(),
-  from: z.string(),
+  /** Omitted when the sender has a username and has not shared their number with this business. */
+  from: z.string().optional(),
+  from_user_id: z.string().optional(),
   timestamp: z.string().optional(),
   type: z.string(),
   group_id: z.string().optional(),
@@ -44,8 +47,9 @@ const whatsAppMessageSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 const whatsAppContactSchema = z.object({
-  wa_id: z.string(),
-  profile: z.object({ name: z.string().optional() }).passthrough().optional(),
+  wa_id: z.string().optional(),
+  user_id: z.string().optional(),
+  profile: z.object({ name: z.string().optional(), username: z.string().optional() }).passthrough().optional(),
 }).passthrough();
 const whatsAppMessagesValueSchema = z.object({
   metadata: z.object({ phone_number_id: z.string() }).passthrough(),
@@ -66,16 +70,28 @@ const whatsAppWebhookSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
-/** Message types the Cloud API delivers that GSV neither relays nor answers; a reaction is not a message to reply to. */
-const SILENT_MESSAGE_TYPES = new Set(["request_welcome", "reaction"]);
+/**
+ * Message types the Cloud API delivers that GSV neither relays nor answers: a reaction is not
+ * a message to reply to, and a system notice reports a changed number or user ID.
+ */
+const SILENT_MESSAGE_TYPES = new Set(["request_welcome", "reaction", "system"]);
 /** Media message types relayed as attachments. */
 const MEDIA_MESSAGE_TYPES = new Set(["image", "video", "audio", "document", "sticker"]);
 
-export type ManagedWhatsAppInbound = {
-  deliveryId: string;
-  messageId: string;
+/**
+ * Who sent a peer event. The actor and surface are the person's address; when that address is
+ * a user ID and Meta also shared the number, the number travels beside it so a person known
+ * by number before user IDs existed keeps reaching the peer that holds their link.
+ */
+type WhatsAppSender = {
   actorId: string;
   surfaceId: string;
+  phoneNumber?: string;
+};
+
+export type ManagedWhatsAppInbound = WhatsAppSender & {
+  deliveryId: string;
+  messageId: string;
   actorName?: string;
   actorHandle?: string;
   text: string;
@@ -86,11 +102,9 @@ export type ManagedWhatsAppInbound = {
 };
 
 /** A reply button pressed on an approval prompt this adapter sent. */
-export type WhatsAppApprovalReply = {
+export type WhatsAppApprovalReply = WhatsAppSender & {
   /** The reply message's own id; it identifies one interaction. */
   interactionId: string;
-  actorId: string;
-  surfaceId: string;
   /** The id of the interactive prompt the person answered. */
   providerMessageId: string;
   data: string;
@@ -102,13 +116,11 @@ export type WhatsAppApprovalReply = {
  * window. Its visible label is an ordinary user reply to Ship. The persisted
  * event tag stays stable so already-admitted taps keep their deduplication id.
  */
-export type WhatsAppTemplateTap = {
+export type WhatsAppTemplateTap = WhatsAppSender & {
   /** Absent only on taps persisted before button text was forwarded. */
   text?: string;
   /** The tap message's own id; it identifies one interaction. */
   interactionId: string;
-  actorId: string;
-  surfaceId: string;
   /** The id of the template message the person tapped, when Meta relays it. */
   providerMessageId?: string;
   timestamp?: number;
@@ -120,16 +132,28 @@ export type ManagedWhatsAppPeerEvent =
   | { kind: "release"; tap: WhatsAppTemplateTap };
 
 /** The WhatsApp identity behind one peer event. */
-export type WhatsAppEventActor = { actorId: string; surfaceId: string };
+export function whatsAppEventActor(event: ManagedWhatsAppPeerEvent): WhatsAppSender {
+  const sender = event.kind === "message" ? event.inbound : event.kind === "approval" ? event.reply : event.tap;
+  const actor: WhatsAppSender = { actorId: sender.actorId, surfaceId: sender.surfaceId };
+  if (sender.phoneNumber) actor.phoneNumber = sender.phoneNumber;
+  return actor;
+}
 
-export function whatsAppEventActor(event: ManagedWhatsAppPeerEvent): WhatsAppEventActor {
+/** The same event addressed to the person's existing peer, which knows them by `address`. */
+export function addressWhatsAppEvent(event: ManagedWhatsAppPeerEvent, address: string): ManagedWhatsAppPeerEvent {
   switch (event.kind) {
-    case "message":
-      return { actorId: event.inbound.actorId, surfaceId: event.inbound.surfaceId };
-    case "approval":
-      return { actorId: event.reply.actorId, surfaceId: event.reply.surfaceId };
-    case "release":
-      return { actorId: event.tap.actorId, surfaceId: event.tap.surfaceId };
+    case "message": {
+      const { phoneNumber: _shared, ...inbound } = event.inbound;
+      return { kind: "message", inbound: { ...inbound, actorId: address, surfaceId: address } };
+    }
+    case "approval": {
+      const { phoneNumber: _shared, ...reply } = event.reply;
+      return { kind: "approval", reply: { ...reply, actorId: address, surfaceId: address } };
+    }
+    case "release": {
+      const { phoneNumber: _shared, ...tap } = event.tap;
+      return { kind: "release", tap: { ...tap, actorId: address, surfaceId: address } };
+    }
   }
 }
 
@@ -227,13 +251,15 @@ function normalizeMessage(
   message: z.infer<typeof whatsAppMessageSchema>,
   contacts: z.infer<typeof whatsAppContactSchema>[],
 ): ManagedWhatsAppPeerEvent | null {
-  if (message.group_id || message.context?.group_id || !WA_ID_PATTERN.test(message.from)) return null;
-  if (SILENT_MESSAGE_TYPES.has(message.type)) return null;
+  if (message.group_id || message.context?.group_id) return null;
+  const ids = senderIds(message);
+  const sender = whatsAppSender(ids);
+  if (!sender || SILENT_MESSAGE_TYPES.has(message.type)) return null;
   const messageId = message.id.trim();
   const token = whatsAppDeliveryToken(messageId);
   if (!token) return null;
-  const actorId = message.from;
   const timestamp = timestampMilliseconds(message.timestamp);
+  const profile = senderProfile(ids, contacts);
 
   const choice = tappedChoice(message);
   if (message.type === "interactive" && choice === null) {
@@ -244,14 +270,13 @@ function normalizeMessage(
       || !reply.button_reply?.id.startsWith(APPROVAL_REPLY_PREFIX)
       || !WAMID_PATTERN.test(providerMessageId)
     ) {
-      return unsupported(message.id, token, actorId, contacts, timestamp);
+      return unsupported(message.id, token, sender, profile, timestamp);
     }
     return {
       kind: "approval",
       reply: {
+        ...sender,
         interactionId: messageId,
-        actorId,
-        surfaceId: actorId,
         providerMessageId,
         data: reply.button_reply.id,
         timestamp,
@@ -261,11 +286,11 @@ function normalizeMessage(
 
   if (message.type === "button") {
     if (message.button?.payload?.trim() !== WHATSAPP_TEMPLATE_REPLY_PAYLOAD) {
-      return unsupported(message.id, token, actorId, contacts, timestamp);
+      return unsupported(message.id, token, sender, profile, timestamp);
     }
     const providerMessageId = message.context?.id?.trim();
     const tap: WhatsAppTemplateTap = {
-      interactionId: messageId, actorId, surfaceId: actorId, timestamp,
+      ...sender, interactionId: messageId, timestamp,
       text: normalizedText(message.button?.text) ?? undefined,
     };
     if (providerMessageId && WAMID_PATTERN.test(providerMessageId)) tap.providerMessageId = providerMessageId;
@@ -283,10 +308,8 @@ function normalizeMessage(
   const inbound: ManagedWhatsAppInbound = {
     deliveryId: `message:${token}`,
     messageId,
-    actorId,
-    surfaceId: actorId,
-    actorName: contactName(contacts, actorId),
-    actorHandle: maskWhatsAppNumber(actorId) || undefined,
+    ...sender,
+    ...profile,
     text: text ?? "",
     media: content.media.length > 0 ? content.media : undefined,
     replyToId: replyToId && WAMID_PATTERN.test(replyToId) ? replyToId : undefined,
@@ -308,8 +331,8 @@ function tappedChoice(message: z.infer<typeof whatsAppMessageSchema>): string | 
 function unsupported(
   messageId: string,
   token: string,
-  actorId: string,
-  contacts: z.infer<typeof whatsAppContactSchema>[],
+  sender: WhatsAppSender,
+  profile: SenderProfile,
   timestamp: number | undefined,
 ): ManagedWhatsAppPeerEvent {
   return {
@@ -317,10 +340,8 @@ function unsupported(
     inbound: {
       deliveryId: `message:${token}`,
       messageId: messageId.trim(),
-      actorId,
-      surfaceId: actorId,
-      actorName: contactName(contacts, actorId),
-      actorHandle: maskWhatsAppNumber(actorId) || undefined,
+      ...sender,
+      ...profile,
       text: "",
       timestamp,
       unsupportedContent: true,
@@ -340,14 +361,45 @@ function locationText(
   return label ? `Location: ${coordinates} (${label})` : `Location: ${coordinates}`;
 }
 
-function contactName(
+type SenderIds = { phoneNumber?: string; userId?: string };
+type SenderProfile = { actorName?: string; actorHandle?: string };
+
+/** The valid number and user ID a message names; Meta withholds the number from some username senders. */
+function senderIds(message: z.infer<typeof whatsAppMessageSchema>): SenderIds {
+  const ids: SenderIds = {};
+  if (isWhatsAppPhoneNumber(message.from)) ids.phoneNumber = message.from;
+  if (isWhatsAppUserId(message.from_user_id)) ids.userId = message.from_user_id;
+  return ids;
+}
+
+/**
+ * The person's address and, when that address is their user ID, the number Meta shared beside
+ * it. A message carrying neither a valid number nor a valid user ID names nobody.
+ */
+function whatsAppSender({ phoneNumber, userId }: SenderIds): WhatsAppSender | null {
+  if (userId) {
+    const sender: WhatsAppSender = { actorId: userId, surfaceId: userId };
+    if (phoneNumber) sender.phoneNumber = phoneNumber;
+    return sender;
+  }
+  return phoneNumber ? { actorId: phoneNumber, surfaceId: phoneNumber } : null;
+}
+
+/** How Ship shows the sender: their profile name, and their masked number or else their username. */
+function senderProfile(
+  { phoneNumber, userId }: SenderIds,
   contacts: z.infer<typeof whatsAppContactSchema>[],
-  actorId: string,
-): string | undefined {
-  const contact = contacts.find((entry) => entry.wa_id === actorId)
+): SenderProfile {
+  const contact = contacts.find((entry) => (phoneNumber !== undefined && entry.wa_id === phoneNumber)
+    || (userId !== undefined && entry.user_id === userId))
     ?? (contacts.length === 1 ? contacts[0] : undefined);
   const name = contact?.profile?.name?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
-  return name || undefined;
+  const username = contact?.profile?.username?.trim().replace(/^@/, "").slice(0, MAX_USERNAME_LENGTH);
+  const profile: SenderProfile = {};
+  if (name) profile.actorName = name;
+  const handle = phoneNumber ? maskWhatsAppNumber(phoneNumber) : username ? `@${username}` : "";
+  if (handle) profile.actorHandle = handle;
+  return profile;
 }
 
 function normalizedText(value: string | null | undefined): string | null {

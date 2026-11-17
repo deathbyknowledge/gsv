@@ -490,6 +490,7 @@ export const ptBR = {
   "settings.pairing.identity": "Conta de {platform}",
   "settings.pairing.whatsappIdentity": "Conta de WhatsApp",
   "settings.pairing.whatsappNumber": "Número de WhatsApp {id}",
+  "settings.pairing.whatsappUsername": "Usuário do WhatsApp {id}",
   "settings.pairing.platformId": "ID de {platform} {id}",
   "settings.pairing.noIdentity": "Nenhuma conta carregada",
   "settings.pairing.installLabel": "INSTALAR E MENCIONAR",

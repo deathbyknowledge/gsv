@@ -16,6 +16,7 @@ type GraphRecord = {
   phoneNumberId?: string;
   body: {
     to?: string;
+    recipient?: string;
     type?: string;
     text?: { body: string };
     audio?: { id?: string; link?: string };
@@ -51,7 +52,7 @@ type GatewayCall = {
   call?: string;
   args?: {
     routeGeneration?: string;
-    message?: { text?: string; media?: Array<{ type: string }> };
+    message?: { text?: string; media?: Array<{ type: string }>; actor?: { id?: string } };
     pid?: string;
     requestId?: string;
     decision?: string;
@@ -1357,6 +1358,146 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.successor.1", emoji: "" }]);
   });
 
+});
+
+type SenderIdentity = { name: string; phoneNumber?: string; userId?: string; username?: string };
+type SenderContact = { profile: { name: string; username?: string }; wa_id?: string; user_id?: string };
+type SenderMessage = { id: string; timestamp: string; type: "text"; text: { body: string }; from?: string; from_user_id?: string };
+
+/** A text from a sender Meta identifies by number, by business-scoped user ID, or both. */
+async function textFrom(sender: SenderIdentity, messageId: string, body: string): Promise<Request> {
+  const contact: SenderContact = { profile: { name: sender.name } };
+  const message: SenderMessage = { id: messageId, timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body } };
+  if (sender.username) contact.profile.username = sender.username;
+  if (sender.phoneNumber) {
+    contact.wa_id = sender.phoneNumber;
+    message.from = sender.phoneNumber;
+  }
+  if (sender.userId) {
+    contact.user_id = sender.userId;
+    message.from_user_id = sender.userId;
+  }
+  const payload = JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [{
+      id: "9876543210",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: { display_phone_number: "34600000000", phone_number_id: PHONE_NUMBER_ID },
+          contacts: [contact],
+          messages: [message],
+        },
+      }],
+    }],
+  });
+  return new Request("https://whatsapp.test/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-Hub-Signature-256": await sign(payload) },
+    body: payload,
+  });
+}
+
+/** The pairing code the platform sent to one address, as the person would copy it. */
+async function pairingCodeSentTo(address: string): Promise<string> {
+  let code = "";
+  await vi.waitFor(async () => {
+    const sent = (await sentMessages()).filter((record) => record.body.to === address || record.body.recipient === address);
+    code = sent.map((record) => record.body.text?.body ?? "").find((body) => /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/.test(body)) ?? "";
+    expect(code).not.toBe("");
+  });
+  return code.replaceAll("-", "");
+}
+
+function pairingFor(code: string): ManagedPairingStub {
+  // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+  const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
+  return typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code}`)));
+}
+
+/** Confirms a code for the test installation, as Ship does, and returns the route generation. */
+async function confirmPairing(code: string, operationId: string): Promise<string> {
+  const pairing = pairingFor(code);
+  const canonicalOrigin = "https://test.gsv.space";
+  const prepared = await pairing.prepare({ code, installationId: "installation_test", localUid: 1000, operationId, canonicalOrigin });
+  await pairing.activate({ code, operationId, route: prepared.route, canonicalOrigin });
+  await pairing.finalize({ code, operationId, route: prepared.route, canonicalOrigin });
+  return prepared.route.generation;
+}
+
+describe("WhatsApp usernames", () => {
+  it("pairs a username sender whose number Meta withholds and replies to their user ID", async () => {
+    const userId = "US.13491208655302741918";
+    const sheena: SenderIdentity = { name: "Sheena Nelson", userId, username: "realsheenanelson" };
+    expect((await SELF.fetch(await textFrom(sheena, "wamid.username.1", "hello"))).status).toBe(200);
+    const code = await pairingCodeSentTo(userId);
+    await expect(pairingFor(code).inspect()).resolves.toMatchObject({
+      actorId: userId,
+      surfaceId: userId,
+      actorName: "Sheena Nelson",
+      actorHandle: "@realsheenanelson",
+      linked: false,
+    });
+    const generation = await confirmPairing(code, "operation_username");
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ recipient: userId, text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
+      }));
+    });
+
+    expect((await SELF.fetch(await textFrom(sheena, "wamid.username.2", "what is new?"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "what is new?", actor: expect.objectContaining({ id: userId }) }),
+        }),
+      }));
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ recipient: userId, text: expect.objectContaining({ body: "Personal received what is new?" }) }),
+      }));
+    });
+    // A user ID is never sent as a phone number.
+    expect((await sentMessages()).filter((record) => record.body.to === userId)).toEqual([]);
+  });
+
+  it("keeps a number-paired person on their route once Meta adds a user ID and later withholds the number", async () => {
+    const phoneNumber = "34622222289";
+    const userId = "ES.55555555555555555555";
+    const mia: SenderIdentity = { name: "Mia Number", phoneNumber };
+    expect((await SELF.fetch(await textFrom(mia, "wamid.legacy.1", "hello"))).status).toBe(200);
+    const generation = await confirmPairing(await pairingCodeSentTo(phoneNumber), "operation_legacy");
+
+    expect((await SELF.fetch(await textFrom({ ...mia, userId }, "wamid.legacy.2", "still me"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "still me", actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+    });
+
+    const hidden: SenderIdentity = { name: "Mia Number", userId, username: "mia" };
+    expect((await SELF.fetch(await textFrom(hidden, "wamid.legacy.3", "number hidden"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          routeGeneration: generation,
+          message: expect.objectContaining({ text: "number hidden", actor: expect.objectContaining({ id: phoneNumber }) }),
+        }),
+      }));
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({ to: phoneNumber, text: expect.objectContaining({ body: "Personal received number hidden" }) }),
+      }));
+    });
+    // Nothing went to the user ID as if it were a stranger asking to pair.
+    expect((await sentMessages()).filter((record) => record.body.recipient === userId)).toEqual([]);
+  });
 });
 
 it("does not export the retired linked-device entrypoints", async () => {

@@ -110,8 +110,10 @@ import {
   whatsAppMediaSupportsCaption,
 } from "./whatsapp-outbound-media";
 import {
+  addressWhatsAppEvent,
   isManagedWhatsAppPairCommand,
   whatsAppDeliveryToken,
+  whatsAppEventActor,
   type ManagedWhatsAppInbound,
   type ManagedWhatsAppPeerEvent,
   type WhatsAppApprovalReply,
@@ -164,6 +166,12 @@ type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedWhatsAppPairingRecord): Promise<{ created: boolean }> };
 
 const STATE_KEY = "managed_whatsapp_peer:v1:state";
+/**
+ * Kept by the peer named for a user ID that Meta first sent beside the number of a person this
+ * adapter already knew by number: that person's peer holds their link and delivery history.
+ */
+const ALIAS_KEY = "managed_whatsapp_peer:v1:alias";
+type ManagedWhatsAppPeerAlias = { version: 1; surfaceId: string };
 const INBOUND_PREFIX = "managed_whatsapp_peer:v1:inbound:";
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const INBOUND_WAKE_DELAY_MS = 25;
@@ -219,6 +227,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
   async handleWebhook(event: ManagedWhatsAppPeerEvent): Promise<{ ok: true }> {
+    const knownAddress = await this.knownAddress(event);
+    if (knownAddress) {
+      const peer = this.env.MANAGED_WHATSAPP_PEER.getByName(`managed:${knownAddress}`);
+      return await peer.handleWebhook(addressWhatsAppEvent(event, knownAddress));
+    }
     const deliveryId = event.kind === "message"
       ? event.inbound.deliveryId
       : event.kind === "approval"
@@ -261,6 +274,30 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     }
     this.ctx.waitUntil(this.drainInbound());
     return { ok: true };
+  }
+
+  /** Whether anyone has messaged the platform number under this peer's address. */
+  async knowsSender(): Promise<boolean> {
+    return Boolean(await this.ctx.storage.get<ManagedWhatsAppPeerState>(STATE_KEY));
+  }
+
+  /**
+   * The address of the peer that already knew this event's sender by number, when this peer is
+   * named for the user ID Meta now sends beside that number. The answer is kept, so later events
+   * reach that peer even when Meta withholds the number.
+   */
+  private async knownAddress(event: ManagedWhatsAppPeerEvent): Promise<string | null> {
+    const alias = await this.ctx.storage.get<ManagedWhatsAppPeerAlias>(ALIAS_KEY);
+    if (alias) return alias.surfaceId;
+    const { phoneNumber } = whatsAppEventActor(event);
+    if (!phoneNumber || await this.knowsSender()) return null;
+    if (!await this.env.MANAGED_WHATSAPP_PEER.getByName(`managed:${phoneNumber}`).knowsSender()) return null;
+    return await this.ctx.storage.transaction(async (txn) => {
+      // Another event may have made this user ID the person's own peer meanwhile.
+      if (await txn.get<ManagedWhatsAppPeerState>(STATE_KEY)) return null;
+      await txn.put(ALIAS_KEY, { version: 1, surfaceId: phoneNumber } satisfies ManagedWhatsAppPeerAlias);
+      return phoneNumber;
+    });
   }
 
   async sendMessage(

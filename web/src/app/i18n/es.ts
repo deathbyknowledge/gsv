@@ -485,6 +485,7 @@ export const es = {
   "settings.pairing.identity": "Cuenta de {platform}",
   "settings.pairing.whatsappIdentity": "Cuenta de WhatsApp",
   "settings.pairing.whatsappNumber": "Número de WhatsApp {id}",
+  "settings.pairing.whatsappUsername": "Usuario de WhatsApp {id}",
   "settings.pairing.platformId": "ID de {platform} {id}",
   "settings.pairing.noIdentity": "No se ha cargado ninguna cuenta",
   "settings.pairing.installLabel": "INSTALAR Y MENCIONAR",
