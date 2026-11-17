@@ -59,16 +59,22 @@ The menu button retains the unread People indicator while navigation is closed.
 
 On a personal human account's first sign-in, a full screen in front of the chat, over the
 instrument's star field with the chat kept out of sight beneath it, asks where the person
-wants to message Ship: WhatsApp, Telegram, the Desktop app, or here. Ship's welcome has
-already started at sign-in; the screen only helps connect a messenger. Continuing here
-completes at once; the Desktop app choice links to the release download and continues in the
-web; a messenger pairs inline through the Settings pairing flow, and the Kernel's
-`adapter.connected` wake then says hello on it. Messenger
-sections appear only when the deployment offers that adapter, with no "nothing connected" line;
-the embedded WhatsApp flow names the countries the Ship number cannot reach when the device's languages point there, and a (?) note says
-Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
+wants to message Ship. Ship's welcome has already started at sign-in; the screen only helps
+connect a messenger. Each messenger the deployment offers is a design-system `Surface` card whose header, labelled
+"Chat on" the messenger, opens
+its pairing beneath it, one card at a time; the first card leads with the filled button. The
+pairing uses the Settings pairing calls as two numbered steps, opening the messenger and then
+pasting the code it replies with, and the step to do now holds the filled button. Returning to
+the tab focuses the code field. A rejected code shows under the field and opens "Trouble
+connecting?", which holds the manual `/link` route with a copyable number and the note about
+replacing another Ship's link. The "is this you?" confirmation and the countries the WhatsApp
+number cannot reach, when the device's languages point there, stay as in Settings. Once
+linked, the card offers the messenger itself first and the chat here second, and the Kernel's
+`adapter.connected` wake says hello there. A line under the cards says Ship only sees the
+messages sent to it. A text action skips to the chat at once; without a messenger to offer,
+an Open chat button takes its place. Finishing writes the
 per-user `ui/welcome_card_seen` flag, which only this screen reads, so the screen follows the account across web and Desktop
-and never shows again; inside Desktop the Desktop section is hidden.
+and never shows again.
 It never applies during activation or for the administrator. If the flag cannot be loaded, a
 small notice over the chat offers Retry; a failed save keeps the screen with an error.
 

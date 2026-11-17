@@ -7,6 +7,7 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/con
 
 export type TestNodeProps = {
   "aria-label"?: string;
+  "aria-expanded"?: boolean;
   blurb?: string;
   action?: string;
   info?: string;
@@ -20,6 +21,9 @@ export type TestNodeProps = {
   onClose?: () => void;
   onComplete?: () => Promise<void>;
   onConnected?: () => void;
+  linked?: boolean;
+  onPaired?: () => void;
+  onFinish?: () => void;
   ownerUid?: number;
   selected?: boolean;
   boxed?: boolean;
