@@ -199,6 +199,13 @@
   margin: 6px 0 0;
   overflow-wrap: anywhere;
 }
+/* Flags that open who the WhatsApp number cannot reach: no underline under an emoji. */
+.gsv-cf-reach {
+  margin: 0;
+}
+.gsv-cf-reach > summary {
+  text-decoration: none;
+}
 
 /* A field with its submit action beside it: the label spans the row, the
    button stretches to the field box and the field's own status goes below. */

@@ -13,10 +13,8 @@ import { messengerLinkName } from "../settings/messengerConnectionsService";
 import { LinkQrCode } from "../settings/messengers/LinkQrCode";
 import { useMessengerLink } from "../settings/messengers/useMessengerLink";
 import {
-  whatsAppCountryList,
   whatsAppNumberFromChatUrl,
-  whatsAppReachForDevice,
-  whatsAppReachSummary,
+  whatsAppReachNotice,
 } from "../settings/messengers/whatsapp";
 
 export type MessengerChoice = "whatsapp" | "telegram";
@@ -56,7 +54,7 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
   const bot = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const chatUrl = isWhatsApp ? number && `https://wa.me/${number.slice(1)}` : bot && `https://t.me/${bot}`;
   const destination = isWhatsApp ? number || t("settings.pairing.shipNumber") : bot ? `@${bot}` : t("settings.pairing.shipBot");
-  const reach = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
+  const unreachable = isWhatsApp ? info.data?.unreachableCallingCodes ?? [] : [];
   const code = pairing.link?.code ?? "";
   const copy = useCodeCopy(() => code, code);
   const copyLabel = useCodeCopyOutcome(copy.state) || t("settings.logs.copy");
@@ -107,10 +105,7 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
           <LinkQrCode url={pairing.link.url} label={t("settings.pairing.scanLabel", { platform: name })} />
           <p class="gsv-cf-note gsv-prose gsv-cf-scan-hint">{t("settings.pairing.scan", { platform: name })}</p>
         </div>}
-        {reach.length > 0 && <details class="gsv-cf-aside gsv-prose">
-          <summary>{whatsAppReachSummary(reach, t)}</summary>
-          <p>{t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(reach, t) })}</p>
-        </details>}
+        {whatsAppReachNotice(unreachable, t)}
       </div>
     </li>
     <li class="gsv-cf-rail-step" aria-current={second ? "step" : undefined}>
