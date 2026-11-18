@@ -320,7 +320,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(hint.body.context).toEqual({ message_id: "wamid.in.1" });
     // A stranger can get a Ship from here; signup then knows WhatsApp sent them.
     expect(hint.body.text?.body).toContain("click on this link:\nhttps://signup.gsv.test/?utm_source=whatsapp\n");
-    expect(hint.body.text?.body).toContain("Already have a Ship? Ask it how to connect.");
+    expect(hint.body.text?.body).toContain("Already have a Ship? Open it and go to Settings → Messengers → connect WhatsApp.");
     // A stranger hears how to connect once in a while, not after every message.
     expect((await SELF.fetch(await text("wamid.in.1b", "anyone there?"))).status).toBe(200);
 

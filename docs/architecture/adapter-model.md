@@ -582,7 +582,7 @@ file through `messenger connect ADAPTER < code.txt`. This uses the existing
 pairing operation without a separate UI confirmation protocol or model tool.
 
 Without a link, addressed messages may request pairing, or, for `pairingLinks`
-adapters, get a reminder to ask their Ship how to connect at most every ten minutes; they
+adapters, get a reminder to connect from Settings → Messengers on their Ship at most every ten minutes; they
 do not enter a Process. When the operator sets the adapter's `GSV_SIGNUP_URL`,
 the reminder first offers that signup page, tagged with `utm_source` set to the
 adapter. Signup carries the tag to the new Ship's setup link as `messenger`, and
