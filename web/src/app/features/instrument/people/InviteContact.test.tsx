@@ -66,6 +66,26 @@ describe("inviting someone", () => {
     ]);
   });
 
+  it("saves a profile that was never saved before publishing it, as the Kernel publishes only a stored draft", async () => {
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
+      if (call === "profile.update") return { data: { profile: { revision: 1, url: URL_, draft: FIELDS } } };
+      if (call === "profile.publish") {
+        if (JSON.stringify(args) !== JSON.stringify({ expectedRevision: 1 })) throw new Error("Profile changed; reload before publishing");
+        return { data: { profile: { revision: 1, url: URL_, draft: FIELDS, published: live("requests") } } };
+      }
+      throw new Error(`Unexpected request ${call} ${JSON.stringify(args)}`);
+    });
+    // The Kernel answers with its default draft, already open to requests, until the owner saves one.
+    await show({ revision: 0, url: URL_, handle: "esteve", draft: FIELDS });
+    await act(async () => { button("turn on message requests")!.props.onClick!(); });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls.map(([call, args]) => [call, args])).toEqual([
+      ["profile.update", { expectedRevision: 0, draft: FIELDS }],
+      ["profile.publish", { expectedRevision: 1 }],
+    ]);
+    expect(collectText(tree)).not.toContain("reload before publishing");
+  });
+
   it("asks to review unpublished profile changes rather than publish them unseen", async () => {
     const request = vi.spyOn(GSVClient.prototype, "request");
     await show({ revision: 2, url: URL_, handle: "esteve", draft: { ...FIELDS, about: "Draft" }, published: live("closed") });
