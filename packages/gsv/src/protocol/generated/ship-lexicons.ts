@@ -5,8 +5,6 @@ import { DID_PATTERN } from "../did";
 import { type JsonObject, jsonObjectSchema } from "../json";
 import { type LexiconBlob, maxGraphemes, minGraphemes, stringFormat, utf8Length, utf8MaxLength } from "../lexicon";
 
-/** The caller accepts an invitation this Ship issued, and becomes its contact. */
-export const ACCEPT_INVITATION = "space.ship.acceptInvitation";
 /** The person a request went to accepts it; the caller, its recipient, becomes the sender's contact. Only the DID the request went to finds it, and a repeated acceptance hears the same answer. */
 export const ACCEPT_MESSAGE_REQUEST = "space.ship.acceptMessageRequest";
 /** A message or contact update for a connected Ship; a repeated delivery ID is received once. */
@@ -22,33 +20,6 @@ export const SEND_MESSAGE_REQUEST = "space.ship.sendMessageRequest";
 export const WITHDRAW_MESSAGE_REQUEST = "space.ship.withdrawMessageRequest";
 
 export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32_768;
-
-export type AcceptInvitationInput = {
-  /** The secret the invitation carries. */
-  token: string;
-  /** The accepting person's name, as the inviter will see it. At most 256 UTF-16 code units. */
-  name: string;
-};
-export const acceptInvitationInputSchema = z.object({
-  token: z.string().check(z.minLength(1), utf8MaxLength(128)),
-  // Ships count this limit in UTF-16 code units.
-  name: z.string().check(z.minLength(1), utf8MaxLength(768), maxGraphemes(256), z.maxLength(256)),
-}) satisfies z.ZodMiniType<AcceptInvitationInput>;
-
-/** The inviter's name comes back, since a private profile has no record to read it from. */
-export type AcceptInvitationOutput = {
-  /** The inviter's name. At most 256 UTF-16 code units. */
-  name: string;
-  /** The connection; each delivery names it. */
-  generation: string;
-  threadId: string;
-};
-export const acceptInvitationOutputSchema = z.object({
-  // Ships count this limit in UTF-16 code units.
-  name: z.string().check(z.minLength(1), utf8MaxLength(768), maxGraphemes(256), z.maxLength(256)),
-  generation: z.string().check(z.minLength(1), utf8MaxLength(128)),
-  threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
-}) satisfies z.ZodMiniType<AcceptInvitationOutput>;
 
 export type AcceptMessageRequestInput = {
   requestId: string;
@@ -288,7 +259,7 @@ export type ShipProfileRecord = {
   about?: string;
   /** A profile picture is a PNG, JPEG or WebP of at most 1 MB. */
   avatar?: LexiconBlob;
-  /** What visitors may do: send a message request, ask for an invitation, or nothing. Known values are requests, invitation and closed; a Ship reads any other value as closed. */
+  /** What visitors may do: send a message request, or nothing. Known values are requests and closed; a Ship reads any other value as closed. */
   contactPolicy: string;
 };
 export const shipProfileRecordSchema = z.object({

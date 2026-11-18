@@ -22,6 +22,8 @@ export type PublicDeploymentConfig = {
   accountsOrigin?: string;
   docsUrl?: string;
   installUrl?: string;
+  /** Where people create a Ship. A person's invitation link names them on it. */
+  signupUrl?: string;
   termsUrl?: string;
   privacyUrl?: string;
 };
@@ -33,6 +35,7 @@ export const deploymentPresentationSchema = z.object({
   accountsOrigin: z.optional(origin),
   docsUrl: z.optional(url),
   installUrl: z.optional(url),
+  signupUrl: z.optional(url),
   termsUrl: z.optional(url),
   privacyUrl: z.optional(url),
 }) satisfies z.ZodMiniType<PublicDeploymentConfig>;

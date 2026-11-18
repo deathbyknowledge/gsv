@@ -9,7 +9,7 @@ export const welcomeSnapshotSchema = z.object({
     origin: z.string(), flow: z.enum(["open", "create"]), sessionSecret: z.string().nullable(),
     challenge: z.object({ id: z.string(), email: z.string(), browserSecret: z.string() }).nullable(),
     operationId: z.string().nullable().default(null), handle: z.string().nullable(),
-    contactInvite: z.string().nullable().optional(),
+    invite: z.string().nullable().optional(),
     // Every field the flow keeps must be named here: a saved value is parsed on reload, and an unnamed one is dropped.
     attribution: z.object({
       placement: z.string().optional(), example: z.string().optional(), utmSource: z.string().optional(), utmCampaign: z.string().optional(),

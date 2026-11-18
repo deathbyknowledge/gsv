@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { checkShipMethodErrors } from "./check-ship-method-errors.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const INVITATIONS = "workers/gateway/src/kernel/federation/invitations.ts";
+const ADMISSION = "workers/gateway/src/kernel/approaches/admission.ts";
 const FEDERATION = "workers/gateway/src/kernel/federation.ts";
 
 /** The source with `from` replaced by `to` once, and the line it's on. */
@@ -22,9 +22,9 @@ test("every error a Ship method's handler answers with is declared by its lexico
 });
 
 test("an error a handler names that its lexicon doesn't declare is a problem, with where it's thrown", () => {
-  const { text, line } = changed(INVITATIONS, `"InvitationExpired", "This invitation has expired"`, `"InvitationLapsed", "This invitation has expired"`);
-  assert.deepEqual(checkShipMethodErrors({ overrides: { [INVITATIONS]: text } }), [
-    `space.ship.acceptInvitation answers InvitationLapsed (${INVITATIONS}:${line}), which its lexicon doesn't declare`,
+  const { text, line } = changed(ADMISSION, `"InvalidRequest", "A Ship can't send itself a message request"`, `"SelfRequest", "A Ship can't send itself a message request"`);
+  assert.deepEqual(checkShipMethodErrors({ overrides: { [ADMISSION]: text } }), [
+    `space.ship.sendMessageRequest answers SelfRequest (${ADMISSION}:${line}), which its lexicon doesn't declare`,
   ]);
 });
 
@@ -36,8 +36,8 @@ test("a shared refusal is named by its status, for each method that reaches it",
 });
 
 test("an error whose name the checker can't read is a problem", () => {
-  const { text, line } = changed(INVITATIONS, `new ShipXrpcError(410, "InvitationExpired"`, `new ShipXrpcError(410, ["Invitation", "Expired"].join("")`);
-  assert.deepEqual(checkShipMethodErrors({ overrides: { [INVITATIONS]: text } }), [
-    `${INVITATIONS}:${line} throws a ShipXrpcError whose name isn't a string literal`,
+  const { text, line } = changed(ADMISSION, `new ShipXrpcError(400, "InvalidRequest", "A Ship can't send`, `new ShipXrpcError(400, ["Invalid", "Request"].join(""), "A Ship can't send`);
+  assert.deepEqual(checkShipMethodErrors({ overrides: { [ADMISSION]: text } }), [
+    `${ADMISSION}:${line} throws a ShipXrpcError whose name isn't a string literal`,
   ]);
 });

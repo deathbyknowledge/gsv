@@ -11,7 +11,6 @@ type NoticeWords = {
   messages: (from: string, count: number, preview: string) => string;
   attachment: string;
   request: (from: string) => string;
-  accepted: (from: string) => string;
   mail: (count: number) => string;
   machine: (name: string) => string;
   adapterConnected: (name: string) => string;
@@ -34,7 +33,6 @@ const WORDS = {
     messages: (from, count, preview) => `💬 ${from} sent you ${count} messages. Latest: ${preview}`,
     attachment: "(attachment)",
     request: (from) => `📬 Message request from ${from}. Read it and decide in People.`,
-    accepted: (from) => `🤝 ${from} accepted your invitation. You can message each other in People now.`,
     mail: (count) => count > 1 ? `📧 You have ${count} new emails.` : "📧 You have a new email.",
     machine: (name) => `💻 A new computer connected to your Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} is connected to your Ship.`,
@@ -47,7 +45,6 @@ const WORDS = {
     kinds: {
       "contact.request": "message requests",
       "contact.message": "contact messages",
-      "contact.invite.accepted": "accepted invitations",
       "mail.received": "new mail",
       "machine.added": "new computers",
       "adapter.connected": "connected messengers",
@@ -61,7 +58,6 @@ const WORDS = {
     messages: (from, count, preview) => `💬 ${from} te ha enviado ${count} mensajes. El último: ${preview}`,
     attachment: "(adjunto)",
     request: (from) => `📬 Solicitud de mensaje de ${from}. Léela y decide en Personas.`,
-    accepted: (from) => `🤝 ${from} ha aceptado tu invitación. Ya podéis escribiros en Personas.`,
     mail: (count) => count > 1 ? `📧 Tienes ${count} correos nuevos.` : "📧 Tienes un correo nuevo.",
     machine: (name) => `💻 Se ha conectado un ordenador nuevo a tu Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} se ha conectado a tu Ship.`,
@@ -74,7 +70,6 @@ const WORDS = {
     kinds: {
       "contact.request": "solicitudes de mensaje",
       "contact.message": "mensajes de contactos",
-      "contact.invite.accepted": "invitaciones aceptadas",
       "mail.received": "correo nuevo",
       "machine.added": "ordenadores nuevos",
       "adapter.connected": "mensajerías conectadas",
@@ -88,7 +83,6 @@ const WORDS = {
     messages: (from, count, preview) => `💬 ${from} enviou ${count} mensagens para você. A última: ${preview}`,
     attachment: "(anexo)",
     request: (from) => `📬 Solicitação de mensagem de ${from}. Leia e decida em Contatos.`,
-    accepted: (from) => `🤝 ${from} aceitou seu convite. Vocês já podem conversar em Contatos.`,
     mail: (count) => count > 1 ? `📧 Você tem ${count} e-mails novos.` : "📧 Você tem um e-mail novo.",
     machine: (name) => `💻 Um novo computador se conectou ao seu Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} está conectado ao seu Ship.`,
@@ -101,7 +95,6 @@ const WORDS = {
     kinds: {
       "contact.request": "solicitações de mensagem",
       "contact.message": "mensagens de contatos",
-      "contact.invite.accepted": "convites aceitos",
       "mail.received": "e-mails novos",
       "machine.added": "computadores novos",
       "adapter.connected": "mensageiros conectados",
@@ -145,7 +138,6 @@ export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage)
     case "contact.message":
       return notice.pendingCount > 1 ? words.messages(from, notice.pendingCount, preview) : words.message(from, preview);
     case "contact.request": return words.request(from);
-    case "contact.invite.accepted": return words.accepted(from);
     // An email's sender and words stay out of a messenger; the person reads them in their Ship.
     case "mail.received": return words.mail(notice.pendingCount);
     case "machine.added": return words.machine(parts.from);

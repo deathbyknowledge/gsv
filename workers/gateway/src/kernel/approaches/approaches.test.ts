@@ -208,7 +208,7 @@ describe("message requests", () => {
     const changed = await publishProfile(bob, "requests", "Hello again");
     expect(changed.cid).not.toBe(profile.cid);
     await expect(alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)))).rejects.toThrow("This profile changed; review it again before sending");
-    const closed = await publishProfile(bob, "invitation");
+    const closed = await publishProfile(bob, "closed");
     await expect(alice.run((ctx) => handleApproachCreate(request(closed), held(ctx)))).rejects.toThrow("This person is not receiving new message requests");
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
   });

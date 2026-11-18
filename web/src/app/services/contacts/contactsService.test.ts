@@ -14,29 +14,21 @@ describe("contactsService", () => {
     const listRequests = vi.fn<GSVClient["contact"]["request"]["list"]>(async () => ({
       requests: [],
     }));
-    const listInvites = vi.fn<GSVClient["contact"]["invite"]["list"]>(async () => ({
-      invites: [],
-    }));
-    const client = contactClient({ listContacts, listInvites, listRequests });
+    const client = contactClient({ listContacts, listRequests });
 
     const workspace = await loadContactsWorkspace(client);
 
-    expect(workspace).toEqual({ contacts: [], invites: [], requests: [] });
+    expect(workspace).toEqual({ contacts: [], requests: [] });
     expect(listContacts).toHaveBeenCalledWith({ includeRevoked: true });
-    expect(listInvites).toHaveBeenCalledWith({ includeTerminal: true });
     expect(listRequests).toHaveBeenCalledWith({ includeTerminal: true });
   });
 
-  it("keeps invite acceptance, revocation, and request transitions explicit", async () => {
-    const accept = vi.fn<GSVClient["contact"]["invite"]["accept"]>();
-    const cancel = vi.fn<GSVClient["contact"]["invite"]["cancel"]>();
+  it("keeps revocation, aliases and request transitions explicit", async () => {
     const revoke = vi.fn<GSVClient["contact"]["revoke"]>();
     const setAlias = vi.fn<GSVClient["contact"]["alias"]["set"]>();
     const update = vi.fn<GSVClient["contact"]["request"]["update"]>();
-    const client = contactClient({ accept, cancel, revoke, setAlias, update });
+    const client = contactClient({ revoke, setAlias, update });
 
-    await mutateContactsWorkspace(client, { kind: "invite.accept", code: "pairing-code" });
-    await mutateContactsWorkspace(client, { kind: "invite.cancel", inviteId: "invite:one" });
     await mutateContactsWorkspace(client, { kind: "contact.revoke", contactId: "contact:flynn" });
     await mutateContactsWorkspace(client, {
       kind: "contact.alias.set",
@@ -50,8 +42,6 @@ describe("contactsService", () => {
       state: "completed",
     });
 
-    expect(accept).toHaveBeenCalledWith({ code: "pairing-code" });
-    expect(cancel).toHaveBeenCalledWith({ inviteId: "invite:one" });
     expect(revoke).toHaveBeenCalledWith({ contactId: "contact:flynn" });
     expect(setAlias).toHaveBeenCalledWith({ contactId: "contact:flynn", alias: "Flynn" });
     expect(update).toHaveBeenCalledWith({
@@ -183,9 +173,6 @@ describe("contactsService", () => {
 function contactClient(overrides: {
   listContacts?: GSVClient["contact"]["list"];
   listRequests?: GSVClient["contact"]["request"]["list"];
-  listInvites?: GSVClient["contact"]["invite"]["list"];
-  accept?: GSVClient["contact"]["invite"]["accept"];
-  cancel?: GSVClient["contact"]["invite"]["cancel"];
   revoke?: GSVClient["contact"]["revoke"];
   setAlias?: GSVClient["contact"]["alias"]["set"];
   update?: GSVClient["contact"]["request"]["update"];
@@ -200,12 +187,6 @@ function contactClient(overrides: {
       revoke: overrides.revoke ?? vi.fn(),
       send: overrides.send ?? vi.fn(),
       alias: { set: overrides.setAlias ?? vi.fn() },
-      invite: {
-        accept: overrides.accept ?? vi.fn(),
-        cancel: overrides.cancel ?? vi.fn(),
-        create: vi.fn(),
-        list: overrides.listInvites ?? vi.fn(),
-      },
       request: {
         list: overrides.listRequests ?? vi.fn(),
         update: overrides.update ?? vi.fn(),

@@ -8,7 +8,7 @@ surface over WebSocket; `desktop` and `daemon` use same-user local endpoints.
 ```text
 Talk
   ship [MESSAGE]     Talk to your Ship, or open a prompt (also: chat)
-  contacts           People you talk to, and invitations
+  contacts           People you talk to
   requests           Message requests from people you don't know yet
   mail               Your Ship's mailbox
 
@@ -163,8 +163,6 @@ run-signal matching.
 ```bash
 gsv contacts
 gsv contacts inbox
-gsv contacts invite [--days N]
-gsv contacts accept LINK_OR_CODE
 gsv contacts send NAME MESSAGE
 gsv contacts block NAME
 gsv contacts unblock NAME
@@ -174,11 +172,9 @@ gsv requests decline ID
 ```
 
 `contacts` lists people on other Ships by name and address. `NAME` matches a
-contact's local alias, display name or handle. `invite` creates a one-use
-invitation and prints its link and code, which you share yourself; `--days`
-sets how long it lasts (one hour by default, up to seven days). `accept` uses
-an invitation someone shared with you. `inbox` lists contact conversations
-with the newest first.
+contact's local alias, display name or handle. `inbox` lists contact
+conversations with the newest first. To invite someone, share your invitation
+link: `gsv run contact invite` prints it, and People → Invite shows it.
 
 `requests` lists first-message requests from people who found your public
 profile, and the ones you sent. `accept` and `decline` answer an incoming
@@ -700,10 +696,8 @@ message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] 
 contact find @HANDLE|ADDRESS
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
-contact invite create --handling manual|ship [--expires DURATION]
-contact invite accept LINK_OR_CODE --handling manual|ship
-contact invite list [--all] [--json]
-contact invite cancel INVITE_ID
+contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]
+contact invite
 contact handling CONTACT_ID manual|ship --revision N
 contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
@@ -984,23 +978,24 @@ automatic retry. An outcome that may have reached the provider is reported as
 `contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
 profile does not establish whether the Ship
 exists: the address may be mistyped, the Ship elsewhere, or the profile private.
-Private invitations work without a published profile or an existing contact.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
 sends that profile a first message request, which the person accepts or declines
 in People. The request names the version of the profile it read, so their Ship
 refuses it if they change their profile or stop taking requests before it arrives.
 The signed-in human or their canonical Ship may send it; repeating the same request
 returns the existing one.
-`contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
-the other person accepts either while signed in to their own Ship. The default
-lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
-be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
+`contact invite` prints the owner's invitation link. It never expires and
+anyone may use it: someone without a Ship creates one from it, and someone with
+a Ship signs in from it. Either way they send the owner an ordinary message
+request. It works only while the owner's profile is public and takes requests;
+the command says when it doesn't. Revocation may be performed by the signed-in
+human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact list --all` adds ended contacts, and one
 that ended before DIDs shows `(before DIDs)` as its address. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
 
-Creating and accepting through Shell require `--handling manual|ship`. Ship asks
+`contact connect` requires `--handling manual|ship`. Ship asks
 for the owner's choice unless it was already given: `manual` leaves new messages
 for the person, while `ship` enables automatic handling. Each side chooses
 independently. To change an existing contact, read `preferences.revision` from
@@ -1008,26 +1003,22 @@ independently. To change an existing contact, read `preferences.revision` from
 The Kernel accepts changes from the owner or their canonical Ship, keeps capability
 and revision checks, and starts no work merely because the setting changed.
 
-To invite someone at a known email address, create a private invitation, put its
-returned `url` in a message file, and send that file with managed mail:
+To invite someone at a known email address, put the link `contact invite`
+prints in a message file and send that file with managed mail:
 
 ```bash
-contact invite create --handling manual --expires 7d
-# Save the returned url and your message in /tmp/invitation.txt before sending.
+contact invite
+# Save the link and your message in /tmp/invitation.txt before sending.
 mail send --to FRIEND_EMAIL --subject 'Connect on Ship' --body /tmp/invitation.txt
 mail status DELIVERY_ID
-contact invite list --all --json
 ```
 
-Use `--handling ship` instead when the owner has chosen automatic handling. The
-recipient may use a managed Ship mailbox without publishing a profile. Use their
-known email address; a custom Ship website address does not establish its mail
-domain. Sending follows the ordinary `mail.send` approval policy. Email status
-describes transport progress, while invitation status records acceptance. The
-recipient still chooses their own handling and accepts the invitation.
+Use their known email address; a custom Ship website address does not establish
+its mail domain. Sending follows the ordinary `mail.send` approval policy. Email
+status describes transport progress only: the recipient decides whether to send
+a request, and it arrives under People like any other.
 
-`contact invite list --all` exposes retained invitation lifecycle metadata but
-never a recoverable code. `message history --with contact:...` reads the Contact
+`message history --with contact:...` reads the Contact
 conversation. As opening it in People does, the read then checks whether the
 contact's Ship is gone, at most once an hour for each contact. `contact list`
 makes no lookup: it ends only contacts whose DIDs the directory cache already

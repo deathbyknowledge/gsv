@@ -73,7 +73,7 @@ non-login agent accounts. Setup derives the ordinary account name from the space
 handle; existing account identities and homes remain stable. Normal sign-in
 selects the personal account without asking for a username. Root remains explicit.
 People owns the space's public profile at `/profile` and cross-space contacts;
-contact invitations do not create local human accounts.
+invitation links do not create local human accounts.
 
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
@@ -171,7 +171,7 @@ OS service privilege must never become an agent shell privilege by accident.
 - Only what a person chose to make public goes to the open network. The Kernel owns who may publish, approval of agent publishing and the collections features reserve.
 - Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
-- Accounts owns open registration for verified owners. Each self-service signup resumes one durable provisioning operation; private policy prepares its plan before setup authorization. Contact invitations remain Kernel-owned and do not grant or reserve signup places. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
+- Accounts owns open registration for verified owners. Each self-service signup resumes one durable provisioning operation; private policy prepares its plan before setup authorization. Invitation links carry no authority and do not grant or reserve signup places. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
 - A signed-in human or a permitted process acting for its human owner issues device enrollment invitations scoped to the installation, owner account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.

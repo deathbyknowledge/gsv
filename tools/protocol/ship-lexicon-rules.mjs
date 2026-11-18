@@ -44,12 +44,6 @@ export const SHIP_LEXICON_LIMITS = {
 };
 
 export const SHIP_LEXICON_RULES = {
-  "space.ship.acceptInvitation#main.input": {
-    name: { check: ["z.maxLength(256)"], why: UTF16 },
-  },
-  "space.ship.acceptInvitation#main.output": {
-    name: { check: ["z.maxLength(256)"], why: UTF16 },
-  },
   "space.ship.acceptMessageRequest#main.input": {
     name: { check: ["z.maxLength(256)"], why: UTF16 },
   },

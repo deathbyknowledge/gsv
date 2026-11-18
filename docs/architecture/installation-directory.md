@@ -224,10 +224,10 @@ before assigning a new public handle, without using its normalization for unique
 Only authenticated operators can edit the lists, with same-origin mutation checks
 and an audit event when operator auditing is configured.
 
-Contact invitations remain entirely Kernel-owned. The browser carries a pending
-contact link through signup and local setup, then presents the normal acceptance
-and message-handling choice. Creating, cancelling or accepting a contact invitation
-does not reserve, consume or refund a signup place.
+An invitation link carries no authority. Signup reads `?invite=` as the name of
+the inviter's Ship and carries that Ship's profile address through local setup;
+the new Ship then opens People with an ordinary message request to it ready. The
+link does not reserve, consume or refund a signup place.
 
 ## Reset and deletion
 

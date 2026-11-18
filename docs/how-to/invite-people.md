@@ -2,7 +2,7 @@
 
 Each Ship has one account for you, plus the accounts Ship and its helpers run as.
 To connect with another person, invite them through [People](/how-to/contact-people).
-They use their own Ship; a contact invitation does not create an account in yours.
+They use their own Ship; your invitation link does not create an account in yours.
 An operator can host separate Ships for a [whole team](/how-to/organisations).
 
 ## Create a Ship {#create-a-space}
@@ -12,8 +12,9 @@ Choose a handle, enter your email and agree to the terms. Verify your email, the
 set your password. Registration needs no invite code when the operator enables
 it. One verified email can create one Ship. Sign in with the same email to reopen it.
 
-A friend's contact link opens their invitation first. After signup, continue in
-your Ship to choose who handles incoming messages and accept the invitation.
+A friend's invitation link names them on the signup page. When your Ship opens,
+People has a message request to them ready: write a first message, choose who
+handles their messages, and send it. They accept it in their People.
 If activation is interrupted, sign in with the same email and continue activation.
 
 ## Sign in

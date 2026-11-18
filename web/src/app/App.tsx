@@ -5,21 +5,21 @@ import { AccountRecoveryScreen } from "./features/session/AccountRecoveryScreen"
 import { AuthScene } from "./features/session/AuthLayout";
 import { navigateApp, useAppLocation } from "./services/navigation/appNavigation";
 import { useSession } from "./services/session/SessionProvider";
-import { ContactInvitationScreen } from "./features/session/ContactInvitationScreen";
-import { pendingContactInvitation } from "./services/session/contactInvitationIntent";
-import { useLayoutEffect, useState } from "preact/hooks";
+import { takeFirstRunInvite } from "./services/session/installationOnboarding";
+import { useLayoutEffect } from "preact/hooks";
 
 function AppRoutes() {
   const { pathname, revision } = useAppLocation();
   const { snapshot } = useSession();
-  const [contactInvitation, setContactInvitation] = useState(pendingContactInvitation);
   useLayoutEffect(() => {
-    if (snapshot.phase !== "ready" || !contactInvitation || pathname === "/recover" || pathname === "/recover-member") return;
-    setContactInvitation(null);
-    const destination = new URL(window.location.href);
-    destination.pathname = "/people";
+    if (snapshot.phase !== "ready" || pathname === "/recover" || pathname === "/recover-member") return;
+    // A Ship made from someone's invitation link opens on a request to them, as their public profile would.
+    const invite = takeFirstRunInvite();
+    if (!invite) return;
+    const destination = new URL("/people", window.location.origin);
+    destination.searchParams.set("compose", invite);
     navigateApp(destination.href, { replace: true });
-  }, [snapshot.phase, contactInvitation, pathname]);
+  }, [snapshot.phase, pathname]);
   const recovery = pathname === "/recover-member" ? <MemberRecoveryScreen key={revision} />
     : pathname === "/recover" ? <AccountRecoveryScreen key={revision} /> : null;
   if (recovery || snapshot.phase !== "ready") {
@@ -31,7 +31,5 @@ function AppRoutes() {
 }
 
 export function App(dependencies: AppProviderDependencies = {}) {
-  const { pathname } = useAppLocation();
-  if (pathname === "/connect") return <AuthScene layout="welcome"><ContactInvitationScreen /></AuthScene>;
   return <AppProviders {...dependencies}><AppRoutes /></AppProviders>;
 }

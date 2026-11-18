@@ -3,7 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../../testing/testHarness";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
-import { INSTRUMENT_CONTACTS_KEY as KEY, INSTRUMENT_CONTACT_INVITES_KEY as INVITES } from "./queryKeys";
+import { INSTRUMENT_CONTACTS_KEY as KEY, INSTRUMENT_CONTACT_BLOCKS_KEY as BLOCKS } from "./queryKeys";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const stop of cleanup.splice(0).reverse()) stop(); });
@@ -22,11 +22,11 @@ describe("contact change notifications", () => {
   it("refreshes only the affected list", async () => {
     const load = vi.fn(async () => ["new contact"]);
     const { cache } = setup([], load);
-    cache.setQueryData(INVITES, ["pending"]);
+    cache.setQueryData(BLOCKS, ["blocked"]);
     await refreshContactQuery(cache, KEY);
     expect(load).toHaveBeenCalledOnce();
     expect(cache.getQueryData(KEY)).toEqual(["new contact"]);
-    expect(cache.getQueryState(INVITES)?.isInvalidated).toBe(false);
+    expect(cache.getQueryState(BLOCKS)?.isInvalidated).toBe(false);
   });
 
   it.each([{ initial: undefined }, { initial: ["existing"] }])("cannot lose a change behind an older snapshot ($initial)", async ({ initial }) => {

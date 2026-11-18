@@ -713,7 +713,7 @@ call these, under the `notify.rule.*` capability; any other process is refused.
 
 ```ts
 type NoticeKind =
-  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "contact.request" | "contact.message"
   | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
 type NoticeDelivery = "none" | "messenger";
 type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
@@ -995,42 +995,36 @@ The relationship works between spaces served by the same or different operators 
 shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
-Pairing is explicit and human-controlled. `contact.invite.create` returns a
-short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
-`contact.invite.accept`. The code names the inviting Ship's DID, and the
-accepting Ship checks that the code's handle resolves to that DID. The
-acceptance is a Ship call signed with the accepting Ship's key, so the inviting
-Ship makes the Ship that signed it the contact, whatever name it gives. Callers
-never choose a remote local uid, Process, conversation, filesystem path, or
-installation id.
+Pairing is explicit and human-controlled. One person sends a message request with
+`approach.create` to a Ship whose published profile takes requests, and the other
+person accepts it with `approach.decide`; see [Public profiles and first
+messages](#public-profiles-and-first-messages). Acceptance is a Ship
+call signed with the accepting Ship's key, so each Ship makes the Ship that signed
+it the contact, whatever name it gives. Callers never choose a remote local uid,
+Process, conversation, filesystem path, or installation id.
 
-Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
-without the `gsv-contact-v2:` code prefix, so mobile messengers can link the entire
-address. Prefixed codes and links identify the same invitation. A code from
-before DIDs, with the `gsv-contact-v1:` prefix, is refused with a request for a
-new invitation.
+An owner's invitation link carries no secret. With a signup site configured, it is
+the operator's signup address with `?invite=` naming the Ship: its handle on the
+operator's domain, or its full hostname otherwise. Someone new creates a Ship and
+lands in People with a request to the inviter ready to send; someone with a Ship
+signs in and gets the same. Without a signup site, the link is the Ship's
+`/profile` page. Either way the request works only while the inviter's profile is
+public and takes requests. `contact invite` in Shell prints the link.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
-canonical Ship Process. Delegated work Processes and remote callers cannot
-create, accept, cancel, or revoke Contact trust.
+canonical Ship Process, except that accepting a request stays with the signed-in
+human. Delegated work Processes and remote callers cannot change Contact trust.
 
-`contact.invite.create` and `contact.invite.accept` accept an optional
+`approach.create` and an `approach.decide` acceptance accept an optional
 `shipHandlesMessages` boolean for the local owner's new contact. Setting it
 requires the signed-in owner or their canonical Ship with `contact.preferences.update`.
-Ship must explicitly supply the owner's choice; omission is rejected for Processes.
-The Kernel retains it with the invitation or acceptance attempt and applies it when
-that contact generation activates. Older human clients may omit it to keep automatic
-handling off. Replaying a completed acceptance does not overwrite later
-preference changes. `approach.create` and an `approach.decide` acceptance support
-the same local choice, retained through asynchronous pairing and retries. It is
-never supplied by the remote person, and activation admits no Ship work itself.
+The Kernel retains it through asynchronous pairing and retries and applies it when
+that contact generation activates. Replaying a completed acceptance does not
+overwrite later preference changes. It is never supplied by the remote person,
+and activation admits no Ship work itself.
 
 | Syscall | Behavior |
 |---|---|
-| `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
-| `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
-| `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
-| `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. It first ends any contact whose DID the directory cache already knows was deactivated, without a lookup. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
@@ -1067,15 +1061,6 @@ a contact-local reference and streams bytes only when they are opened through
 `fs.transfer.send`. Revocation makes those grants unavailable.
 
 ```ts
-type ContactInviteSummary = {
-  inviteId: string;
-  state: "pending" | "accepted" | "expired" | "cancelled";
-  expiresAtMs: number;
-  createdAtMs: number;
-  cancelledAtMs?: number;
-  acceptedAtMs?: number;
-  contactId?: string;
-};
 type ContactDeliveryStatus = {
   deliveryId: string;
   contactId: string;
@@ -1126,22 +1111,6 @@ type ContactRequestRecord = {
   updatedAtMs: number;
 };
 type ContactSyscalls = {
-  "contact.invite.create": {
-    args: { expiresInSeconds?: number };
-    result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
-  };
-  "contact.invite.accept": {
-    args: { code: string };
-    result: { contact: ContactSummary };
-  };
-  "contact.invite.list": {
-    args: { includeTerminal?: boolean };
-    result: { invites: ContactInviteSummary[] };
-  };
-  "contact.invite.cancel": {
-    args: { inviteId: string };
-    result: { invite: ContactInviteSummary };
-  };
   "contact.list": {
     args: { includeRevoked?: boolean };
     result: { contacts: ContactSummary[] };
@@ -1351,7 +1320,7 @@ type ProfileAndApproachSyscalls = {
 ```
 
 `ProfileFields` contains `displayName` (1 to 80 characters), `about` (up to 2,048) and
-`contactPolicy` (`requests`, `invitation` or `closed`). `ProfileState` returns those fields as
+`contactPolicy` (`requests` or `closed`; a Ship reads any other value as `closed`). `ProfileState` returns those fields as
 `draft`, the draft's picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a
 revision, and the space's recorded `handle` when the installation has one. Clients name the profile
 by that handle rather than parsing it from the URL. While the record exists, `published` gives the
@@ -1371,7 +1340,7 @@ type ShipProfileRecord = {
   displayName: string; // 1 to 80 graphemes, at most 640 bytes
   about?: string; // up to 2,048 graphemes and 20,480 bytes; absent when empty
   avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg" | "image/webp"; size: number };
-  contactPolicy: string; // requests, invitation or closed
+  contactPolicy: string; // requests or closed; anything else reads as closed
 };
 ```
 
@@ -1406,8 +1375,7 @@ the Ship's own domain, and one on the operator's older domain names the same Shi
 domain. The Kernel resolves the handle to a DID, checks that the DID document claims the handle,
 and reads the record from the repository the document names. `PublicProfile` returns the `did`,
 `handle`, record `cid`, `displayName`, `about`, `contactPolicy` and page `url`. A 404 means no public
-profile is available at that address; it does not establish whether the Ship exists or prevent a
-private invitation. A 503 means the host the document names doesn't serve repositories right now,
+profile is available at that address; it does not establish whether the Ship exists. A 503 means the host the document names doesn't serve repositories right now,
 so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
 published fields and is written as a record at its owner's next sign-in or the next reconciliation
 of their personal agent.
@@ -1478,7 +1446,7 @@ never do. Without the binding, these calls fail as unavailable.
 
 A Ship's account is a `did:plc` whose handle is the Ship's hostname, for
 example `alice.ship.space`. The Ship's first outward act creates it: a publish,
-an invitation, a message request or another call to a Ship.
+a message request or another call to a Ship.
 `atproto.identity` returns `null` until then. While
 the profile is private, writes and uploads are refused with a message naming
 People.
@@ -2495,7 +2463,7 @@ links, and commits the receipt. Identical retries cannot overwrite later credent
 a Process acting as root cannot invoke it. It resets the sole personal account.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. Contact invitations connect separate spaces.
+Processes. Contacts connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -2832,7 +2800,7 @@ Target watch delivery is handled by the Kernel when the target connects or disco
 
 Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
-The Kernel also records each notice it sends to the owner's messenger as an `owner.notified` event in their Ship's history: the topic (`contact.message`, `contact.request` or `contact.invite.accepted`), the channel, and who the notice is about as fields: the contact's name, handle and, for messages, how many there were and the start of the newest, which is the contact's untrusted text. It carries no rendered line; each client and the model render it from those fields, and only the messenger copy is text the Kernel writes. The event's `link` names what the notice is about (`{ kind: "contact", contactId }` or `{ kind: "contact.request", requestId }`); clients open it in their own interface, and only the messenger copy carries it as a URL. It is `both`-audience, so the owner sees it in their Ship conversation, and starts no run; an active run receives it as an ordinary runtime event. Only the Kernel produces it, through the same internal delivery.
+The Kernel also records each notice it sends to the owner's messenger as an `owner.notified` event in their Ship's history: the topic (`contact.message` or `contact.request`; events recorded before contact invitations were retired may also carry `contact.invite.accepted`), the channel, and who the notice is about as fields: the contact's name, handle and, for messages, how many there were and the start of the newest, which is the contact's untrusted text. It carries no rendered line; each client and the model render it from those fields, and only the messenger copy is text the Kernel writes. The event's `link` names what the notice is about (`{ kind: "contact", contactId }` or `{ kind: "contact.request", requestId }`); clients open it in their own interface, and only the messenger copy carries it as a URL. It is `both`-audience, so the owner sees it in their Ship conversation, and starts no run; an active run receives it as an ordinary runtime event. Only the Kernel produces it, through the same internal delivery.
 
 ```ts
 type SignalSyscalls = {

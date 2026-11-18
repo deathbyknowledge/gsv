@@ -5,7 +5,7 @@ import {
   type GsvBody,
 } from "@humansandmachines/gsv";
 import {
-  ACCEPT_INVITATION,
+  SEND_MESSAGE_REQUEST,
   type ContactRequestRecord,
   type ContactSendArgs,
   type ContactSendResult,
@@ -135,16 +135,15 @@ describe("Ship-to-Ship integration", () => {
     const secondSignals: typeof firstSignals = [];
     for (const [client, events] of [[first, firstSignals], [second, secondSignals]] as const) {
       client.onSignal((signal, payload) => {
-        if (signal === "contact.changed" || signal === "contact.invite.changed") events.push({ signal, payload });
+        if (signal === "contact.changed") events.push({ signal, payload });
       });
     }
-    const checkSignals = async (events: typeof firstSignals, contacts: number, invites: number) => {
-      await expect.poll(() => events.filter((event) => event.signal === "contact.changed").length).toBe(contacts);
-      await expect.poll(() => events.filter((event) => event.signal === "contact.invite.changed").length).toBe(invites);
+    const checkSignals = async (events: typeof firstSignals, contacts: number) => {
+      await expect.poll(() => events.length).toBe(contacts);
       expect(events.every((event) => event.payload === undefined)).toBe(true);
     };
     // A Ship's methods take only calls another Ship signed.
-    const unsigned = await fetch(`https://${FIRST_HANDLE}/xrpc/${ACCEPT_INVITATION}`, {
+    const unsigned = await fetch(`https://${FIRST_HANDLE}/xrpc/${SEND_MESSAGE_REQUEST}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -152,60 +151,17 @@ describe("Ship-to-Ship integration", () => {
     expect(unsigned.status).toBe(401);
     await unsigned.arrayBuffer();
 
-    const cancelledInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    await checkSignals(firstSignals, 0, 1);
-    const pendingInvites = await first.contact.invite.list({});
-    expect(pendingInvites.invites).toEqual([
-      expect.objectContaining({
-        inviteId: cancelledInvite.inviteId,
-        state: "pending",
-      }),
-    ]);
-    expect(pendingInvites.invites[0]).not.toHaveProperty("code");
-    await first.contact.invite.cancel({ inviteId: cancelledInvite.inviteId });
-    await checkSignals(firstSignals, 0, 2);
-    await expect(second.contact.invite.accept({ code: cancelledInvite.code }))
-      .rejects.toThrow("This invitation was cancelled");
-    expect(await first.contact.invite.list({ includeTerminal: true })).toEqual({
-      invites: [expect.objectContaining({
-        inviteId: cancelledInvite.inviteId,
-        state: "cancelled",
-      })],
-    });
-
-    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    expect(new URL(invite.url!).hash).toMatch(/^#contact=[A-Za-z0-9_-]+$/);
-    const [accepted, acceptanceReplay] = await Promise.all([
-      second.contact.invite.accept({ code: invite.url! }),
-      second.contact.invite.accept({ code: invite.code }),
-    ]);
-    expect(acceptanceReplay.contact).toEqual(accepted.contact);
-    await checkSignals(firstSignals, 1, 4);
-    await checkSignals(secondSignals, 1, 0);
-    const [initialInviterResponsibilities, initialAccepterResponsibilities] = await Promise.all([
+    // The second person follows the first's invitation link: they send a message request, which the first accepts.
+    await connectByRequest(first, FIRST_HANDLE, second, "integration-pairing");
+    await checkSignals(firstSignals, 1);
+    await checkSignals(secondSignals, 1);
+    const [inviterResponsibilities, accepterResponsibilities] = await Promise.all([
       contactAddedResponsibilities(first),
       contactAddedResponsibilities(second),
     ]);
-    expect(initialInviterResponsibilities).toEqual([]);
-    expect(initialAccepterResponsibilities).toEqual([]);
-    const replacementInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    const replacement = await second.contact.invite.accept({ code: replacementInvite.code });
-    expect(replacement.contact.generation).not.toBe(accepted.contact.generation);
-    const [replacementInviterResponsibilities, replacementAccepterResponsibilities] =
-      await Promise.all([
-        contactAddedResponsibilities(first),
-        contactAddedResponsibilities(second),
-      ]);
-    expect(replacementInviterResponsibilities).toEqual([]);
-    expect(replacementAccepterResponsibilities).toEqual([]);
-    await expect(second.contact.invite.accept({ code: invite.code }))
-      .rejects.toThrow("pairing attempt was superseded");
+    expect(inviterResponsibilities).toEqual([]);
+    expect(accepterResponsibilities).toEqual([]);
     const currentContacts = await second.contact.list({});
-    await checkSignals(firstSignals, 2, 6);
-    await checkSignals(secondSignals, 2, 0);
-    expect(currentContacts.contacts).toEqual([
-      expect.objectContaining({ generation: replacement.contact.generation }),
-    ]);
     const firstContact = await waitForContact(first);
     const secondContact = currentContacts.contacts[0];
 
@@ -222,7 +178,7 @@ describe("Ship-to-Ship integration", () => {
       alias: "Second Ship",
     });
     expect(aliased.contact.localAlias).toBe("Second Ship");
-    await checkSignals(firstSignals, 3, 6);
+    await checkSignals(firstSignals, 2);
     expect((await second.contact.list({})).contacts[0]).not.toHaveProperty("localAlias");
 
     const messageArgs: ContactSendArgs = {
@@ -425,8 +381,8 @@ describe("Ship-to-Ship integration", () => {
     await first.contact.revoke({ contactId: firstContact.id });
     const revoked = await waitForContact(second, undefined, true, secondContact.id, "revoked");
     expect(revoked.state).toBe("revoked");
-    await checkSignals(firstSignals, 4, 6);
-    await checkSignals(secondSignals, 3, 0);
+    await checkSignals(firstSignals, 3);
+    await checkSignals(secondSignals, 2);
     await expect(second.contact.send({
       contactId: secondContact.id,
       text: "this must not cross a revoked relationship",
@@ -438,8 +394,8 @@ describe("Ship-to-Ship integration", () => {
       revision: receivedResource.ref.revision,
     })).rejects.toThrow(/no longer active|not found/i);
 
-    const reconnectInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    const reconnected = (await second.contact.invite.accept({ code: reconnectInvite.code })).contact;
+    await connectByRequest(first, FIRST_HANDLE, second, "integration-reconnect");
+    const reconnected = await waitForContact(second, firstIdentity?.did, false, undefined, "active");
     expect(reconnected.conversationId).toBe(secondContact.conversationId);
     const preferences = await second.contact.preferences.update({
       contactId: reconnected.id, expectedRevision: reconnected.preferences!.revision,
@@ -450,8 +406,6 @@ describe("Ship-to-Ship integration", () => {
     await second.contact.block.set({ did, blocked: true });
     expect((await second.contact.block.list({})).blocks).toEqual([expect.objectContaining({ did })]);
     expect((await second.contact.list({ includeRevoked: true })).contacts[0]).toMatchObject({ state: "revoked", blocked: true });
-    const blockedInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    await expect(second.contact.invite.accept({ code: blockedInvite.code })).rejects.toThrow("pairing is unavailable");
     await second.contact.block.set({ did, blocked: false });
     expect((await second.contact.list({ includeRevoked: true })).contacts[0]?.state).toBe("revoked");
     expect(messagesWithText(await second.conversation.history({ conversationId: secondContact.conversationId }), messageArgs.text)).toHaveLength(1);
@@ -618,10 +572,11 @@ describe("Ship-to-Ship integration", () => {
     expect(lines.map((line) => JSON.parse(line.args))).toContainEqual({ approachId: received.id, category: "harassment", includeMessage: true });
     expect(JSON.stringify(lines)).not.toContain(text);
     // As with any decline, the sender's request still waits.
-    expect((await first.approach.get({ approachId: sent.id })).approach).toMatchObject({ state: "pending", delivery: "received" });
-    // The two people connect again for the tests that follow.
-    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    await second.contact.invite.accept({ code: invite.code });
+    const waiting = (await first.approach.get({ approachId: sent.id })).approach;
+    expect(waiting).toMatchObject({ state: "pending", delivery: "received" });
+    // While it waits, the first person's Ship takes no request from the second; they withdraw it before connecting again.
+    await first.approach.decide({ approachId: sent.id, expectedRevision: waiting.revision, decision: "withdraw" });
+    await connectByRequest(first, FIRST_HANDLE, second, "integration-reconnect-after-report");
     await waitForContact(first, profile.did);
   });
 
@@ -664,8 +619,7 @@ describe("Ship-to-Ship integration", () => {
     const client = successor;
     if (!harness || !client) throw new Error("The reset Ship isn't running");
     const did = (await client.atproto.identity({})).identity?.did;
-    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    await client.contact.invite.accept({ code: invite.code });
+    await connectByRequest(first, FIRST_HANDLE, client, "integration-successor-address");
     const contact = await waitForContact(first, did);
     // Another account claims the address and serves its Ship there; nothing is sent to it.
     const holder = await network.account(SECOND_HANDLE);
@@ -684,8 +638,9 @@ describe("Ship-to-Ship integration", () => {
     const client = successor;
     if (!harness || !client) throw new Error("The reset Ship isn't running");
     const did = (await client.atproto.identity({})).identity?.did;
-    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    await client.contact.invite.accept({ code: invite.code });
+    // The last test ended the contact on the first Ship's side only; the reset Ship drops its own side before connecting again.
+    for (const contact of (await client.contact.list({})).contacts) await client.contact.revoke({ contactId: contact.id });
+    await connectByRequest(first, FIRST_HANDLE, client, "integration-successor-deleted");
     const contact = await waitForContact(first, did);
     // The space is deleted: its address reaches no Ship, then erasure tombstones its DID.
     network.hosts.set(SECOND_HANDLE, () => new Response("Not Found", { status: 404 }));
@@ -739,6 +694,27 @@ function servedBy(serve: TestHarness["fetch"]): (request: Request) => Promise<Re
     // SAFETY: The harness answers with Node's own Response, the class the network's callers receive.
     return answer as never;
   };
+}
+
+/** The inviter's profile takes requests; the invitee sends one and the inviter accepts it. */
+async function connectByRequest(inviter: GSVClient, inviterHandle: string, invitee: GSVClient, key: string): Promise<void> {
+  const { profile: state } = await inviter.profile.get({});
+  if (state.published?.contactPolicy !== "requests" || state.published.revision !== state.revision) {
+    const draft = { ...state.draft, contactPolicy: "requests" as const };
+    const saved = state.draft.contactPolicy === "requests" ? state
+      : (await inviter.profile.update({ expectedRevision: state.revision, draft })).profile;
+    await inviter.profile.publish({ expectedRevision: saved.revision });
+    await expect.poll(async () => (await inviter.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
+  }
+  const profile = (await invitee.profile.resolve({ address: inviterHandle })).profile;
+  const sent = (await invitee.approach.create({
+    did: profile.did, profileCid: profile.cid, displayName: "Invitee", text: "Hi, it's me from your link", idempotencyKey: key,
+  })).approach;
+  const inviteeDid = (await invitee.atproto.identity({})).identity?.did;
+  const received = await poll(async () => (await inviter.approach.list({ direction: "incoming", status: "active" })).approaches
+    .find((entry) => entry.state === "pending" && entry.peerDid === inviteeDid) ?? null, "the invitee's request");
+  await inviter.approach.decide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" });
+  await expect.poll(async () => (await invitee.approach.get({ approachId: sent.id })).approach.connection, { timeout: 20_000 }).toBe("connected");
 }
 
 async function waitForContact(

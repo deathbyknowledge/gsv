@@ -711,7 +711,7 @@ const mockRule = (kind: NoticeRule["kind"], contact: boolean): NoticeRule => con
   ? { kind, notify: "messenger", ship: "context", defaultNotify: "messenger", defaultShip: "context", shipChoices: ["none", "context"] }
   : { kind, notify: "none", ship: "wake", defaultNotify: "none", defaultShip: "wake", shipChoices: ["none", "context", "wake"] };
 let noticeRules: NoticeRule[] = [
-  mockRule("contact.request", true), mockRule("contact.message", true), mockRule("contact.invite.accepted", true),
+  mockRule("contact.request", true), mockRule("contact.message", true),
   mockRule("mail.received", false), mockRule("machine.added", false), mockRule("adapter.connected", false), mockRule("adapter.auth_required", false),
 ];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
@@ -1496,7 +1496,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
-        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]),
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "closed"]),
       }) }).parse(args);
       ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
       return respond(id, { profile: ownProfile });
@@ -1522,7 +1522,6 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         ? socket.textResponse(id, { mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length }, PUBLISHED_PICTURE)
         : refuse(id, 404, `No file with CID ${cid} on this Ship`);
     }
-    case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.pair.create": {
       /* the same id answers with the invitation it already made, so the browser's retry and cancel reconcile */

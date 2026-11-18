@@ -78,8 +78,8 @@ sign-in page and the browser's Home Screen shortcut.
 Desktop starts with **Create your Ship** and **Open Ship**. Create takes you through
 [signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
 The address form also works for Ships owned by someone else or served by another
-operator. Contact invitation links open a modal on the signup site, where you can
-verify your email or enter your handle or address before sign-in and explicit acceptance.
+operator. A friend's invitation link opens the signup site, where you can create a
+Ship or sign in to yours and send them a message request.
 
 Desktop and browser windows can stay connected to the same Ship at once. They
 receive new conversation messages live and refresh server state after a

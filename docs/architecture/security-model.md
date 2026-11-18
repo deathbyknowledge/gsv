@@ -32,7 +32,7 @@ including writes through the virtual `/etc/passwd` and `/etc/shadow` files.
 Normal sign-in omits the username; the Kernel resolves the personal account.
 Root must be selected explicitly. Setup uses the trusted space handle for the
 internal account name, while upgrades preserve existing UIDs, names and homes.
-Contact invitations connect people across spaces and never grant local accounts.
+Contacts connect people across spaces and never grant local accounts.
 
 Forgot-password recovery by email follows the same one-person model. The space's
 verified owner can already reach root, and root can already reset the personal

@@ -16,7 +16,6 @@ import { PageHeading } from "../../../components/ui/PageHeading";
 const HAPPENINGS = [
   { kind: "contact.request", label: "settings.happenings.request", icon: "M3 3h14v10H8l-5 4V3Zm5 3.5a2 2 0 1 1 3 1.73c-.7.4-1 .8-1 1.57m0 1.2v.5" },
   { kind: "contact.message", label: "settings.happenings.message", icon: "M3 3h14v10H8l-5 4V3Zm4 4h6M7 10h4" },
-  { kind: "contact.invite.accepted", label: "settings.happenings.inviteAccepted", icon: "M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-5 8c0-3 2-5 5-5s5 2 5 5m1-7 2 2 4-4" },
   { kind: "mail.received", label: "settings.happenings.mail", icon: "M2 4h16v12H2V4Zm0 1 8 6 8-6" },
   { kind: "machine.added", label: "settings.happenings.machineAdded", icon: "M4 4h12v9H4V4Zm-2 12h16" },
   { kind: "adapter.connected", label: "settings.happenings.adapterConnected", icon: "M7 2v5m6-5v5M5 7h10v3a5 5 0 0 1-10 0V7Zm5 8v3" },

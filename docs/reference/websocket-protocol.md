@@ -434,12 +434,8 @@ Current principal defaults from `buildSignalList()`:
 - `contact.changed`
   - Invalidates the owner's contact list after a connection, alias change, or
     revocation, including changes received from another Ship. Carries no payload.
-- `contact.invite.changed`
-  - Invalidates the owner's invitation list after creation, acceptance, or
-    cancellation. Carries no payload. Clients derive expiry from `expiresAtMs`.
-  - Both contact signals require a connected human peer for the exact owner,
-    the signal grant, and the corresponding `contact.list` or
-    `contact.invite.list` capability. Clients reread on reconnect to recover
+  - Requires a connected human peer for the exact owner, the signal grant, and
+    the `contact.list` capability. Clients reread on reconnect to recover
     changes missed while disconnected.
 - `contact.request.changed`
   - Carries only `{ contactId }` after a request is saved locally or received

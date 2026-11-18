@@ -298,9 +298,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={back}>{t("session.welcome.changeEmail")}</button>
         </div>}
         {owner && step !== "invitation" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-          const contactInvite = flow!.state.contactInvite;
+          const invite = flow!.state.invite;
           await flow!.signOut();
-          if (contactInvite) await flow!.save({ flow: "create", contactInvite });
+          if (invite) await flow!.save({ flow: "create", invite });
           setOwner(null); setEmail(""); setCode(""); setHandle(""); setConsent(false); setConsentTouched(false);
           setStep(invitation ? "invitation" : chooseSpace ? "email" : "welcome");
         })}>{t("session.welcome.signOut")}</button>}

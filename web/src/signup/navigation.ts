@@ -24,10 +24,11 @@ export function signupMessenger(utmSource: string | undefined): string | null {
 }
 
 /**
- * Where a signup continues: the new Ship's setup, with its authorization, the friend's invitation
- * and the messenger the person came from in the fragment, so none of them reaches a server log.
+ * Where a signup continues: the new Ship's setup, with its authorization, the profile of whoever
+ * invited the person and the messenger they came from in the fragment, so none of them reaches a
+ * server log. An existing Ship opens a request to the inviter, as the inviter's public profile does.
  */
-export function signupDestination(origin: string, onboardingToken?: string | null, carried: { contact?: string | null; messenger?: string | null } = {}): string {
+export function signupDestination(origin: string, onboardingToken?: string | null, carried: { invite?: string | null; messenger?: string | null } = {}): string {
   const url = new URL(origin);
   const local = url.protocol === "http:" && (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost"));
   if (url.origin !== origin || (url.protocol !== "https:" && !local)) throw new Error(t("signup.invalidAddress"));
@@ -36,9 +37,12 @@ export function signupDestination(origin: string, onboardingToken?: string | nul
     url.pathname = "/onboarding";
     url.searchParams.set(SIGNUP_ARRIVAL_PARAM, "1");
     const fragment = new URLSearchParams({ onboarding: onboardingToken });
-    if (carried.contact) fragment.set("contact", carried.contact);
+    if (carried.invite) fragment.set("invite", carried.invite);
     if (carried.messenger) fragment.set("messenger", carried.messenger);
-    url.hash = carried.contact || carried.messenger ? fragment.toString() : onboardingToken;
+    url.hash = carried.invite || carried.messenger ? fragment.toString() : onboardingToken;
+  } else if (carried.invite) {
+    url.pathname = "/people";
+    url.searchParams.set("compose", carried.invite);
   }
   return url.href;
 }

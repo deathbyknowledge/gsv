@@ -14,9 +14,8 @@ import { LoadOnScroll } from "./LoadOnScroll";
 import { ContactRow, RequestRow } from "./PeopleRows";
 import { PeopleSearch } from "./PeopleSearch";
 import { ContactAttentionNotice, ContactInspector, useContacts } from "./Contacts";
-import { InviteContact, type InvitationDraft } from "./InviteContact";
+import { InviteContact } from "./InviteContact";
 import { PeopleWelcome } from "./PeopleWelcome";
-import { pendingContactInvitation, clearContactInvitation } from "../../../services/session/contactInvitationIntent";
 import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
 import { canConfigure } from "../settings/settingsModel";
 import { useDraftGuard } from "../shared/useDraftGuard";
@@ -50,13 +49,12 @@ export function People({ onDirtyChange, onAsk }: {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [compose, setCompose] = useState(() => emptyApproachDraft(new URLSearchParams(window.location.search).get("compose") ?? ""));
-  const [invitation, setInvitation] = useState<InvitationDraft>(() => ({ code: pendingContactInvitation() ?? "", issued: null, shipHandlesMessages: null }));
   const [idea, setIdea] = useState(0);
   const [chosenIdea, setChosenIdea] = useState<{ index: number; contactId: string | null } | null>(null);
   const [{ view, contactId, requestId, direction, history, archived, edit, focusBio }, open] = usePeopleRoute();
   const inboxContact = useRef(contactId);
   if (view === "inbox") inboxContact.current = contactId;
-  const [dialog, setDialog] = useState<"add" | "invitation" | "accept" | null>(() => invitation.code ? "accept" : compose.url ? "add" : null);
+  const [dialog, setDialog] = useState<"add" | "invitation" | null>(() => compose.url ? "add" : null);
   const firstDestination = useRef(true);
   useLayoutEffect(() => {
     if (firstDestination.current) { firstDestination.current = false; return; }
@@ -124,7 +122,7 @@ export function People({ onDirtyChange, onAsk }: {
   const items = requests.data?.pages.flatMap((page) => page.approaches) ?? [];
   const hasSelection = view === "profile" || (view === "requests" ? !!requestId : view === "inbox" && !!contactId);
   useLayoutEffect(() => { if (active && hasSelection) detail.current?.focus({ preventScroll: true }); }, [active, view, contactId, requestId]);
-  const mayStart = !!account && (canConfigure(account, "contact.invite.create") || canConfigure(account, "contact.invite.accept") || canConfigure(account, "profile.resolve"));
+  const mayStart = !!account && (canConfigure(account, "profile.get") || canConfigure(account, "profile.resolve"));
   const firstVisit = !!contactsQuery.data && !contacts.length && !hasSelection && view === "inbox" && !archived;
   const closeSearch = () => { setSearching(false); setFilter(""); };
   const openList = (next: PeopleRoute["view"]) => {
@@ -225,10 +223,11 @@ export function People({ onDirtyChange, onAsk }: {
       <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} edit={edit} focusBio={focusBio} onDirty={setProfileDirty} onEdit={(focus) => open({ view: "profile", edit: true, focusBio: focus === "bio" })} onBack={() => edit ? open({ view: "profile", edit: false, focusBio: false }) : open({ view: "inbox", contactId: null })} />}</RetainedView>
       {view === "contacts" && <div class="people-empty"><p>{t("people.contacts.select")}</p></div>}
     </section>
-    <FleetDialog open={active && dialog !== null} title={t(dialog === "add" ? "people.add.title" : "people.connect.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
-      {dialog === "invitation" || dialog === "accept" ? <InviteContact key={dialog} account={account} draft={invitation} onChange={setInvitation} onAdded={showConversation} onBusy={setBusy} accepting={dialog === "accept"} onProfile={() => setDialog("add")} />
+    <FleetDialog open={active && dialog !== null} title={t(dialog === "add" ? "people.add.title" : "people.connect.title")} onClose={() => { if (!busy) setDialog(null); }}>
+      {dialog === "invitation" ? <InviteContact account={account} profile={profile.data} onBusy={setBusy} onFind={() => setDialog("add")}
+        onEditProfile={() => { setDialog(null); open({ view: "profile", edit: true, focusBio: false }); }} />
         : dialog === "add" ? <AddContact account={account} draft={compose} busy={busy} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact}
-          onInvite={() => setDialog("invitation")} onHaveInvitation={() => setDialog("accept")} /> : null}
+          onInvite={() => setDialog("invitation")} /> : null}
     </FleetDialog>
   </main>;
 }

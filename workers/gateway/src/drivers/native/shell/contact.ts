@@ -3,12 +3,12 @@ import type { ExecResult } from "just-bash";
 import type {
   ApproachResult,
   ApproachSummary,
-  ContactInviteCreateArgs,
   ContactRequestCreateArgs,
   ContactRequestState,
   ContactRequestUpdateArgs,
 } from "@humansandmachines/gsv/protocol";
-import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, contactInviteUrl, jsonObjectSchema, profileContactPolicy } from "@humansandmachines/gsv/protocol";
+import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { handleApproachCreate } from "../../../kernel/approaches/admission";
@@ -23,19 +23,10 @@ import {
   handleContactRequestUpdate,
   handleContactRevoke,
 } from "../../../kernel/federation";
-import {
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
-} from "../../../kernel/federation/invitations";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
 import { handleProfileResolve, ownerDisplayName } from "../../../kernel/profiles";
-import {
-  parseDurationMs,
-  requireCommandCapability,
-  requireShellOptionValue,
-} from "./common";
+import { shipAddress } from "../../../installation/identity";
+import { requireCommandCapability, requireShellOptionValue } from "./common";
 import * as z from "zod/mini";
 
 const requestStateSchema = z.enum([
@@ -86,7 +77,7 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
         alias: rest[1] === "--clear" && rest.length === 2 ? null : rest.slice(1).join(" "),
       }, ctx));
     case "invite":
-      return await manageInvite(rest, ctx);
+      return inviteLink(rest, ctx);
     case "handling": {
       requireCommandCapability(ctx, "contact.preferences.update");
       requireArgumentCount(rest, 4, "handling requires: contact handling CONTACT_ID manual|ship --revision N");
@@ -127,40 +118,18 @@ async function listContacts(args: string[], ctx: KernelContext): Promise<ExecRes
   return completed(`${lines.join("\n")}\n`);
 }
 
-async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecResult> {
-  const [action, ...rest] = args;
-  if (action === "create") {
-    requireCommandCapability(ctx, "contact.invite.create");
-    return json(await handleContactInviteCreate(parseInviteOptions(rest, true), ctx));
-  }
-  if (action === "accept") {
-    requireCommandCapability(ctx, "contact.invite.accept");
-    const code = requireShellOptionValue(rest[0], "invite accept");
-    return json(await handleContactInviteAccept({ code, ...parseInviteOptions(rest.slice(1), false) }, ctx));
-  }
-  if (action === "list") {
-    requireCommandCapability(ctx, "contact.invite.list");
-    const flags = parseOnlyFlags(rest, new Set(["--all", "--json"]));
-    const result = handleContactInviteList({ includeTerminal: flags.has("--all") }, ctx);
-    if (flags.has("--json")) return json(result);
-    const lines = ["INVITE\tSTATE\tEXPIRES\tCONTACT"];
-    for (const invite of result.invites) {
-      lines.push([
-        invite.inviteId,
-        invite.state,
-        new Date(invite.expiresAtMs).toISOString(),
-        invite.contactId ?? "-",
-      ].join("\t"));
-    }
-    if (result.invites.length === 0) lines.push("(none)");
-    return completed(`${lines.join("\n")}\n`);
-  }
-  if (action === "cancel") {
-    requireCommandCapability(ctx, "contact.invite.cancel");
-    requireArgumentCount(rest, 1, "invite cancel requires: contact invite cancel INVITE_ID");
-    return json(handleContactInviteCancel({ inviteId: rest[0] }, ctx));
-  }
-  throw new Error("invite requires create, accept, list, or cancel");
+/** The owner's invitation link; it carries no secret, and says when no one can send a request from it yet. */
+function inviteLink(args: string[], ctx: KernelContext): ExecResult {
+  requireCommandCapability(ctx, "profile.get");
+  requireArgumentCount(args, 0, "invite takes no arguments: contact invite");
+  const ownerUid = requireContactCaller(ctx, false);
+  const presentation = deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG);
+  const origin = shipAddress(ctx.installationIdentity, presentation.primaryDomain)?.origin ?? ctx.installationIdentity?.canonicalOrigin;
+  if (!origin) throw new Error("This Ship has no address to invite people to");
+  const url = contactInviteUrl(origin, presentation);
+  const published = ctx.profiles.published(ownerUid);
+  if (published && profileContactPolicy(published.record.contactPolicy) === "requests") return completed(`${url}\n`);
+  return completed(`${url}\nNo one can send a request from it yet: the owner's profile must be public with message requests on (People → Profile).\n`);
 }
 
 /**
@@ -223,20 +192,6 @@ function parseHandling(value: string): boolean {
   if (value === "manual") return false;
   if (value === "ship") return true;
   throw new Error("handling must be manual or ship");
-}
-
-function parseInviteOptions(args: string[], allowExpiry: boolean): ContactInviteCreateArgs {
-  let shipHandlesMessages: boolean | undefined;
-  let expiresInSeconds: number | undefined;
-  for (let index = 0; index < args.length; index += 2) {
-    const option = args[index];
-    const value = requireShellOptionValue(args[index + 1], option);
-    if (option === "--handling" && shipHandlesMessages === undefined) shipHandlesMessages = parseHandling(value);
-    else if (option === "--expires" && allowExpiry && expiresInSeconds === undefined) expiresInSeconds = Math.ceil(parseDurationMs(value) / 1_000);
-    else throw new Error(`unexpected or repeated invite option: ${option}`);
-  }
-  if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
-  return { shipHandlesMessages, ...(expiresInSeconds !== undefined ? { expiresInSeconds } : undefined) };
 }
 
 async function manageRequest(args: string[], ctx: KernelContext): Promise<ExecResult> {
@@ -374,10 +329,7 @@ function contactUsage(): string {
     "  contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
-    "  contact invite create --handling manual|ship [--expires DURATION]",
-    "  contact invite accept LINK_OR_CODE --handling manual|ship",
-    "  contact invite list [--all] [--json]",
-    "  contact invite cancel INVITE_ID",
+    "  contact invite",
     "  contact handling CONTACT_ID manual|ship --revision N",
     "  contact revoke CONTACT_ID",
     "  contact request list [--contact CONTACT_ID] [--all] [--json]",
@@ -388,10 +340,10 @@ function contactUsage(): string {
     "ship lets Ship handle future incoming messages. The choice affects only this owner's side and can change later.",
     "Profiles are public by default. connect finds the person's profile and sends them a first message request;",
     "they decide whether to accept. The request fails if the profile is unavailable or not receiving requests.",
-    "Private invitations need neither a public profile nor an existing contact.",
-    "To invite someone at a known email address, create an invitation and send its url with mail send; see mail help.",
-    "Otherwise share the url with the owner. Check email delivery with mail status and acceptance with contact invite list --all.",
-    "Creating or sending a link does not mean it was accepted.",
+    "invite prints the owner's invitation link. It never expires and anyone may use it: whoever opens it creates or signs",
+    "in to their Ship and sends the owner an ordinary message request, which works only while the owner's profile is",
+    "public with requests on. To invite someone at a known email address, send the link with mail send; see mail help.",
+    "Otherwise share the link with the owner. Sending a link does not mean anyone has connected.",
     "Pairing, handling changes and revocation require the signed-in human or their canonical Ship. Send ordinary contact messages with",
     "`message send --to CONTACT_ID --message TEXT --also`.",
     "",

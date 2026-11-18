@@ -18,9 +18,9 @@ const LOOKUP_DELAY_MS = 400;
 
 /**
  * Finds someone by handle, among your contacts or on the open network, and starts a message request
- * to them; someone without a Ship gets an invitation link instead.
+ * to them; someone without a Ship gets the owner's invitation link instead.
  */
-export function AddContact({ account, draft, busy, onChange, onSent, onBusy, contacts, onOpen, onInvite, onHaveInvitation }: {
+export function AddContact({ account, draft, busy, onChange, onSent, onBusy, contacts, onOpen, onInvite }: {
   account: ConsoleAccount | undefined;
   draft: ApproachDraft;
   /** A request is sending; leaving would let its finish replace whatever draft came next. */
@@ -31,7 +31,6 @@ export function AddContact({ account, draft, busy, onChange, onSent, onBusy, con
   contacts: ContactSummary[];
   onOpen: (contactId: string) => void;
   onInvite: () => void;
-  onHaveInvitation: () => void;
 }) {
   const t = useT();
   const { client, connected } = useGateway();
@@ -73,7 +72,6 @@ export function AddContact({ account, draft, busy, onChange, onSent, onBusy, con
       onChange={(url) => onChange({ ...draft, url })} inputProps={{ autoFocus: true, autoComplete: "off", autoCapitalize: "none", spellcheck: false }} />
     <div class="people-add-links">
       <button class="people-action is-accent" onClick={onInvite}>{t("people.add.invite")}</button>
-      <button class="people-action" disabled={!account || !canConfigure(account, "contact.invite.accept")} onClick={onHaveInvitation}>{t("people.invite.have")}</button>
     </div>
     {(known.length > 0 || found) && <ul class="people-add-results" aria-label={t("people.add.results")}>
       {known.map((contact) => <li key={contact.id}>

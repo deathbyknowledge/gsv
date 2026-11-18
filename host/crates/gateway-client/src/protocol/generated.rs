@@ -141,6 +141,9 @@ pub struct PublicDeploymentConfig {
     pub docs_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_url: Option<String>,
+    /// Where people create a Ship. A person's invitation link names them on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signup_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

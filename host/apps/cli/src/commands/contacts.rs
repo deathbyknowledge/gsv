@@ -72,7 +72,7 @@ pub(crate) async fn run(
                     render::empty(
                         &style,
                         "No contacts yet.",
-                        Some("Invite someone: gsv contacts invite")
+                        Some("Invite someone with your link: gsv run contact invite")
                     )
                 );
                 return Ok(());
@@ -204,65 +204,6 @@ pub(crate) async fn run(
             };
             print!("{}", render::heading(&style, "Inbox", Some(&note)));
             print!("{}", table.render(&style));
-            Ok(())
-        }
-        Some(ContactsAction::Invite { days }) => {
-            let mut args = json!({});
-            if let Some(days) = days {
-                args["expiresInSeconds"] = json!(u64::from(days.max(1)) * 86_400);
-            }
-            let invite = call(&client, "contact.invite.create", args).await?;
-            if out.json {
-                return render::print_json(&invite);
-            }
-            let expires = number(&invite, "expiresAtMs")
-                .map(|at| {
-                    format!(
-                        " It works once and expires {}.",
-                        render::relative_time(at, now)
-                    )
-                })
-                .unwrap_or_default();
-            println!("Share this with one person.{}\n", style.dim(&expires));
-            match opt_text(&invite, "url") {
-                Some(link) => println!("  {}", style.strong(link)),
-                None => println!("  {}", style.strong(text(&invite, "code"))),
-            }
-            println!();
-            print!(
-                "{}",
-                render::hint(
-                    &style,
-                    "They can open the link, or run: gsv contacts accept CODE"
-                )
-            );
-            Ok(())
-        }
-        Some(ContactsAction::Accept { code }) => {
-            let accepted = call(
-                &client,
-                "contact.invite.accept",
-                json!({ "code": code.trim() }),
-            )
-            .await?;
-            if out.json {
-                return render::print_json(&accepted);
-            }
-            let contact = accepted.get("contact").cloned().unwrap_or(Value::Null);
-            println!(
-                "You're connected with {}.",
-                style.strong(display_name(&contact))
-            );
-            print!(
-                "{}",
-                render::hint(
-                    &style,
-                    &format!(
-                        "Say hello: gsv contacts send \"{}\" \"hi\"",
-                        display_name(&contact)
-                    )
-                )
-            );
             Ok(())
         }
         Some(ContactsAction::Send { name, message }) => {

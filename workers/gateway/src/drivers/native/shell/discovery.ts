@@ -64,14 +64,11 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Add a person by sending their profile a first message request with contact connect, or connect through a private invitation link when no profile is available. Ask who should handle new messages, then connect, create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Add a person by sending their profile a first message request with contact connect, or share the owner's invitation link from contact invite so they can send one. Ask who should handle new messages, then connect with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact find @HANDLE|ADDRESS",
     "contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "contact list [--all] [--json]",
-    "contact invite create --handling manual|ship [--expires DURATION]",
-    "contact invite accept LINK_OR_CODE --handling manual|ship",
-    "contact invite list [--all] [--json]",
-    "contact invite cancel INVITE_ID",
+    "contact invite",
     "contact handling CONTACT_ID manual|ship --revision N",
     "contact revoke CONTACT_ID",
     "contact request list [--contact CONTACT_ID] [--all] [--json]",
