@@ -15,12 +15,20 @@ export function whatsAppCountryList(codes: readonly string[], t: Translate): str
     .join(", ");
 }
 
-/** One quiet line naming the countries the operator's number cannot reach; nothing when it reaches everyone. */
+/**
+ * The countries the operator's number cannot reach, folded behind their flags so it stays out of
+ * the way of everyone else; a plain line when no flag names them, nothing when it reaches everyone.
+ */
 export function whatsAppReachNotice(codes: readonly string[], t: Translate): JSX.Element | null {
   if (!codes.length) return null;
   const flags = [...codes].sort().flatMap((code) => WHATSAPP_CALLING_CODE_FLAGS.get(code) ?? []).join(" ");
   const note = t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(codes, t) });
-  return <p class="gsv-cf-note gsv-prose">{flags ? `${flags} ${note}` : note}</p>;
+  if (!flags) return <p class="gsv-cf-note gsv-prose">{note}</p>;
+  const label = t("settings.pairing.whatsappUnreachableLabel");
+  return <details class="gsv-cf-aside gsv-prose gsv-cf-reach">
+    <summary aria-label={label} title={label}>{flags}</summary>
+    <p>{note}</p>
+  </details>;
 }
 
 /**

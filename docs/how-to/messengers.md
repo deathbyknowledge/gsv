@@ -236,8 +236,9 @@ Meta restricts WhatsApp Business messaging across the borders of Brazil (+55)
 and Indonesia (+62). A Ship number registered elsewhere cannot message
 numbers in either country, and a number registered in one of
 them cannot reach the other. The first-run screen and the WhatsApp page in
-**Settings → Messengers** show a short flagged note naming those countries;
-people with those numbers can pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
+**Settings → Messengers** show those countries' flags; tapping them names the
+countries, and people with those numbers can pick Telegram, email, or the Ship
+app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 

@@ -484,6 +484,7 @@ export const en = {
   "settings.pairing.disconnect": "DISCONNECT",
   "settings.pairing.disconnecting": "DISCONNECTING",
   "settings.pairing.whatsappUnreachable": "WhatsApp numbers from {countries} can't connect: Meta blocks them.",
+  "settings.pairing.whatsappUnreachableLabel": "Countries this WhatsApp number can't reach",
   "settings.pairing.whatsappCountries.both": "Brazil (+55) and Indonesia (+62)",
   "settings.pairing.whatsappCountries.brazil": "Brazil (+55)",
   "settings.pairing.whatsappCountries.indonesia": "Indonesia (+62)",

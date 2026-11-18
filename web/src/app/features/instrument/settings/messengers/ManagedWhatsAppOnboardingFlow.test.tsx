@@ -145,7 +145,7 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(nodeWithLabel(nodes(), "OPEN WHATSAPP").props.disabled).toBe(true);
   });
 
-  it("notes the countries the number cannot reach in one quiet line, whatever the device's language", async () => {
+  it("folds the countries the number cannot reach behind their flags, whatever the device's language", async () => {
     const note = () => {
       const text = collectText(nodes());
       return text.includes("can't connect") ? text : undefined;
@@ -157,6 +157,8 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     vi.stubGlobal("navigator", { languages: ["en-US", "es-ES"] });
     await remount();
     expect(note()).toContain("🇧🇷 🇮🇩 WhatsApp numbers from Brazil (+55) and Indonesia (+62) can't connect: Meta blocks them.");
+    const flags = nodes().find((node) => node.type === "summary" && node.props["aria-label"] === "Countries this WhatsApp number can't reach");
+    expect(collectText(flags?.props.children)).toBe("🇧🇷 🇮🇩");
     expect(nodes().some((node) => node.props.variant === "warning")).toBe(false);
 
     await withCodes(["62"]);
