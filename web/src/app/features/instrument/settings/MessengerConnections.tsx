@@ -3,14 +3,16 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useState } from "preact/hooks";
 import { useAppLocation } from "../../../services/navigation/appNavigation";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import { Tag } from "../../../components/ui/Tag";
+import { Tag, type TagTone } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { disconnectConsoleAdapterPairing } from "../../../services/system/consoleService";
 import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { refreshMessengerConnections } from "../wire/messengerSync";
 import { MessengerPairing } from "./Telegram";
+import { MessengerIcon } from "../onboarding/MessengerIcon";
+import { MessengerCard } from "./messengers/MessengerCard";
+import { MessengerSteps } from "./messengers/MessengerSteps";
 import type { ManagedMessengerId } from "./messengers/ManagedTelegramOnboardingFlow";
 import { loadMessengerConnections, messengerConnectionStatus, messengerLinkName, type MessengerConnectionStatus } from "./messengerConnectionsService";
 import { canConfigure } from "./settingsModel";
@@ -31,6 +33,13 @@ const STATUS_LABELS = {
   "status-unavailable": "settings.messengers.status.statusUnavailable",
   "service-unavailable": "settings.messengers.status.serviceUnavailable",
 } satisfies Record<MessengerConnectionStatus, TextKey>;
+const STATUS_TONES = {
+  connected: "online",
+  "reconnect-needed": "warn",
+  "needs-attention": "error",
+  "status-unavailable": "idle",
+  "service-unavailable": "idle",
+} satisfies Record<MessengerConnectionStatus, TagTone>;
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
   const t = useT();
@@ -76,31 +85,24 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
       const statuses = links.map((link) => messengerConnectionStatus(adapter, link.accountId));
-      const nameTone: StatusTone = statuses.includes("needs-attention") ? "error"
-        : statuses.includes("reconnect-needed") ? "warn"
-        : statuses.includes("connected") ? "online" : "idle";
+      // The card names the worst state among its accounts.
+      const headline = (["needs-attention", "reconnect-needed", "connected"] as const).find((status) => statuses.includes(status)) ?? statuses[0];
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
       const canConnect = !comingSoon && connected && canPair && available && !unlink.isPending;
-      return <section class="settings-messenger" key={id} aria-label={name}>
-        <div class="settings-messenger-heading">
-          <h2 class="settings-messenger-name">
-            <StatusDot tone={nameTone} size={7} />
-            {name}
-            {comingSoon && <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />}
-          </h2>
-          <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
-            {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
-          </button>
-        </div>
-        <p class="settings-muted">{t(blurb)}</p>
-        {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
-        {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && !comingSoon && <ul class="settings-list settings-messenger-links"><li class="settings-messenger-state">
-          <span class="settings-messenger-status gsv-sublabel">{t("settings.messengers.noLinks", { name })}</span>
-        </li></ul>}
-        <ul class="settings-list settings-messenger-links">{links.map((link) => {
+      const fromLink = id === "whatsapp" || id === "telegram";
+      return <MessengerCard key={id} id={id} name={name} sub={t(blurb)} icon={<MessengerIcon id={id} size={24} />}
+        action={comingSoon ? undefined : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
+        status={comingSoon
+          ? <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />
+          : headline && <Tag tone={STATUS_TONES[headline]} dot label={t(STATUS_LABELS[headline])} />}
+        expanded={pairing === id} disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)}
+        onToggle={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}
+        details={(!available || !canPair || links.length > 0) && <>
+          {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
+          {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
+          {links.length > 0 && <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;
           const isRemoving = removing?.adapter === link.adapter && removing.accountId === link.accountId && removing.actorId === link.actorId;
@@ -125,12 +127,17 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
               </>}
             </div>
           </li>;
-        })}</ul>
-        {!comingSoon && pairing === id && <fieldset disabled={!connected || !canPair || !available}>
-          <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }}
-            links={connections.data.links} onRefreshLinks={() => { void connections.refetch(); }} />
-        </fieldset>}
-      </section>;
+        })}</ul>}
+        </>}>
+        {pairing === id && (fromLink
+          ? <MessengerSteps adapter={id} name={name} linked={false} disabled={!connected || !canPair || !available} links={connections.data.links}
+            onRefreshLinks={() => { void connections.refetch(); }} doneLabel={t("settings.pairing.done")}
+            onFinish={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
+          : <fieldset disabled={!connected || !canPair || !available}>
+            <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }}
+              links={connections.data.links} onRefreshLinks={() => { void connections.refetch(); }} />
+          </fieldset>)}
+      </MessengerCard>;
     })}
   </section>;
 }

@@ -1,0 +1,33 @@
+/* A messenger card (MessengerCard): a Surface header that opens the panel attached beneath it. */
+.messenger-card > .gsv-surface + .gsv-surface { border-top: 0; }
+.messenger-card-head { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 4px 16px; min-height: 44px; }
+.messenger-card-head > svg { grid-row: 1 / 3; color: var(--accent); }
+.messenger-card :disabled .messenger-card-head > svg { color: inherit; }
+.messenger-card-name, .messenger-card-sub { grid-column: 2; }
+.messenger-card-name { color: var(--text-hi); font-size: 1rem; font-weight: 500; }
+.messenger-card-sub { color: var(--text-dim); }
+.messenger-card-trailing, .messenger-card-close { grid-column: 3; grid-row: 1 / 3; }
+.messenger-card-trailing { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+.messenger-card-trailing .gsv-btn { text-transform: uppercase; }
+.messenger-card .gsv-btn { min-height: 44px; }
+/* the pairing reuses the connect flow's numbered rail; titles read as prose, controls keep their own width */
+.messenger-steps .gsv-cf-rail-body { gap: 14px; align-items: flex-start; }
+.messenger-steps .gsv-cf-rail-step:not(:last-child) > .gsv-cf-rail-body { padding-bottom: 28px; }
+.messenger-steps .gsv-alert { align-self: stretch; }
+div.messenger-steps { display: flex; flex-direction: column; gap: 20px; }
+.messenger-step-title { margin: 4px 0 0; color: var(--text-hi); }
+.messenger-who, .messenger-trouble-line { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
+.messenger-trouble > summary { padding-block: 12px; }
+.messenger-trouble-line > p { margin: 0; }
+.messenger-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+@container instrument (max-width: 600px) {
+  .messenger-card-head { grid-template-columns: 24px minmax(0, 1fr); }
+  .messenger-card-close { grid-column: 3; grid-row: 1; }
+  .messenger-card-trailing { grid-column: 1 / -1; grid-row: 3; justify-content: stretch; margin-top: 12px; }
+  .messenger-card-trailing .gsv-btn { flex: 1; }
+  .messenger-steps .gsv-cf-rail-body { align-items: stretch; flex-direction: column; }
+}
+/* the link's QR code is for a computer's screen; a phone opens the link itself */
+@media (max-width: 520px), (pointer: coarse) {
+  .messenger-steps .gsv-cf-scan { display: none; }
+}

@@ -7,10 +7,10 @@ import { collectNodes, collectText, createTestRoot } from "../../../testing/test
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
 import type { ConsoleAdapter, ConsoleIdentityLink } from "../../../domain/system/consoleModels";
-import { FirstRunPairing } from "./FirstRunPairing";
+import { MessengerCard } from "../settings/messengers/MessengerCard";
+import { MessengerSteps } from "../settings/messengers/MessengerSteps";
 import { FirstRunScreen } from "./FirstRunScreen";
 
 let tree: ComponentChildren;
@@ -35,12 +35,13 @@ async function mount() {
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   await vi.waitFor(() => expect(collectText(tree)).toContain("Where do you want to message Ship?"));
 }
-const cards = () => collectNodes(tree).filter((node) => node.type === "section" && node.props["aria-label"]).map((node) => node.props["aria-label"]);
-const header = (name: string) => collectNodes(tree).find((node) => node.type === Surface && node.props.onClick && collectText(node.props.children).startsWith(name));
-const pairings = () => collectNodes(tree).filter((node) => node.type === FirstRunPairing);
+const cards = () => collectNodes(tree).filter((node) => node.type === MessengerCard).map((node) => node.props.name);
+const card = (name: string) => collectNodes(tree).find((node) => node.type === MessengerCard && node.props.name === name);
+const toggle = async (name: string) => { await act(async () => { card(name)!.props.onToggle!(); }); };
+const pairings = () => collectNodes(tree).filter((node) => node.type === MessengerSteps);
 const button = (label: string) => collectNodes(tree).find((node) => node.type === Button && node.props.label === label);
 const alert = () => collectNodes(tree).find((node) => node.type === Alert);
-const skip = () => button("Skip for now, chat with Ship here");
+const skip = () => button("Skip for now");
 const click = async (node: { props: { onClick?: () => void | Promise<void> } } | undefined) => { await act(async () => { await node!.props.onClick!(); }); };
 /** Signup left this messenger in tab storage for the first run; returns that storage. */
 function arriveFrom(messenger: string): Map<string, string> {
@@ -81,10 +82,9 @@ describe("first-run screen", () => {
   it("offers each pairable messenger as a card, the first one leading, with the privacy note and a skip", async () => {
     await mount();
     await vi.waitFor(() => expect(cards()).toEqual(["WhatsApp", "Telegram"]));
-    expect(collectText(header("WhatsApp")!.props.children)).toContain("Chat on WhatsApp");
-    const pills = collectNodes(tree).filter((node) => node.type === "span" && node.props.class?.startsWith("gsv-btn")).map((node) => node.props.class);
-    expect(pills).toEqual([expect.stringContaining("gsv-btn-primary"), expect.stringContaining("gsv-btn-secondary")]);
-    expect(header("WhatsApp")?.props["aria-expanded"]).toBe(false);
+    expect(card("WhatsApp")?.props).toMatchObject({ action: "Chat on WhatsApp", primary: true });
+    expect(card("Telegram")?.props).toMatchObject({ action: "Chat on Telegram", primary: false });
+    expect(card("WhatsApp")?.props.expanded).toBe(false);
     expect(collectText(tree)).toContain("You can always reach your Ship at jessica.ship.space.");
     expect(collectText(tree)).toContain("Ship only sees the messages you send it.");
     expect(pairings()).toEqual([]);
@@ -94,22 +94,21 @@ describe("first-run screen", () => {
 
   it("opens one card at a time from its header, which also closes it", async () => {
     await mount();
-    await vi.waitFor(() => expect(header("WhatsApp")).toBeDefined());
-    await click(header("WhatsApp"));
+    await vi.waitFor(() => expect(card("WhatsApp")).toBeDefined());
+    await toggle("WhatsApp");
     expect(pairings().map((node) => node.props.adapter)).toEqual(["whatsapp"]);
-    expect(header("WhatsApp")?.props["aria-expanded"]).toBe(true);
-    expect(collectText(header("WhatsApp")!.props.children)).toContain("close");
-    await click(header("Telegram"));
+    expect(card("WhatsApp")?.props.expanded).toBe(true);
+    await toggle("Telegram");
     expect(pairings().map((node) => node.props.adapter)).toEqual(["telegram"]);
-    await click(header("Telegram"));
+    await toggle("Telegram");
     expect(pairings()).toEqual([]);
   });
 
   it("shows a linked messenger as connected, and its pairing sees the links, refreshes them, and finishes", async () => {
     links = [whatsAppLink];
     await mount();
-    await vi.waitFor(() => expect(collectNodes(header("WhatsApp")!.props.children).find((node) => node.type === Tag)?.props.label).toBe("Connected"));
-    await click(header("WhatsApp"));
+    await vi.waitFor(() => expect(collectNodes(card("WhatsApp")!.props.status).find((node) => node.type === Tag)?.props.label).toBe("Connected"));
+    await toggle("WhatsApp");
     expect(pairings()[0]?.props).toMatchObject({ linked: true, links: [whatsAppLink] });
     request.mockClear();
     await act(async () => { pairings()[0]!.props.onRefreshLinks!(); });
@@ -122,12 +121,12 @@ describe("first-run screen", () => {
     const arrival = arriveFrom("telegram");
     await mount();
     await vi.waitFor(() => expect(pairings().map((node) => node.props.adapter)).toEqual(["telegram"]));
-    expect(header("Telegram")?.props["aria-expanded"]).toBe(true);
+    expect(card("Telegram")?.props.expanded).toBe(true);
     expect(arrival.size).toBe(0);
     // Closing it leaves the choice to the person; a later load of the links does not open it again.
-    await click(header("Telegram"));
+    await toggle("Telegram");
     expect(pairings()).toEqual([]);
-    await click(header("WhatsApp"));
+    await toggle("WhatsApp");
     request.mockClear();
     await act(async () => { pairings()[0]!.props.onRefreshLinks!(); });
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.link.list", {}));
@@ -139,7 +138,7 @@ describe("first-run screen", () => {
     const connectedHint = arriveFrom("whatsapp");
     await mount();
     await vi.waitFor(() => expect(connectedHint.size).toBe(0));
-    expect(collectNodes(header("WhatsApp")!.props.children).find((node) => node.type === Tag)?.props.label).toBe("Connected");
+    expect(collectNodes(card("WhatsApp")!.props.status).find((node) => node.type === Tag)?.props.label).toBe("Connected");
     expect(pairings()).toEqual([]);
     await root.unmount();
 

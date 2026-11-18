@@ -8,6 +8,9 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/con
 export type TestNodeProps = {
   "aria-label"?: string;
   "aria-expanded"?: boolean;
+  expanded?: boolean;
+  primary?: boolean;
+  onToggle?: () => void;
   "aria-current"?: string;
   blurb?: string;
   action?: string;

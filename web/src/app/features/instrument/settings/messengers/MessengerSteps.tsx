@@ -1,21 +1,21 @@
 import { useState } from "preact/hooks";
-import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
-import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
-import { useT } from "../../../i18n/locale";
+import { Alert } from "../../../../components/ui/Alert";
+import { Button } from "../../../../components/ui/Button";
+import type { ConsoleIdentityLink } from "../../../../domain/system/consoleModels";
+import { useT } from "../../../../i18n/locale";
 import {
   useConsoleAdapterPairingInfo,
   useCreateConsoleAdapterPairingLink,
   useDisconnectConsoleAdapterPairing,
-} from "../../../services/system/useConsoleData";
-import { useCodeCopy, useCodeCopyOutcome } from "../shared/codeCopy";
-import { messengerLinkName } from "../settings/messengerConnectionsService";
-import { LinkQrCode } from "../settings/messengers/LinkQrCode";
-import { useMessengerLink } from "../settings/messengers/useMessengerLink";
+} from "../../../../services/system/useConsoleData";
+import { useCodeCopy, useCodeCopyOutcome } from "../../shared/codeCopy";
+import { messengerLinkName } from "../messengerConnectionsService";
+import { LinkQrCode } from "./LinkQrCode";
+import { useMessengerLink } from "./useMessengerLink";
 import {
   whatsAppNumberFromChatUrl,
   whatsAppReachNotice,
-} from "../settings/messengers/whatsapp";
+} from "./whatsapp";
 
 export type MessengerChoice = "whatsapp" | "telegram";
 
@@ -28,6 +28,8 @@ type Props = {
   /** The owner's messenger links, where the connection this card's link makes appears. */
   links?: readonly ConsoleIdentityLink[];
   onRefreshLinks: () => void;
+  /** What the second button says once connected: it and opening the messenger both call `onFinish`. */
+  doneLabel: string;
   onFinish: () => void;
 };
 
@@ -38,7 +40,7 @@ type Props = {
  * names the account that connected so a wrong one can be disconnected, and once linked sends the
  * person back to the messenger.
  */
-export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefreshLinks, onFinish }: Props) {
+export function MessengerSteps({ adapter, name, linked, disabled, links, onRefreshLinks, doneLabel, onFinish }: Props) {
   const t = useT();
   const info = useConsoleAdapterPairingInfo(adapter);
   const create = useCreateConsoleAdapterPairingLink();
@@ -62,18 +64,18 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
 
   // A connection already there needs no link; once the card makes one, only the finished connection it made counts.
   if ((linked && !pairing.started) || pairing.connected) {
-    return <div class="first-run-pairing">
+    return <div class="messenger-steps">
       <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: name })} />
       {/* a link can travel, so the card names who sent it and offers a way out for a wrong account */}
-      {pairing.connected && <div class="first-run-who">
+      {pairing.connected && <div class="messenger-who">
         <p class="gsv-cf-note gsv-prose">{t("settings.messengers.connectedTo", { id: messengerLinkName(pairing.connected) })}</p>
         <Button variant="link" label={t(disconnect.isPending ? "settings.pairing.disconnecting" : "onboarding.surface.notYou")}
           disabled={disabled || disconnect.isPending} onClick={() => { setLaunched(false); void pairing.disconnectWrongAccount(); }} />
       </div>}
       {pairing.error && <Alert variant="error" text={pairing.error} />}
-      <div class="first-run-actions">
+      <div class="messenger-actions">
         <Button variant="primary" href={chatUrl} label={open} disabled={disabled || !chatUrl} onClick={onFinish} />
-        <Button variant="secondary" label={t("onboarding.surface.openChatHere")} disabled={disabled} onClick={onFinish} />
+        <Button variant="secondary" label={doneLabel} disabled={disabled} onClick={onFinish} />
       </div>
     </div>;
   }
@@ -82,14 +84,14 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
   const retry = !create.isPending && (pairing.expired || pairing.error !== "");
   const second = launched && !retry;
 
-  return <ol class="gsv-cf-rail first-run-pairing">
+  return <ol class="gsv-cf-rail messenger-steps">
     <li class="gsv-cf-rail-step" aria-current={second ? undefined : "step"}>
       <span class="gsv-cf-rail-mark" aria-hidden="true">
         <span class={`gsv-sp-dot is-${second ? "done" : "cur"}`}>1</span>
         <span class={`gsv-cf-rail-line is-${second ? "done" : "next"}`} />
       </span>
       <div class="gsv-cf-rail-body">
-        <p class="first-run-step-title gsv-prose-lead">{t("onboarding.surface.sendStep", { platform: name })}</p>
+        <p class="messenger-step-title gsv-prose-lead">{t("onboarding.surface.sendStep", { platform: name })}</p>
         <p class="gsv-cf-note gsv-prose">{t(isWhatsApp ? "settings.pairing.linkWhatsappStart" : "settings.pairing.linkTelegramStart")}</p>
         {info.isError && <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform: name })} />}
         {info.data && !info.data.configured && <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform: name })} />}
@@ -113,11 +115,11 @@ export function FirstRunPairing({ adapter, name, linked, disabled, links, onRefr
         <span class={`gsv-sp-dot is-${second ? "cur" : "next"}`}>2</span>
       </span>
       <div class="gsv-cf-rail-body">
-        <p class="first-run-step-title gsv-prose-lead">{t("onboarding.surface.helloStep", { platform: name })}</p>
+        <p class="messenger-step-title gsv-prose-lead">{t("onboarding.surface.helloStep", { platform: name })}</p>
         {pairing.waiting && <p class="gsv-cf-note gsv-prose" role="status">{t("settings.pairing.waiting")}</p>}
-        <details class="gsv-cf-aside gsv-prose first-run-trouble">
+        <details class="gsv-cf-aside gsv-prose messenger-trouble">
           <summary>{t("onboarding.surface.trouble")}</summary>
-          {pairing.waiting && pairing.link && <div class="first-run-trouble-line">
+          {pairing.waiting && pairing.link && <div class="messenger-trouble-line">
             <p>{t("settings.pairing.linkManual", { code: pairing.link.code, destination, platform: name })}</p>
             <Button variant="link" label={copyLabel} onClick={copy.copy} />
           </div>}

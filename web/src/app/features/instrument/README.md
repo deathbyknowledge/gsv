@@ -72,7 +72,7 @@ connecting?" holds the code to send by hand with a copy action, and the note abo
 another Ship's link. The countries the WhatsApp number cannot reach, when the device's languages
 point there, stay as in Settings. Once linked, the card offers the messenger itself first and
 the chat here second, and the Kernel's `adapter.connected` wake says hello there. A line under the cards says Ship only sees the
-messages sent to it. A text action skips to the chat at once; without a messenger to offer,
+messages sent to it. A right-aligned secondary button skips to the chat at once; without a messenger to offer,
 an Open chat button takes its place. Finishing writes the
 per-user `ui/welcome_card_seen` flag, which only this screen reads, so the screen follows the account across web and Desktop
 and never shows again.

@@ -5,13 +5,13 @@ import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
-import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
-import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
-import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
-import { LinkQrCode } from "../settings/messengers/LinkQrCode";
-import { FirstRunPairing, type MessengerChoice } from "./FirstRunPairing";
+import { collectNodes, collectText, createTestRoot } from "../../../../testing/testHarness";
+import { GatewayProvider } from "../../../../services/gateway/GatewayProvider";
+import { Alert } from "../../../../components/ui/Alert";
+import { Button } from "../../../../components/ui/Button";
+import type { ConsoleIdentityLink } from "../../../../domain/system/consoleModels";
+import { LinkQrCode } from "./LinkQrCode";
+import { MessengerSteps, type MessengerChoice } from "./MessengerSteps";
 
 const CODES = ["ABCD-EFGH-JKLM", "NPQR-STUV-WXYZ"];
 
@@ -32,11 +32,11 @@ const connected: GsvClientStatus = { state: "connected", url: "wss://space.examp
 function Harness() {
   const [, setTick] = useState(0);
   rerender = () => setTick((tick) => tick + 1);
-  tree = FirstRunPairing({ adapter, name: adapter === "whatsapp" ? "WhatsApp" : "Telegram", linked, disabled: false, links, onRefreshLinks, onFinish });
+  tree = MessengerSteps({ adapter, name: adapter === "whatsapp" ? "WhatsApp" : "Telegram", linked, disabled: false, links, onRefreshLinks, doneLabel: "OPEN CHAT HERE", onFinish });
   return null;
 }
 async function mount() {
-  root = createTestRoot("first-run pairing");
+  root = createTestRoot("messenger steps");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
 }
@@ -93,7 +93,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("first-run pairing", () => {
+describe("messenger steps", () => {
   it("makes a link as the card opens, leads with opening WhatsApp, and moves on once it is open", async () => {
     await mount();
     await vi.waitFor(() => expect(button("OPEN WHATSAPP")?.props.href).toBe("https://wa.me/31612345678?text=Connect%20my%20Ship%20ABCD-EFGH-JKLM"));
