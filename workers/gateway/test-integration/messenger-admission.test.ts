@@ -265,8 +265,8 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
     it(`${adapter}: invalid proof and an unpaired actor select no Kernel`, async () => {
       await start(adapter);
       await send(adapter, 0, "unpaired human work", { forge: true });
-      // Telegram offers an unpaired sender signup and tells an owner where to connect it; the others send a code to paste.
-      const answered = (text: string) => adapter === "telegram" ? text.includes("Already have a Ship? Open it and go to Settings → Messengers → connect Telegram.") : /[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/.test(text);
+      // Telegram offers an unpaired sender signup and tells an owner what to ask their Ship; the others send a code to paste.
+      const answered = (text: string) => adapter === "telegram" ? text.includes("Already have a Ship? Just tell it “connect my Telegram”") : /[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/.test(text);
       await until(() => messages(adapter), (rows) => rows.some((row) => answered(row.body.text ?? row.body.content ?? "")));
       expect(await records()).toEqual([]);
       expect(await worker().listDurableObjectIds("KERNEL")).toEqual([]);

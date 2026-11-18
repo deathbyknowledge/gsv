@@ -59,16 +59,16 @@ describe("signup for strangers", () => {
     expect(messengerSignupUrl("signup.gsv.space", "whatsapp")).toBeUndefined();
   });
 
-  it("tells an unlinked sender how to create a Ship when signup is open, and where in a Ship to connect either way", () => {
+  it("tells an unlinked sender how to create a Ship when signup is open, and what to tell a Ship either way", () => {
     const text = pairingLinkText("WhatsApp");
     // The address stands on its own line, so no messenger takes punctuation into the link.
     expect(text.unlinked("https://signup.ship.space/?utm_source=whatsapp")).toBe([
       "Hi! To create your Ship, click on this link:",
       "https://signup.ship.space/?utm_source=whatsapp",
       "",
-      "Already have a Ship? Open it and go to Settings → Messengers → connect WhatsApp. It brings you back here to finish.",
+      "Already have a Ship? Just tell it “connect my WhatsApp” and it will send you a link.",
     ].join("\n"));
-    expect(text.unlinked()).toBe("To talk to your Ship here, open it and go to Settings → Messengers → connect WhatsApp. It brings you back here to finish.");
+    expect(text.unlinked()).toBe("To talk to your Ship here, tell it “connect my WhatsApp” and it will send you a link.");
   });
 });
 
