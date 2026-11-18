@@ -70,14 +70,17 @@ import type { ManagedWhatsAppPairingEnv } from "./managed-pairing";
 import type { AdapterPairingLinkBinding } from "../../shared/src/pairing-claim";
 import {
   isPairingLinkMessage,
-  KEEP_LINK_CHOICE,
-  MOVE_LINK_CHOICE,
-  answersLinkMove,
   messengerSignupUrl,
   pairingLinkCode,
-  pairingLinkText,
   shipHost,
 } from "../../shared/src/pairing-link";
+import {
+  answersLinkMove,
+  keepsLink,
+  platformReplies,
+  type PlatformReplies,
+} from "../../shared/src/platform-replies";
+import { whatsAppReplyLanguage } from "./whatsapp-address";
 import {
   activateManagedWhatsAppPairing,
   bindManagedWhatsAppPeerIdentity,
@@ -185,16 +188,11 @@ type ManagedWhatsAppPeerAlias = { version: 1; surfaceId: string };
 const INBOUND_PREFIX = "managed_whatsapp_peer:v1:inbound:";
 /** How often an unlinked sender hears how to connect; messages between are quiet. */
 const HINT_INTERVAL_MS = 10 * 60 * 1000;
-const LINK_TEXT = pairingLinkText("WhatsApp");
 const INBOUND_WAKE_DELAY_MS = 25;
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 25;
 const INBOUND_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INBOUND_MAX_RECORDS = 4_096;
-const UNSUPPORTED_TEXT =
-  "Ship could not receive that message type. Please send text, a photo, a document, a voice note or a location.";
-const MEDIA_UNAVAILABLE_TEXT =
-  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
@@ -631,7 +629,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       deliveryId: `managed-paired:${operationId}`,
       surface: { kind: "dm", id: state.surfaceId },
       actorId: state.actorId,
-      text: `Connected to ${requireCanonicalOrigin(canonicalOrigin)}`,
+      text: replies(state).connected(requireCanonicalOrigin(canonicalOrigin)),
     }, {
       kind: "installation",
       installationId: route.installationId,
@@ -781,7 +779,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (!payload.routeGeneration) {
       // Nobody is linked yet: the platform answers on its own behalf.
       if (inbound.unsupportedContent) {
-        return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, { kind: "platform" });
+        return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported, { kind: "platform" });
       }
       return await this.linkResponse(inbound, null) ?? await this.pairingResponse(inbound, null, false);
     }
@@ -800,7 +798,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return await this.pairingResponse(inbound, route.generation, true);
     }
     if (inbound.unsupportedContent) {
-      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, linked);
+      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported, linked);
     }
 
     let transfer: WhatsAppInboundMediaLoadResult;
@@ -825,12 +823,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       // that now instead of their later messages waiting behind this one.
       // Transient failures propagate and retry through the inbound ledger.
       if (error instanceof ManagedWhatsAppDeliveryError && error.kind === "permanent") {
-        return platformResponse(inbound, `managed-media-unavailable:${inbound.deliveryId}`, MEDIA_UNAVAILABLE_TEXT, linked);
+        return platformResponse(inbound, `managed-media-unavailable:${inbound.deliveryId}`, replies(inbound).mediaUnavailable, linked);
       }
       throw error;
     }
     if (inbound.media?.length && transfer.media.length === 0) {
-      return platformResponse(inbound, `managed-media-unavailable:${inbound.deliveryId}`, MEDIA_UNAVAILABLE_TEXT, linked);
+      return platformResponse(inbound, `managed-media-unavailable:${inbound.deliveryId}`, replies(inbound).mediaUnavailable, linked);
     }
 
     const current = await this.requireState();
@@ -915,7 +913,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return platformResponse(
         inbound,
         `managed-pairing-in-progress:${state.pairing.claimId}:${inbound.deliveryId}`,
-        LINK_TEXT.inProgress,
+        replies(inbound).inProgress,
         { kind: "platform", claimId: state.pairing.claimId, routeGeneration },
       );
     }
@@ -923,7 +921,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return platformResponse(
         inbound,
         `managed-linked:${inbound.deliveryId}`,
-        LINK_TEXT.linked(shipHost(state.activeRoute.canonicalOrigin)),
+        replies(inbound).linked(shipHost(state.activeRoute.canonicalOrigin)),
         { kind: "platform", routeGeneration },
       );
     }
@@ -935,7 +933,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return true;
     });
     if (!hint) return { terminal: true };
-    const text = LINK_TEXT.unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "whatsapp"));
+    const text = replies(inbound).unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "whatsapp"));
     return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, text, { kind: "platform", routeGeneration });
   }
 
@@ -953,7 +951,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const move = state.linkMove;
     // The delivery whose "Move it" is connecting still answers the question once it has expired.
     if (move && (move.answeredBy === inbound.deliveryId || answersLinkMove(move, inbound.text))) {
-      const keep = inbound.text === KEEP_LINK_CHOICE;
+      const keep = keepsLink(inbound.text);
       const answered = await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
         const open = latest?.linkMove;
@@ -971,7 +969,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       });
       if (!answered) return { terminal: true };
       if (keep) {
-        return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, LINK_TEXT.kept(move.current), context);
+        return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, replies(inbound).kept(move.current), context);
       }
       const settled = await this.redeemLink(inbound, move, routeGeneration);
       await this.closeLinkMove(move.claimId);
@@ -983,7 +981,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (!binding) {
       return routeGeneration && !isPairingLinkMessage(inbound.text)
         ? null
-        : platformResponse(inbound, `managed-link-unavailable:${inbound.deliveryId}`, LINK_TEXT.unavailable, context);
+        : platformResponse(inbound, `managed-link-unavailable:${inbound.deliveryId}`, replies(inbound).unavailable, context);
     }
     const active = state.activeRoute;
     if (active && (active.installationId !== binding.installationId || active.localUid !== binding.localUid)) {
@@ -1000,9 +998,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return platformResponse(
         inbound,
         `managed-link-move:${binding.claimId}:${inbound.deliveryId}`,
-        LINK_TEXT.move(current, shipHost(binding.canonicalOrigin)),
+        replies(inbound).move(current, shipHost(binding.canonicalOrigin)),
         context,
-        [MOVE_LINK_CHOICE, KEEP_LINK_CHOICE],
+        [...replies(inbound).moveChoices],
       );
     }
     return await this.redeemLink(inbound, { ...binding, code }, routeGeneration);
@@ -1041,14 +1039,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return true;
     });
     if (!pending) {
-      return platformResponse(inbound, `managed-pairing-in-progress:${link.claimId}:${inbound.deliveryId}`, LINK_TEXT.inProgress, context);
+      return platformResponse(inbound, `managed-pairing-in-progress:${link.claimId}:${inbound.deliveryId}`, replies(inbound).inProgress, context);
     }
     const result = await this.env.GATEWAY.redeemAdapterPairing({ installationId: link.installationId }, { code: link.code });
     if (result.paired) return { terminal: true };
     return platformResponse(
       inbound,
       `managed-link-refused:${link.claimId}:${inbound.deliveryId}`,
-      result.reason === "unavailable" ? LINK_TEXT.unavailable : LINK_TEXT.refused(result.message),
+      result.reason === "unavailable" ? replies(inbound).unavailable : replies(inbound).refused(result.message),
       context,
     );
   }
@@ -1550,4 +1548,9 @@ function requireCanonicalOrigin(value: string): string {
     throw new Error("canonicalOrigin must be an HTTPS origin");
   }
   return url.origin;
+}
+
+/** The platform's own replies, in the language of the sender's country. */
+function replies(sender: { actorId: string }): PlatformReplies {
+  return platformReplies("WhatsApp", whatsAppReplyLanguage(sender.actorId));
 }

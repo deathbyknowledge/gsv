@@ -587,7 +587,13 @@ do not enter a Process. When the operator sets the adapter's `GSV_SIGNUP_URL`,
 the reminder first offers that signup page, tagged with `utm_source` set to the
 adapter. Signup carries the tag to the new Ship's setup link as `messenger`, and
 its first-run screen opens that messenger's link flow once. The first message that requested the code is not replayed as agent
-input. Disconnect and credential revocation fence the old link immediately;
+input. These platform replies (the reminder, link and move answers, unsupported
+message types) come in English, Spanish or Portuguese from what the messenger
+reports about the sender, since a sender without a Ship has no language
+preference: the Telegram app's language, or the WhatsApp number's calling code
+(or the country of a WhatsApp user ID). The shared
+`workers/adapters/shared/src/platform-replies.ts` owns the texts and accepts
+the move answers in any of them. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
 
 A private message on the exact retained route of a password-revoked identity

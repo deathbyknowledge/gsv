@@ -133,7 +133,7 @@ it("tells a revoked sender how to connect and changes the route only after a new
   await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.recovery", "__identity_revoked__") });
   await vi.waitFor(async () => {
     expect((await messages(actorId)).map((message) => message.body.text?.body)).toContainEqual(
-      expect.stringContaining("Already have a Ship? Just tell it “connect my WhatsApp”"),
+      expect.stringContaining("¿Ya tienes un Ship? Solo dile “conecta mi WhatsApp”"),
     );
   });
   await runInDurableObject(peer, async (_instance, state) => {

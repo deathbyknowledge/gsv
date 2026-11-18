@@ -319,8 +319,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(hint.body.to).toBe(ACTOR);
     expect(hint.body.context).toEqual({ message_id: "wamid.in.1" });
     // A stranger can get a Ship from here; signup then knows WhatsApp sent them.
-    expect(hint.body.text?.body).toContain("click on this link:\nhttps://signup.gsv.test/?utm_source=whatsapp\n");
-    expect(hint.body.text?.body).toContain("Already have a Ship? Just tell it “connect my WhatsApp”");
+    expect(hint.body.text?.body).toContain("entra en este enlace:\nhttps://signup.gsv.test/?utm_source=whatsapp\n");
+    expect(hint.body.text?.body).toContain("¿Ya tienes un Ship? Solo dile “conecta mi WhatsApp”");
     // A stranger hears how to connect once in a while, not after every message.
     expect((await SELF.fetch(await text("wamid.in.1b", "anyone there?"))).status).toBe(200);
 
@@ -365,11 +365,11 @@ describe("managed WhatsApp clean-instance flow", () => {
     });
     await vi.waitFor(async () => {
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
+        body: expect.objectContaining({ text: { preview_url: true, body: "Conectado a https://test.gsv.space" } }),
       }));
     });
     expect((await sentMessages()).filter((record) => record.body.context?.message_id !== "wamid.in.1").map((record) => record.body.text?.body))
-      .toEqual(["Connected to https://test.gsv.space"]);
+      .toEqual(["Conectado a https://test.gsv.space"]);
 
     expect((await SELF.fetch(await text("wamid.in.2", "what is new?"))).status).toBe(200);
     await vi.waitFor(async () => {
@@ -519,7 +519,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       const unavailable = (await sentMessages())
-        .filter((record) => record.body.text?.body.includes("could not receive that attachment"));
+        .filter((record) => record.body.text?.body.includes("no ha podido recibir ese archivo"));
       expect(unavailable.map((record) => record.body.context?.message_id)).toEqual(["wamid.in.5b", "wamid.in.5c"]);
     });
     expect((await gatewayCalls()).some((call) => call.args?.message?.media?.some((media) => media.type === "image"))).toBe(false);
@@ -539,7 +539,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     await vi.waitFor(async () => {
       const messages = await sentMessages();
       expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
-      expect(messages.at(-1)?.body.text?.body).toContain("talks to the Ship at test.gsv.space");
+      expect(messages.at(-1)?.body.text?.body).toContain("habla con el Ship de test.gsv.space");
     });
     const relink = await mintLink();
     expect((await SELF.fetch(await text("wamid.in.7", relink.message))).status).toBe(200);
@@ -870,7 +870,7 @@ describe("managed WhatsApp clean-instance flow", () => {
 
     // The reply a linked person's message earns is bound to the route that
     // admitted it. Throttle it so it is still pending when the person relinks.
-    await throttle("could not receive that message type");
+    await throttle("no puede recibir este tipo de mensaje");
     expect((await SELF.fetch(await notification("wamid.in.13", {
       type: "contacts",
       contacts: [{ name: { formatted_name: "Someone" } }],
@@ -921,7 +921,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     await vi.waitFor(async () => {
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
         body: expect.objectContaining({
-          text: expect.objectContaining({ body: expect.stringContaining("could not receive that message type") }),
+          text: expect.objectContaining({ body: expect.stringContaining("no puede recibir este tipo de mensaje") }),
           context: { message_id: "wamid.in.15" },
         }),
       }));
@@ -1612,14 +1612,14 @@ describe("WhatsApp links", () => {
     }
     await vi.waitFor(async () => {
       expect((await sentMessages()).filter((record) => record.body.to === "34633333389").map((record) => record.body.text?.body))
-        .toEqual(["Connected to https://test.gsv.space"]);
+        .toEqual(["Conectado a https://test.gsv.space"]);
     });
     // The code connected one sender; sending it again from another account finds no link.
     const mia: SenderIdentity = { name: "Mia Number", phoneNumber: "34622222289" };
     expect((await SELF.fetch(await textFrom(mia, "wamid.link.reuse", message))).status).toBe(200);
     await vi.waitFor(async () => {
       expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.link.reuse").map((record) => record.body.text?.body))
-        .toEqual([expect.stringContaining("expired or was already used")]);
+        .toEqual([expect.stringContaining("ha caducado o ya se ha usado")]);
     });
 
     expect((await SELF.fetch(await textFrom(lena, "wamid.link.2", "hello Ship"))).status).toBe(200);
@@ -1643,25 +1643,25 @@ describe("WhatsApp links", () => {
     expect((await SELF.fetch(await textFrom(milo, "wamid.move.2", kept.message))).status).toBe(200);
     await vi.waitFor(async () => { expect(await prompts()).toHaveLength(1); });
     const keepPrompt = (await prompts())[0]!;
-    expect(keepPrompt.body.interactive!.body.text).toBe("This WhatsApp account talks to the Ship at test.gsv.space. Move it to other.gsv.space?");
-    expect(keepPrompt.body.interactive!.action.buttons.map((button) => button.reply.title)).toEqual(["Move it", "Keep it"]);
-    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.3", keepPrompt, "Keep it"))).status).toBe(200);
+    expect(keepPrompt.body.interactive!.body.text).toBe("Esta cuenta de WhatsApp habla con el Ship de test.gsv.space. ¿La pasas a other.gsv.space?");
+    expect(keepPrompt.body.interactive!.action.buttons.map((button) => button.reply.title)).toEqual(["Pasarla", "Dejarla"]);
+    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.3", keepPrompt, "Dejarla"))).status).toBe(200);
     await vi.waitFor(async () => {
       expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.move.3").map((record) => record.body.text?.body))
-        .toEqual(["Kept. This WhatsApp account still talks to test.gsv.space."]);
+        .toEqual(["Hecho. Esta cuenta de WhatsApp sigue hablando con test.gsv.space."]);
     });
 
     const moved = await mintLink("installation_other", "https://other.gsv.space");
     expect((await SELF.fetch(await textFrom(milo, "wamid.move.4", moved.message))).status).toBe(200);
     await vi.waitFor(async () => { expect(await prompts()).toHaveLength(2); });
-    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.5", (await prompts())[1]!, "Move it"))).status).toBe(200);
+    expect((await SELF.fetch(await tapFrom(milo, "wamid.move.5", (await prompts())[1]!, "Pasarla"))).status).toBe(200);
     await redeemed(moved.code, "installation_other");
 
     const calls = await gatewayCalls();
     expect(calls.filter((call) => call.call === "redeemAdapterPairing" && call.input?.code === kept.code)).toEqual([]);
     // The answers were the platform's question, not messages for the Ship.
     expect(calls.filter((call) => call.call === "adapter.inbound" && call.args?.routeGeneration === generation
-      && ["Move it", "Keep it"].includes(call.args?.message?.text ?? ""))).toEqual([]);
+      && ["Pasarla", "Dejarla"].includes(call.args?.message?.text ?? ""))).toEqual([]);
   });
 
   it("keeps the answer to move through a lost redemption, and moves on the retry though the move replaced the route", async () => {
@@ -1681,7 +1681,7 @@ describe("WhatsApp links", () => {
     await gateway.fetch("https://gateway.test/hold-redeem");
     await gateway.fetch("https://gateway.test/fail-next-redeem");
     try {
-      const answered = SELF.fetch(await tapFrom(nora, "wamid.retry.3", (await prompts())[0]!, "Move it"));
+      const answered = SELF.fetch(await tapFrom(nora, "wamid.retry.3", (await prompts())[0]!, "Pasarla"));
       await redeemed(moved.code, "installation_other");
       // The other Ship moves the sender's route through the claim, then its answer is lost.
       const pairing = pairingFor(moved.code);
@@ -1690,7 +1690,7 @@ describe("WhatsApp links", () => {
       const prepared = await pairing.prepare({ ...operation, installationId: "installation_other", localUid: 1000 });
       await pairing.activate({ ...operation, route: prepared.route });
       // A second tap while the first connects changes nothing.
-      expect((await SELF.fetch(await tapFrom(nora, "wamid.retry.4", (await prompts())[0]!, "Move it"))).status).toBe(200);
+      expect((await SELF.fetch(await tapFrom(nora, "wamid.retry.4", (await prompts())[0]!, "Pasarla"))).status).toBe(200);
       await gateway.fetch("https://gateway.test/release-redeem");
       expect((await answered).status).toBe(200);
     } finally {
@@ -1698,7 +1698,7 @@ describe("WhatsApp links", () => {
     }
     // The retried delivery still answers the question, so the other Ship gets the code again.
     await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); });
-    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
+    expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Pasarla")).toEqual([]);
   });
 
   it("answers a code that is no live link", async () => {
@@ -1706,7 +1706,7 @@ describe("WhatsApp links", () => {
     expect((await SELF.fetch(await textFrom(stranger, "wamid.stale.1", "Connect my Ship ABCD-EFGH-JKLM"))).status).toBe(200);
     await vi.waitFor(async () => {
       expect((await sentMessages()).filter((record) => record.body.context?.message_id === "wamid.stale.1").map((record) => record.body.text?.body))
-        .toEqual(["This link expired or was already used. Make a new one on your Ship in Settings → Messengers → WhatsApp."]);
+        .toEqual(["Este enlace ha caducado o ya se ha usado. Crea otro en tu Ship, en Ajustes → Mensajería → WhatsApp."]);
     });
     expect((await gatewayCalls()).some((call) => call.call === "redeemAdapterPairing" && call.input?.code === "ABCDEFGHJKLM")).toBe(false);
 

@@ -12,14 +12,6 @@ const LINK_MESSAGE = /^Connect my Ship [A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]
 /** A prefilled message is short; a code inside a longer message is ordinary conversation. */
 const LINK_MESSAGE_LIMIT = 120;
 
-export const MOVE_LINK_CHOICE = "Move it";
-export const KEEP_LINK_CHOICE = "Keep it";
-
-/** Whether a message answers a still-open question about moving the account to another Ship. */
-export function answersLinkMove(move: { expiresAt: number } | undefined, text: string, now = Date.now()): boolean {
-  return move !== undefined && move.expiresAt > now && (text === MOVE_LINK_CHOICE || text === KEEP_LINK_CHOICE);
-}
-
 /** The code a message carries, normalized, or null. */
 export function pairingLinkCode(text: string): string | null {
   const trimmed = text.trim();
@@ -50,27 +42,6 @@ export function shipHost(canonicalOrigin: string): string {
   } catch {
     return canonicalOrigin;
   }
-}
-
-/** What the platform says to a sender while a link connects or after it cannot. */
-export function pairingLinkText(messenger: string) {
-  const askShip = `tell it “connect my ${messenger}” and it will send you a link.`;
-  return {
-    unavailable: `This link expired or was already used. Make a new one on your Ship in Settings → Messengers → ${messenger}.`,
-    refused: (reason: string) => `Ship could not connect this ${messenger} account: ${reason}`,
-    move: (current: string, next: string) => `This ${messenger} account talks to the Ship at ${current}. Move it to ${next}?`,
-    kept: (current: string) => `Kept. This ${messenger} account still talks to ${current}.`,
-    inProgress: `Ship is still connecting this ${messenger} account. Send your message again in a moment.`,
-    /**
-     * With somewhere to sign up, a stranger hears first how to create a Ship; an owner, what to tell
-     * theirs, which answers with its setup link. The address stands on its own line with nothing
-     * touching it, so no messenger takes punctuation into the link.
-     */
-    unlinked: (signupUrl?: string) => signupUrl
-      ? `Hi! To create your Ship, click on this link:\n${signupUrl}\n\nAlready have a Ship? Just ${askShip}`
-      : `To talk to your Ship here, ${askShip}`,
-    linked: (current: string) => `This ${messenger} account talks to the Ship at ${current}. To connect it to another Ship, open Settings → Messengers there.`,
-  };
 }
 
 /**

@@ -1,3 +1,5 @@
+import { replyLanguageFromCountry, replyLanguageFromPhoneNumber, type ReplyLanguage } from "../../shared/src/platform-replies";
+
 /** A WhatsApp number as Meta reports it: the country code and digits, without a plus sign. */
 const PHONE_NUMBER_PATTERN = /^[1-9][0-9]{4,14}$/;
 /**
@@ -21,4 +23,10 @@ export function isWhatsAppUserId(value: string | undefined): value is string {
  */
 export function isWhatsAppAddress(value: string): boolean {
   return isWhatsAppPhoneNumber(value) || isWhatsAppUserId(value);
+}
+
+/** The language of the platform's own replies: from the number's calling code, or the country a user ID carries. */
+export function whatsAppReplyLanguage(address: string): ReplyLanguage {
+  if (PHONE_NUMBER_PATTERN.test(address)) return replyLanguageFromPhoneNumber(address);
+  return USER_ID_PATTERN.test(address) ? replyLanguageFromCountry(address.slice(0, 2)) : "en";
 }

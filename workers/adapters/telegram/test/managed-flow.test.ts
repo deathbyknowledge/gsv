@@ -699,6 +699,30 @@ describe("managed Telegram clean-instance flow", () => {
     await vi.waitFor(async () => { expect(await redemptions()).toHaveLength(2); }, { timeout: 3_000 });
     expect((await gatewayCalls()).filter((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Move it")).toEqual([]);
   });
+
+  it("answers a stranger in their Telegram app's language", async () => {
+    const stranger = 67890;
+    expect((await SELF.fetch(new Request("https://telegram.test/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Telegram-Bot-Api-Secret-Token": "test_webhook_secret_123" },
+      body: JSON.stringify({
+        update_id: 9_001,
+        message: {
+          message_id: 9_001,
+          date: 1_700_009_001,
+          text: "hola",
+          chat: { id: stranger, type: "private" },
+          from: { id: stranger, is_bot: false, first_name: "Lola", language_code: "es" },
+        },
+      }),
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await telegramMessages()).filter((message) => String(message.body.chat_id) === String(stranger)).map((message) => message.body.text))
+        .toEqual([
+          "¡Hola! Para crear tu Ship, entra en este enlace:\nhttps://signup.gsv.test/?utm_source=telegram\n\n¿Ya tienes un Ship? Solo dile “conecta mi Telegram” y te enviará un enlace.",
+        ]);
+    }, { timeout: 3_000 });
+  });
 });
 
 it("does not export the retired per-account deployment entrypoints", async () => {

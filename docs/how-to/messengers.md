@@ -29,7 +29,10 @@ your answer wasn't used; ask Ship to try again if it still needs doing.
 ## Start from a messenger
 
 You can message the Ship number on WhatsApp or the Ship bot on Telegram before
-you have a Ship. When the operator offers signup, the reply links to it. Create
+you have a Ship. When the operator offers signup, the reply links to it. The
+number and the bot answer in Spanish or Portuguese when your Telegram app uses
+that language or your WhatsApp number is from a country that speaks it, and in
+English otherwise. Ship itself follows your language setting. Create
 your Ship there, and the first screen it shows has that messenger's connection
 open: tap **Open WhatsApp** (or **Open Telegram**) and send the message it
 fills in. Ship says hello there once you are connected.

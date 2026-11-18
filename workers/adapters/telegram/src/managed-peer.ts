@@ -62,14 +62,17 @@ import type { ManagedTelegramPairingEnv } from "./managed-pairing";
 import type { AdapterPairingLinkBinding } from "../../shared/src/pairing-claim";
 import {
   isPairingLinkMessage,
-  KEEP_LINK_CHOICE,
-  MOVE_LINK_CHOICE,
-  answersLinkMove,
   messengerSignupUrl,
   pairingLinkCode,
-  pairingLinkText,
   shipHost,
 } from "../../shared/src/pairing-link";
+import {
+  answersLinkMove,
+  keepsLink,
+  platformReplies,
+  replyLanguageFromTag,
+  type PlatformReplies,
+} from "../../shared/src/platform-replies";
 import {
   activateManagedTelegramPairing,
   bindManagedTelegramPeerIdentity,
@@ -139,7 +142,6 @@ const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
 /** How often an unlinked sender hears how to connect; messages between are quiet. */
 const HINT_INTERVAL_MS = 10 * 60 * 1000;
-const LINK_TEXT = pairingLinkText("Telegram");
 const INBOUND_WAKE_DELAY_MS = 25;
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 25;
@@ -151,10 +153,6 @@ const INBOUND_MAX_RECORDS = 4_096;
  * parts of one delivery are paced instead; the typing indicator covers the gap.
  */
 const TELEGRAM_PART_PACE_MS = 1000;
-const UNSUPPORTED_TEXT =
-  "Ship could not receive that message type. Please send text or a supported attachment.";
-const MEDIA_UNAVAILABLE_TEXT =
-  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
@@ -393,7 +391,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       deliveryId: `managed-paired:${operationId}`,
       surface: { kind: "dm", id: state.surfaceId },
       actorId: state.actorId,
-      text: `Connected to ${requireCanonicalOrigin(canonicalOrigin)}`,
+      text: replies(state).connected(requireCanonicalOrigin(canonicalOrigin)),
     }, {
       kind: "installation",
       installationId: route.installationId,
@@ -492,7 +490,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const { inbound } = payload;
     const state = await this.requireState();
     if (inbound.unsupportedContent) {
-      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT);
+      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported);
     }
     const link = await this.linkResponse(inbound, Boolean(payload.routeGeneration));
     if (link) return link;
@@ -523,7 +521,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return platformResponse(
         inbound,
         `managed-media-unavailable:${inbound.deliveryId}`,
-        MEDIA_UNAVAILABLE_TEXT,
+        replies(inbound).mediaUnavailable,
       );
     }
 
@@ -608,12 +606,12 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return platformResponse(
         inbound,
         `managed-pairing-in-progress:${state.pairing.claimId}:${inbound.deliveryId}`,
-        LINK_TEXT.inProgress,
+        replies(inbound).inProgress,
         { claimId: state.pairing.claimId },
       );
     }
     if (linked && state.activeRoute) {
-      return platformResponse(inbound, `managed-linked:${inbound.deliveryId}`, LINK_TEXT.linked(shipHost(state.activeRoute.canonicalOrigin)));
+      return platformResponse(inbound, `managed-linked:${inbound.deliveryId}`, replies(inbound).linked(shipHost(state.activeRoute.canonicalOrigin)));
     }
     const now = Date.now();
     const hint = await this.ctx.storage.transaction(async (txn) => {
@@ -623,7 +621,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return true;
     });
     if (!hint) return { terminal: true };
-    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, LINK_TEXT.unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "telegram")));
+    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, replies(inbound).unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "telegram")));
   }
 
   /**
@@ -639,7 +637,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const move = state.linkMove;
     // The delivery whose "Move it" is connecting still answers the question once it has expired.
     if (move && (move.answeredBy === inbound.deliveryId || answersLinkMove(move, inbound.text))) {
-      const keep = inbound.text === KEEP_LINK_CHOICE;
+      const keep = keepsLink(inbound.text);
       const answered = await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
         const open = latest?.linkMove;
@@ -657,7 +655,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       });
       if (!answered) return { terminal: true };
       if (keep) {
-        return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, LINK_TEXT.kept(move.current));
+        return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, replies(inbound).kept(move.current));
       }
       const settled = await this.redeemLink(inbound, move);
       await this.closeLinkMove(move.claimId);
@@ -669,7 +667,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     if (!binding) {
       return linked && !isPairingLinkMessage(inbound.text)
         ? null
-        : platformResponse(inbound, `managed-link-unavailable:${inbound.deliveryId}`, LINK_TEXT.unavailable);
+        : platformResponse(inbound, `managed-link-unavailable:${inbound.deliveryId}`, replies(inbound).unavailable);
     }
     const active = state.activeRoute;
     if (active && (active.installationId !== binding.installationId || active.localUid !== binding.localUid)) {
@@ -686,8 +684,8 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return platformResponse(
         inbound,
         `managed-link-move:${binding.claimId}:${inbound.deliveryId}`,
-        LINK_TEXT.move(current, shipHost(binding.canonicalOrigin)),
-        { choices: [MOVE_LINK_CHOICE, KEEP_LINK_CHOICE] },
+        replies(inbound).move(current, shipHost(binding.canonicalOrigin)),
+        { choices: [...replies(inbound).moveChoices] },
       );
     }
     return await this.redeemLink(inbound, { ...binding, code });
@@ -724,14 +722,14 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return true;
     });
     if (!pending) {
-      return platformResponse(inbound, `managed-pairing-in-progress:${link.claimId}:${inbound.deliveryId}`, LINK_TEXT.inProgress);
+      return platformResponse(inbound, `managed-pairing-in-progress:${link.claimId}:${inbound.deliveryId}`, replies(inbound).inProgress);
     }
     const result = await this.env.GATEWAY.redeemAdapterPairing({ installationId: link.installationId }, { code: link.code });
     if (result.paired) return { terminal: true };
     return platformResponse(
       inbound,
       `managed-link-refused:${link.claimId}:${inbound.deliveryId}`,
-      result.reason === "unavailable" ? LINK_TEXT.unavailable : LINK_TEXT.refused(result.message),
+      result.reason === "unavailable" ? replies(inbound).unavailable : replies(inbound).refused(result.message),
     );
   }
 
@@ -1146,4 +1144,9 @@ function requireCanonicalOrigin(value: string): string {
     throw new Error("canonicalOrigin must be an HTTPS origin");
   }
   return url.origin;
+}
+
+/** The platform's own replies, in the language of the sender's Telegram app. */
+function replies(sender: { language?: string }): PlatformReplies {
+  return platformReplies("Telegram", replyLanguageFromTag(sender.language));
 }
