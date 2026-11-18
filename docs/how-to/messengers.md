@@ -184,9 +184,10 @@ link to create a Ship when the operator offers signup), and a number
 that talks to another Ship is asked there whether to **Move it** or **Keep it**.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship
-replies with text and attachments, and a long reply arrives as several
-messages, one per prose paragraph. Headings stay with the following block;
-code blocks, lists, tables and quotations stay together. When a message
+replies with text and attachments. A reply of several paragraphs arrives as
+two messages, its first paragraph and then the rest, and a code block comes on
+its own so it copies whole. Headings stay with the following block; lists,
+tables and quotations stay together. When a message
 contains a link, WhatsApp shows the preview card for the first one. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons.
 Once the decision is made, Ship reacts to the button you tapped: ✅ for

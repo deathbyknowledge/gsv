@@ -48,8 +48,8 @@ async function messages(actorId: string): Promise<GraphMessage[]> {
   return records.filter((record) => record.kind === "message" && record.body.to === actorId);
 }
 
-it.each([undefined, 0, 1])("resumes the original paragraph partition after an update (format: %s)", async (formatVersion) => {
-  const actorId = `3469021111${formatVersion ?? 2}`;
+it.each([undefined, 0, 1, 2])("resumes the original paragraph partition after an update (format: %s)", async (formatVersion) => {
+  const actorId = `3469021111${formatVersion ?? 9}`;
   const { peer, route, message } = await seed(actorId);
   const paragraphs = ["a".repeat(200), "b".repeat(200), "c".repeat(200)];
   message.text = paragraphs.join("\n\n");
@@ -62,7 +62,10 @@ it.each([undefined, 0, 1])("resumes the original paragraph partition after an up
   });
   using result = await peer.sendMessage(route.installationId, message);
   expect(result).toMatchObject({ ok: true, messageId: "accepted-prefix" });
-  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual(paragraphs.slice(formatVersion === 1 ? 1 : 2));
+  const remaining = formatVersion === 1 ? paragraphs.slice(1)
+    : formatVersion === 2 ? [paragraphs.slice(1).join("\n\n")]
+    : paragraphs.slice(2);
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual(remaining);
 });
 
 async function partiallySent(actorId: string) {

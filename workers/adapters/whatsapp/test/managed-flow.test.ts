@@ -627,8 +627,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(longChunks[1]!.body.context).toBeUndefined();
     expect(longChunks.every((record) => [...record.body.text!.body].length <= 4096)).toBe(true);
 
-    // Each prose paragraph is a message. An oversized paragraph is split,
-    // only the first quotes the inbound, and typing rides a read receipt between messages.
+    // WhatsApp bills each message: the first paragraph leads, the rest follow together,
+    // split only at the text limit. Only the first quotes the inbound, and typing rides a read receipt between messages.
     const recordsBeforeParagraphs = (await graphRecords()).length;
     await expect(peer.sendMessage("installation_test", {
       deliveryId: "outbound-paragraphs-1",
@@ -641,7 +641,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     const paragraphRecords = (await graphRecords()).slice(recordsBeforeParagraphs);
     // Every message of the split delivery is reported, in order, so a quote of any of them can resolve.
     const paragraphIds = paragraphRecords.filter((record) => record.kind === "message").map((record) => record.result.id);
-    expect(paragraphIds).toHaveLength(5);
+    expect(paragraphIds).toHaveLength(3);
     expect(paragraphIds.every((id) => id?.startsWith("wamid.out."))).toBe(true);
     await expect(peer.sendMessage("installation_test", {
       deliveryId: "outbound-paragraphs-1",
@@ -651,14 +651,12 @@ describe("managed WhatsApp clean-instance flow", () => {
       text: `Hi Hank!\n\nHere is the **report**.\n\n${"word ".repeat(1_000).trimEnd()}\n\nAnything else?`,
       replyToId: "wamid.in.7",
     })).resolves.toMatchObject({ ok: true, deduplicated: true, messageId: paragraphIds[0], messageIds: paragraphIds });
-    expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message", "read", "message", "read", "message"]);
+    expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message"]);
     const paragraphMessages = paragraphRecords.filter((record) => record.kind === "message");
     expect(paragraphMessages.map((record) => record.body.text?.body)).toEqual([
       "Hi Hank!",
-      "Here is the *report*.",
-      expect.stringMatching(/^word word/),
-      expect.stringMatching(/^word word/),
-      "Anything else?",
+      expect.stringMatching(/^Here is the \*report\*\.\n\nword word/),
+      expect.stringMatching(/word\n\nAnything else\?$/),
     ]);
     expect(paragraphMessages.every((record) => [...record.body.text!.body].length <= 4096)).toBe(true);
     expect(paragraphMessages[0]!.body.context).toEqual({ message_id: "wamid.in.7" });
