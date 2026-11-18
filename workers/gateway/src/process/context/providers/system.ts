@@ -1,12 +1,33 @@
-import type { PromptContextProvider, PromptSection } from "../types";
+import type { ContextLayerRoot, PromptContextProvider, PromptSection } from "../types";
 
 const MAX_RENDERED_TARGETS = 5;
 
 export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
+    layer: () => SYSTEM_ROOT,
     async collect(input) {
       return renderContextFiles(input.config.systemContextFiles, input);
+    },
+  };
+}
+
+const SYSTEM_ROOT: ContextLayerRoot = {
+  key: "system",
+  access: "read-only",
+  location: "/sys/config/ai/context.d",
+};
+
+/** The read-only context the Kernel selects for the role of the account the process runs as. */
+export function createRoleContextProvider(): PromptContextProvider {
+  return {
+    name: "role.context",
+    layer(input) {
+      const role = input.config.roleContext;
+      return role ? { key: "base", access: "read-only", location: role.location } : null;
+    },
+    async collect(input) {
+      return renderContextFiles(input.config.roleContext?.files, input);
     },
   };
 }
@@ -22,16 +43,7 @@ function renderContextFiles(
       if (!text) {
         return null;
       }
-      const section: PromptSection = {
-        name: file.name,
-        text,
-        contextRoot: {
-          key: "system",
-          label: "SYSTEM",
-          access: "read-only",
-          location: "/sys/config/ai/context.d",
-        },
-      };
+      const section: PromptSection = { name: file.name, text };
       if (countResponsibilityTemplates(file.text) > 0) section.responsibilityBaseline = true;
       return section;
     })

@@ -22,7 +22,7 @@ import { ProfileNotice } from "./ProfileNotice";
 import { ProfileTakedowns, useShipTakedowns } from "./ProfileTakedowns";
 
 const VISIBILITY_TEXT = {
-  private: "people.profile.visibilityPrivate", requests: "people.profile.visibilityPublic", invitation: "people.profile.visibilityPublicInvite",
+  private: "people.profile.visibilityPrivate", requests: "people.profile.visibilityPublic", closed: "people.profile.visibilityPublicClosed",
 } as const;
 
 export function Profile({ account, active, edit: editing, focusBio, onDirty, onEdit, onBack }: {
@@ -130,7 +130,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   useEffect(() => { setCopied(null); }, [editing]);
 
   const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
-  const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyInvitation");
+  const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyClosed");
   const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
   const copyAddress = state && <span class="people-profile-handle">
     <h2>{title}</h2>
@@ -185,8 +185,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         <TextArea label={t("people.profile.about")} value={fields.about} maxLength={2048} rows={4} disabled={!editable} placeholder={t("people.profile.emptyBio")}
           onChange={(about) => edit({ about })} textareaProps={{ ref: bio }} />
         <Select block label={t("people.profile.policy")} disabled={!editable}
-          options={[{ value: "requests", label: t("people.profile.policyRequests") }, { value: "invitation", label: t("people.profile.policyInvitation") }]}
-          value={fields.contactPolicy === "requests" ? 0 : 1} onChange={(index) => edit({ contactPolicy: index === 0 ? "requests" : "invitation" })} />
+          options={[{ value: "requests", label: t("people.profile.policyRequests") }, { value: "closed", label: t("people.profile.policyClosed") }]}
+          value={fields.contactPolicy === "requests" ? 0 : 1} onChange={(index) => edit({ contactPolicy: index === 0 ? "requests" : "closed" })} />
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
           <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || !submission?.ready} label={publish.isPending ? t("common.saving") : t(submission?.action === "publish" ? "people.profile.publish" : "people.profile.save")} />

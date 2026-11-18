@@ -1,17 +1,32 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { RipgitClient } from "../fs/ripgit/client";
+import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { contextFiles } from "../prompts/context";
-import { seedContextFile } from "./accounts";
+import { seedAccountHome } from "./account-home";
 import type { KernelContext } from "./context";
 import { registerRepo } from "./repo";
+
+// Owner context files were numbered before standing context was grouped by file name.
+const NUMBERED_NAMES = new Map([["personal.md", "10-personal.md"]]);
 
 export async function ensurePersonalMemory(
   ctx: KernelContext,
   human: ProcessIdentity,
 ): Promise<void> {
-  for (const file of contextFiles("user")) {
-    await seedContextFile(ctx.env, human, file.name, file.text);
-  }
+  // Seed each missing owner context file, or move its numbered predecessor to the current name.
+  await seedAccountHome(ctx.env, human, "gsv: scaffold owner context", async (client, snapshot) => {
+    const ops: RipgitApplyOp[] = [];
+    for (const file of contextFiles("user")) {
+      const path = `context.d/${file.name}`;
+      if ((await client.readPath(snapshot, path)).kind !== "missing") continue;
+      const numbered = NUMBERED_NAMES.get(file.name);
+      if (numbered && (await client.readPath(snapshot, `context.d/${numbered}`)).kind === "file") {
+        ops.push({ type: "move", from: `context.d/${numbered}`, to: path });
+      } else {
+        ops.push({ type: "put", path, contentBytes: Array.from(new TextEncoder().encode(file.text)) });
+      }
+    }
+    return ops;
+  });
   if (!ctx.env.RIPGIT) {
     return;
   }

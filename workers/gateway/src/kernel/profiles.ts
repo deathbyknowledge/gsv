@@ -40,7 +40,7 @@ const recordResponseSchema = z.object({
 });
 /** Profile links name the Ship's host: its root, its profile page, or an alias page from before a Ship had one profile. */
 const PROFILE_PATH = /^\/(?:profile|@[a-z][a-z0-9_-]{1,31})?$/;
-const NO_PUBLIC_PROFILE = "No public profile is available at this address. A private invitation does not require a public profile.";
+const NO_PUBLIC_PROFILE = "No public profile is available at this address.";
 const UNREADABLE_ADDRESS = "Enter a handle, such as @alice, or a profile address";
 const RECORD_LOOKUP_TIMEOUT_MS = 10_000;
 const PROFILE_RECORD_PATH = `/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`;

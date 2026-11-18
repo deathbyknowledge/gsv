@@ -163,18 +163,21 @@ The owner session lists unfinished setups independently of browser storage.
 The request may also carry an optional attribution: the placement and example
 slugs the website put in the signup link's fragment and the campaign tags
 (`utm_source`, `utm_campaign`) an ad put in its query. The signup page reads
-them in the browser and keeps them in its own signup state; Accounts bounds
+them in the browser and keeps them in its own signup state. A later link that
+carries its own replaces them; a load without one, such as a reload or a tab
+the browser restores, keeps them. Accounts bounds
 their shape, classifies the placement and example into a closed allowlist
 (unknown values become `other`) and reports them once, as
 `installation.attributed`, from the request that first creates the reservation
 (see the telemetry architecture). Nothing is stored with the reservation, a
 replayed request reports nothing, and they never identify a visitor.
 
-A signup that followed a contact invitation link may also name the inviting
-Ship's hostname. Accounts resolves it through its own directory and counts it
-only when it is an active installation that the signing owner does not own;
-anything else is ignored without error, since the hostname is a claim from the
-link, not proof of who sent it. The request that creates the reservation then
+A signup that followed a Ship's invitation link may also name that Ship, by
+the handle or host name the link's `invite` value carried. Accounts reads a
+handle as a Ship hosted here and resolves a host name through its own
+directory, and counts it only when it is an active installation that the
+signing owner does not own; anything else is ignored without error, since the
+value is a claim from the link, not proof of who shared it. The request that creates the reservation then
 reports `contact.invite.signup` under the inviting Ship and `origin: "invite"`
 on the new Ship's `installation.attributed`, and stores nothing: Accounts keeps
 no record of who invited whom, and administration shows none.
@@ -231,10 +234,10 @@ before assigning a new public handle, without using its normalization for unique
 Only authenticated operators can edit the lists, with same-origin mutation checks
 and an audit event when operator auditing is configured.
 
-Contact invitations remain entirely Kernel-owned. The browser carries a pending
-contact link through signup and local setup, then presents the normal acceptance
-and message-handling choice. Creating, cancelling or accepting a contact invitation
-does not reserve, consume or refund a signup place.
+An invitation link carries no authority. Signup reads `?invite=` as the name of
+the inviter's Ship and carries that Ship's profile address through local setup;
+the new Ship then opens People with an ordinary message request to it ready. The
+link does not reserve, consume or refund a signup place.
 
 ## Reset and deletion
 

@@ -207,7 +207,7 @@ describe("signup inviter", () => {
       db.prepare("UPDATE installations SET state = ? WHERE id = ?").bind(state, space.installationId),
       db.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id = ?").bind(space.installationId),
     ]);
-    return { installationId: space.installationId, hostname: `${space.handle}.example.com` };
+    return { installationId: space.installationId, handle: space.handle, hostname: `${space.handle}.example.com` };
   }
   const reporting = new InstallationSignup(db, accounts, onboarding, true, undefined, { GSV_TELEMETRY_ENABLED: "1" });
   const spyLog = () => vi.spyOn(console, "log").mockImplementation(() => {});
@@ -236,10 +236,23 @@ describe("signup inviter", () => {
     }
   });
 
+  it("reads a bare handle as a Ship hosted here", async () => {
+    const inviter = await ship();
+    const log = spyLog();
+    try {
+      await reporting.prepare(crypto.randomUUID(), await owner(), handle(), undefined, inviter.handle);
+      expect(products(log).map((record) => [record.installationId, record.event.name])).toEqual([
+        [inviter.installationId, "contact.invite.signup"], [expect.any(String), "installation.attributed"],
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("drops an unknown or inactive Ship without failing the signup, which then reports as direct", async () => {
     // The owner's own Ship cannot be offered through this path: owner setup refuses a second Ship first.
     const restricted = await ship("restricted");
-    for (const hostname of ["nobody-here.example.com", restricted.hostname]) {
+    for (const hostname of ["nobody-here.example.com", "nobody-here", restricted.hostname, restricted.handle]) {
       const log = spyLog();
       try {
         await expect(reporting.prepare(crypto.randomUUID(), await owner(), handle(), undefined, hostname))

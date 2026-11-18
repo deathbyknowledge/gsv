@@ -58,10 +58,21 @@ import {
   splitMarkdownParagraphs,
   splitTextAtLimit,
 } from "../../shared/src/paragraph-messages";
-import type {
-  ManagedTelegramPairingEnv,
-  ManagedTelegramPairingRecord,
-} from "./managed-pairing";
+import type { ManagedTelegramPairingEnv } from "./managed-pairing";
+import type { AdapterPairingLinkBinding } from "../../shared/src/pairing-claim";
+import {
+  isPairingLinkMessage,
+  messengerSignupUrl,
+  pairingLinkCode,
+  shipHost,
+} from "../../shared/src/pairing-link";
+import {
+  answersLinkMove,
+  keepsLink,
+  platformReplies,
+  replyLanguageFromTag,
+  type PlatformReplies,
+} from "../../shared/src/platform-replies";
 import {
   activateManagedTelegramPairing,
   bindManagedTelegramPeerIdentity,
@@ -99,6 +110,8 @@ export interface ManagedTelegramPeerEnv extends ManagedTelegramPairingEnv {
   ACCOUNTS: InstallationDirectoryService;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_API?: Fetcher;
+  /** Where someone without a Ship creates one; unlinked senders are pointed there. */
+  GSV_SIGNUP_URL?: string;
 }
 
 type InboundPayload =
@@ -117,8 +130,9 @@ type ResponseContext =
   | { kind: "platform"; claimId?: string; splitParagraphs?: boolean }
   | { kind: "installation"; installationId: string; generation: string };
 
-type PairingIssue = { code: string; claimId: string; expiresAt: number };
-type ManagedPairingStub = { initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }> };
+type ManagedPairingStub = { bind(surfaceId: string): Promise<AdapterPairingLinkBinding | null> };
+/** A link code bound to this sender, as the Kernel redeems it. */
+type BoundLink = Pick<AdapterPairingLinkBinding, "claimId" | "expiresAt" | "installationId"> & { code: string };
 type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 /** One provider message of a delivery; resolves to the Telegram message id it produced. */
 /** The messages one provider call sent, in order: an album is several. */
@@ -126,24 +140,19 @@ type DeliveryPart = () => Promise<string[]>;
 
 const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
-const PAIRING_TTL_MS = 10 * 60 * 1000;
+/** How often an unlinked sender hears how to connect; messages between are quiet. */
+const HINT_INTERVAL_MS = 10 * 60 * 1000;
 const INBOUND_WAKE_DELAY_MS = 25;
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 25;
 const INBOUND_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INBOUND_MAX_RECORDS = 4_096;
-const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const PAIRING_CHARACTERS = 12;
 /**
  * Telegram accepts about one message per second per chat and answers faster
  * bursts with 429. The client does not read `retry_after`, so consecutive
  * parts of one delivery are paced instead; the typing indicator covers the gap.
  */
 const TELEGRAM_PART_PACE_MS = 1000;
-const UNSUPPORTED_TEXT =
-  "Ship could not receive that message type. Please send text or a supported attachment.";
-const MEDIA_UNAVAILABLE_TEXT =
-  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
@@ -179,14 +188,15 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
   async handleWebhook(event: ManagedTelegramPeerEvent): Promise<{ ok: true }> {
-    const route = event.kind === "message"
+    const current = event.kind === "message"
       ? await this.ctx.storage.transaction(async (txn) => {
           const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
           const next = bindManagedTelegramPeerIdentity(state, event.inbound);
           await txn.put(STATE_KEY, next);
-          return next.activeRoute;
+          return next;
         })
-      : (await this.requireState()).activeRoute;
+      : await this.requireState();
+    const route = current.activeRoute;
     if (this.retirement.retired(route)) return { ok: true };
     const routeGeneration = route?.generation;
     const deliveryId = event.kind === "message"
@@ -200,7 +210,10 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       Date.now() + INBOUND_WAKE_DELAY_MS,
       route ?? null,
     );
-    if (event.kind === "message" && isManagedTelegramPairCommand(event.inbound.text)) {
+    // Connecting, or answering whether to move to another Ship, goes ahead of the queue, so a
+    // reply still waiting on Telegram or the Ship does not hold it up.
+    const text = event.kind === "message" ? event.inbound.text : "";
+    if (event.kind === "message" && (isManagedTelegramPairCommand(text) || pairingLinkCode(text) || answersLinkMove(current.linkMove, text))) {
       await this.attemptInbound(deliveryId);
     }
     this.ctx.waitUntil(this.drainInbound());
@@ -378,7 +391,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       deliveryId: `managed-paired:${operationId}`,
       surface: { kind: "dm", id: state.surfaceId },
       actorId: state.actorId,
-      text: `Connected to ${requireCanonicalOrigin(canonicalOrigin)}`,
+      text: replies(state).connected(requireCanonicalOrigin(canonicalOrigin)),
     }, {
       kind: "installation",
       installationId: route.installationId,
@@ -429,10 +442,10 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const result = await this.inboundDeliveries.attempt(
       deliveryId,
       async (payload) => await this.forwardInbound(payload),
-      async (message, context) => await this.deliverMessage(
-        message,
-        context ?? { kind: "platform" },
-      ),
+      async (message, context) => {
+        const [rendered, options] = telegramControlledMessage(message);
+        return await this.deliverMessage(rendered, context ?? { kind: "platform" }, undefined, options);
+      },
     );
     if (result.state !== "pending") return true;
     await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
@@ -477,10 +490,12 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const { inbound } = payload;
     const state = await this.requireState();
     if (inbound.unsupportedContent) {
-      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT);
+      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported);
     }
+    const link = await this.linkResponse(inbound, Boolean(payload.routeGeneration));
+    if (link) return link;
     if (!payload.routeGeneration || isManagedTelegramPairCommand(inbound.text)) {
-      return await this.pairingResponse(inbound);
+      return await this.pairingResponse(inbound, Boolean(payload.routeGeneration));
     }
     const route = state.activeRoute;
     if (!route || this.retirement.retired(route) || route.generation !== payload.routeGeneration) {
@@ -506,7 +521,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return platformResponse(
         inbound,
         `managed-media-unavailable:${inbound.deliveryId}`,
-        MEDIA_UNAVAILABLE_TEXT,
+        replies(inbound).mediaUnavailable,
       );
     }
 
@@ -556,7 +571,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     if (this.retirement.retired(route)) return { terminal: true };
     if (adapterInboundRequiresPairing(result)) {
       if ((await this.requireState()).activeRoute?.generation !== route.generation) return { terminal: true };
-      return await this.pairingResponse(inbound);
+      return await this.pairingResponse(inbound, false);
     }
     const disposition = adapterInboundResultDisposition(result, {
       surface: { kind: "dm", id: inbound.surfaceId },
@@ -577,78 +592,145 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     };
   }
 
+  /**
+   * Tells a sender without a working link how to connect, or where they are connected when they
+   * ask. An unlinked sender hears it at most once in a while; the bot never answers every
+   * stray message.
+   */
   private async pairingResponse(
     inbound: ManagedTelegramInbound,
+    linked: boolean,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
     const state = await this.requireState();
-    if (
-      state.pairing
-      && (state.pairing.status === "prepared" || state.pairing.status === "active")
-      && state.pairing.expiresAt > Date.now()
-    ) {
+    if (pairingInProgress(state)) {
       return platformResponse(
         inbound,
         `managed-pairing-in-progress:${state.pairing.claimId}:${inbound.deliveryId}`,
-        "This Telegram connection is still being confirmed in GSV. Finish or retry that confirmation, then send your message again.",
-        state.pairing.claimId,
+        replies(inbound).inProgress,
+        { claimId: state.pairing.claimId },
       );
     }
-    const issue = await this.issuePairing();
-    return {
-      terminal: true,
-      responses: [{
-        message: {
-          deliveryId: `managed-pair:${issue.claimId}:${inbound.deliveryId}`,
-          surface: { kind: "dm", id: inbound.surfaceId },
-          actorId: inbound.actorId,
-          text: [
-            "In GSV, open Settings → Messengers → Telegram and paste the code below.\nExpires in 10 minutes.",
-            formatPairingCode(issue.code),
-          ].join("\n\n"),
-          replyToId: inbound.messageId,
-        },
-        expiresAt: issue.expiresAt,
-        context: { kind: "platform", claimId: issue.claimId, splitParagraphs: true },
-      }],
-    };
+    if (linked && state.activeRoute) {
+      return platformResponse(inbound, `managed-linked:${inbound.deliveryId}`, replies(inbound).linked(shipHost(state.activeRoute.canonicalOrigin)));
+    }
+    const now = Date.now();
+    const hint = await this.ctx.storage.transaction(async (txn) => {
+      const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!latest || (latest.hintedAt !== undefined && now - latest.hintedAt < HINT_INTERVAL_MS)) return false;
+      await txn.put(STATE_KEY, { ...latest, hintedAt: now } satisfies ManagedTelegramPeerState);
+      return true;
+    });
+    if (!hint) return { terminal: true };
+    return platformResponse(inbound, `managed-unlinked:${inbound.deliveryId}`, replies(inbound).unlinked(messengerSignupUrl(this.env.GSV_SIGNUP_URL, "telegram")));
   }
 
-  private async issuePairing(): Promise<PairingIssue> {
-    const now = Date.now();
+  /**
+   * Answers a message that carries a link code, or the sender's answer to whether to move to
+   * the Ship whose link they sent. Null when the message is neither, or when a linked sender
+   * mentions a code that is no live link: that message is ordinary conversation for their Ship.
+   */
+  private async linkResponse(
+    inbound: ManagedTelegramInbound,
+    linked: boolean,
+  ): Promise<InboundDeliveryDisposition<ResponseContext> | null> {
     const state = await this.requireState();
-    const current = state.pairing;
-    if (current?.status === "pending" && current.expiresAt > now) {
-      return { code: current.code, claimId: current.claimId, expiresAt: current.expiresAt };
+    const move = state.linkMove;
+    // The delivery whose "Move it" is connecting still answers the question once it has expired.
+    if (move && (move.answeredBy === inbound.deliveryId || answersLinkMove(move, inbound.text))) {
+      const keep = keepsLink(inbound.text);
+      const answered = await this.ctx.storage.transaction(async (txn) => {
+        const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+        const open = latest?.linkMove;
+        if (!latest || open?.claimId !== move.claimId) return false;
+        // Another tap while a move connects changes nothing; the answering delivery's retry carries on.
+        if (open.answeredBy !== undefined) return open.answeredBy === inbound.deliveryId;
+        if (keep) {
+          const { linkMove: _kept, ...rest } = latest;
+          await txn.put(STATE_KEY, rest satisfies ManagedTelegramPeerState);
+        } else {
+          // The question stays open until the Kernel answers, so a retry after a failed call still reads as the answer.
+          await txn.put(STATE_KEY, { ...latest, linkMove: { ...open, answeredBy: inbound.deliveryId } } satisfies ManagedTelegramPeerState);
+        }
+        return true;
+      });
+      if (!answered) return { terminal: true };
+      if (keep) {
+        return platformResponse(inbound, `managed-link-kept:${inbound.deliveryId}`, replies(inbound).kept(move.current));
+      }
+      const settled = await this.redeemLink(inbound, move);
+      await this.closeLinkMove(move.claimId);
+      return settled;
     }
-
-    const claimId = crypto.randomUUID();
-    const expiresAt = now + PAIRING_TTL_MS;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const code = createPairingCode();
-      const pairing = this.pairing(code);
-      const initialized = await pairing.initialize({
-        version: 1,
-        claimId,
-        surfaceId: state.surfaceId,
-        expiresAt,
-      } satisfies ManagedTelegramPairingRecord);
-      if (!initialized.created) continue;
+    const code = pairingLinkCode(inbound.text);
+    if (!code) return null;
+    const binding = await this.pairing(code).bind(state.surfaceId);
+    if (!binding) {
+      return linked && !isPairingLinkMessage(inbound.text)
+        ? null
+        : platformResponse(inbound, `managed-link-unavailable:${inbound.deliveryId}`, replies(inbound).unavailable);
+    }
+    const active = state.activeRoute;
+    if (active && (active.installationId !== binding.installationId || active.localUid !== binding.localUid)) {
+      // Moving to another Ship takes the person's tap, so a link someone else sent cannot move them quietly.
+      const current = shipHost(active.canonicalOrigin);
       await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
         if (!latest) throw new Error("Managed Telegram peer is not initialized");
         await txn.put(STATE_KEY, {
           ...latest,
-          pairing: {
-            claimId,
-            code,
-            expiresAt,
-            status: "pending",
-          },
+          linkMove: { code, claimId: binding.claimId, expiresAt: binding.expiresAt, installationId: binding.installationId, current },
         } satisfies ManagedTelegramPeerState);
       });
-      return { code, claimId, expiresAt };
+      return platformResponse(
+        inbound,
+        `managed-link-move:${binding.claimId}:${inbound.deliveryId}`,
+        replies(inbound).move(current, shipHost(binding.canonicalOrigin)),
+        { choices: [...replies(inbound).moveChoices] },
+      );
     }
-    throw new Error("Could not allocate a Telegram pairing code");
+    return await this.redeemLink(inbound, { ...binding, code });
+  }
+
+  /** Closes the question about moving to another Ship once the Kernel has answered it. */
+  private async closeLinkMove(claimId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!latest || latest.linkMove?.claimId !== claimId) return;
+      const { linkMove: _closed, ...rest } = latest;
+      await txn.put(STATE_KEY, rest satisfies ManagedTelegramPeerState);
+    });
+  }
+
+  /**
+   * Hands a code bound to this sender to the Kernel that minted it. The Kernel reads the pending
+   * pairing back through the claim and connects this sender; its confirmation names the Ship.
+   * A failed call throws, so the code's message is delivered again.
+   */
+  private async redeemLink(
+    inbound: ManagedTelegramInbound,
+    link: BoundLink,
+  ): Promise<InboundDeliveryDisposition<ResponseContext>> {
+    const pending = await this.ctx.storage.transaction(async (txn) => {
+      const latest = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!latest) throw new Error("Managed Telegram peer is not initialized");
+      if (latest.pairing?.claimId === link.claimId) return true;
+      if (pairingInProgress(latest)) return false;
+      await txn.put(STATE_KEY, {
+        ...latest,
+        pairing: { claimId: link.claimId, code: link.code, expiresAt: link.expiresAt, status: "pending" },
+      } satisfies ManagedTelegramPeerState);
+      return true;
+    });
+    if (!pending) {
+      return platformResponse(inbound, `managed-pairing-in-progress:${link.claimId}:${inbound.deliveryId}`, replies(inbound).inProgress);
+    }
+    const result = await this.env.GATEWAY.redeemAdapterPairing({ installationId: link.installationId }, { code: link.code });
+    if (result.paired) return { terminal: true };
+    return platformResponse(
+      inbound,
+      `managed-link-refused:${link.claimId}:${inbound.deliveryId}`,
+      result.reason === "unavailable" ? replies(inbound).unavailable : replies(inbound).refused(result.message),
+    );
   }
 
   private async deliverMessage(
@@ -932,7 +1014,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
  * rich, HTML and plain fallbacks all fit.
  */
 function telegramTextChunks(markdown: string, splitParagraphs = true, legacyGrouping = false): string[] {
-  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping) : [markdown];
+  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping ? "legacy" : "each") : [markdown];
   const chunks = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
       .map((fitted) => fitted.markdown));
@@ -989,30 +1071,24 @@ function platformResponse(
   inbound: ManagedTelegramInbound,
   deliveryId: string,
   text: string,
-  claimId?: string,
+  options: { claimId?: string; choices?: string[] } = {},
 ): InboundDeliveryDisposition<ResponseContext> {
-  return {
-    terminal: true,
-    responses: [{
-      message: {
-        deliveryId,
-        surface: { kind: "dm", id: inbound.surfaceId },
-        actorId: inbound.actorId,
-        text,
-        replyToId: inbound.messageId,
-      },
-      context: { kind: "platform", claimId },
-    }],
+  const message: AdapterOutboundMessage = {
+    deliveryId,
+    surface: { kind: "dm", id: inbound.surfaceId },
+    actorId: inbound.actorId,
+    text,
+    replyToId: inbound.messageId,
   };
+  if (options.choices) message.choices = options.choices;
+  return { terminal: true, responses: [{ message, context: { kind: "platform", claimId: options.claimId } }] };
 }
 
-function createPairingCode(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(PAIRING_CHARACTERS));
-  return [...bytes].map((byte) => PAIRING_ALPHABET[byte & 31]).join("");
-}
-
-function formatPairingCode(code: string): string {
-  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`;
+/** A pairing the Kernel is connecting right now; another code waits until it ends or expires. */
+function pairingInProgress(state: ManagedTelegramPeerState): state is ManagedTelegramPeerState & { pairing: NonNullable<ManagedTelegramPeerState["pairing"]> } {
+  return Boolean(state.pairing
+    && (state.pairing.status === "prepared" || state.pairing.status === "active")
+    && state.pairing.expiresAt > Date.now());
 }
 
 function parseTelegramMessageId(value: string | undefined): number | undefined {
@@ -1068,4 +1144,9 @@ function requireCanonicalOrigin(value: string): string {
     throw new Error("canonicalOrigin must be an HTTPS origin");
   }
   return url.origin;
+}
+
+/** The platform's own replies, in the language of the sender's Telegram app. */
+function replies(sender: { language?: string }): PlatformReplies {
+  return platformReplies("Telegram", replyLanguageFromTag(sender.language));
 }

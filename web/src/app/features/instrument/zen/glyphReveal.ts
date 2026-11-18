@@ -85,15 +85,14 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
         updateMask();
         return;
       }
-      const scale = bounds.width / container.offsetWidth;
       const ratio = window.devicePixelRatio || 1;
       const width = Math.ceil(bounds.width * ratio);
       const height = Math.ceil((bottom - top) * ratio);
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
-      canvas.style.width = `${bounds.width / scale}px`;
-      canvas.style.height = `${(bottom - top) / scale}px`;
-      canvas.style.top = `${(top - bounds.top) / scale}px`;
+      canvas.style.width = `${bounds.width}px`;
+      canvas.style.height = `${bottom - top}px`;
+      canvas.style.top = `${top - bounds.top}px`;
       if (!canvas.isConnected) container.append(canvas);
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, bounds.width, bottom - top);
@@ -127,7 +126,7 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
           let font = fonts.get(parent);
           if (!font) {
             const style = getComputedStyle(parent);
-            font = `${style.fontStyle} ${style.fontWeight} ${parseFloat(style.fontSize) * scale}px ${style.fontFamily}`;
+            font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
             fonts.set(parent, font);
           }
           context.font = font;

@@ -206,7 +206,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const actionDisabled = !flow || busy || (step === "claim" ? !handle.trim() || (!owner && !email.trim()) || availability === "unavailable" || !!handleError
     : step === "email" ? !email.trim() : step === "code" ? code.length !== 6 : false);
   const opening = step === "spaces" || step === "email";
-  const title = invitation && step === "email" ? t("session.welcome.join")
+  const title = invitation && step === "email" ? t("session.welcome.signInOrCreate")
     : !opening ? titles[step] : !compact ? t("session.openShip") : step === "spaces" ? t("session.welcome.chooseShip") : t("session.welcome.signIn");
   const split = opening && !!addressPanel && !compact;
   const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
@@ -298,17 +298,17 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={back}>{t("session.welcome.changeEmail")}</button>
         </div>}
         {owner && step !== "invitation" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-          const contactInvite = flow!.state.contactInvite;
+          const invite = flow!.state.invite;
           await flow!.signOut();
-          if (contactInvite) await flow!.save({ flow: "create", contactInvite });
+          if (invite) await flow!.save({ flow: "create", invite });
           setOwner(null); setEmail(""); setCode(""); setHandle(""); setConsent(false); setConsentTouched(false);
           setStep(invitation ? "invitation" : chooseSpace ? "email" : "welcome");
         })}>{t("session.welcome.signOut")}</button>}
       </form>
-      {compact && (opening || loadFailed) && addressPanel && <details class="desktop-welcome-address-disclosure">
-        <summary>{t("session.welcome.useAddress")}</summary>
+      {compact && (opening || loadFailed) && addressPanel && <div class="desktop-welcome-address-below">
+        <h2>{t("session.welcome.enterAddress")}</h2>
         {address()}
-      </details>}
+      </div>}
       </div>
       {split && <div class="desktop-welcome-address"><h2>{t("session.welcome.enterAddress")}</h2>
         {address()}

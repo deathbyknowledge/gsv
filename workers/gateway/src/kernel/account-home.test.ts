@@ -6,7 +6,6 @@ import {
   RETIRED_AGENT_VOICE_CONTEXT,
   RETIRED_STYLE_CONTEXT, RETIRED_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
-import { PERSONAL_INTELLIGENCE_CONTEXT } from "../prompts/personal-intelligence";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1002, gid: 1002, gids: [1002, 100], username: "crew", home: "/home/crew", cwd: "/home/crew",
@@ -95,7 +94,7 @@ describe("account context seeding", () => {
     ["latest generated role", GENERATED_MEMORY, ""],
     ["pre-compaction generated role", PRE_COMPACTION_MEMORY, ""],
     ["owner-edited role", GENERATED_MEMORY, "\nOwner's instructions.\n"],
-  ])("reconciles %s once without changing owner edits", async (_label, memory, edit) => {
+  ])("retires generated memory once and leaves the %s copy to the role cleanup", async (_label, memory, edit) => {
     const original = generatedShipContext(memory) + edit;
     const files = new Map([
       ["context.d/00-role.md", original],
@@ -126,17 +125,17 @@ describe("account context seeding", () => {
     // SAFETY: this fixture implements the revisioned home reads and writes used by scaffolding.
     const env = { RIPGIT: { fetch }, STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => {}) } } as Pick<Env, "STORAGE" | "RIPGIT">;
     await ensureAccountHomeLayout(env, IDENTITY, { seedPromptContext: true, personalAgent: true });
-    expect(files.get("context.d/00-role.md")).toBe(edit ? original : PERSONAL_INTELLIGENCE_CONTEXT);
+    expect(files.get("context.d/00-role.md")).toBe(original);
     expect(files.has("context.d/15-memory.md")).toBe(false);
     expect(applied.flat()).not.toContainEqual(expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }));
-    if (edit) expect(applied.flat()).not.toContainEqual(expect.objectContaining({ path: "context.d/00-role.md" }));
+    expect(applied.flat()).not.toContainEqual(expect.objectContaining({ path: "context.d/00-role.md" }));
 
     applied.length = 0;
     await ensureAccountHomeLayout(env, IDENTITY, { seedPromptContext: true, personalAgent: true });
     expect(applied).toEqual([]);
   });
 
-  it.each(["00-role.md", "10-delegation.md", "00-style.md", "15-memory.md"])(
+  it.each(["05-persona.md", "00-style.md", "15-memory.md"])(
     "preserves an owner edit that races with seeding or retiring %s", async (name) => {
       const path = `context.d/${name}`;
       let head: string | null = null;
@@ -152,7 +151,6 @@ describe("account context seeding", () => {
             ownerText = "Owner's instructions";
             head = "edited";
             if (name === "00-style.md") return new Response(RETIRED_AGENT_VOICE_CONTEXT);
-            if (name === "00-role.md") return new Response(generatedShipContext(GENERATED_MEMORY));
             if (name === "15-memory.md") return new Response(GENERATED_MEMORY);
           }
           return new Response("missing", { status: 404 });
@@ -174,8 +172,8 @@ describe("account context seeding", () => {
       });
       // SAFETY: only the Fetcher and bucket methods used by account scaffolding are exercised.
       const env = { RIPGIT: { fetch }, STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => {}) } } as Pick<Env, "STORAGE" | "RIPGIT">;
-      if (name !== "10-delegation.md") {
-        await ensureAccountHomeLayout(env, IDENTITY, { seedPromptContext: true, personalAgent: name === "00-role.md" });
+      if (name !== "05-persona.md") {
+        await ensureAccountHomeLayout(env, IDENTITY, { seedPromptContext: true });
       } else {
         await seedContextFile(env, IDENTITY, name, "Generated default");
       }

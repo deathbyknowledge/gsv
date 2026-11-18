@@ -513,12 +513,7 @@ describe("contact invitations", () => {
     }
   };
 
-  it("counts them for the issuing Ship with no content", () => {
-    assert.equal(record("gateway", "contact.invite.created", {}).success, true);
-    assert.equal(record("gateway", "contact.invite.accepted", {}).success, true);
-    assert.equal(record("accounts", "contact.invite.created", {}).success, false);
-    assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
-    assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
+  it("counts a signup for the inviting Ship with no content", () => {
     assert.equal(record("accounts", "contact.invite.signup", {}).success, true);
     assert.equal(record("gateway", "contact.invite.signup", {}).success, false);
     assert.equal(record("accounts", "contact.invite.signup", { invitee: "inst_new" }).success, false);
@@ -599,5 +594,37 @@ describe("onboarding funnel events", () => {
     assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
     assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);
     assert.equal(record("accounts", "onboarding.welcome.finished", { outcome: "connected", durationMs: 1 }).success, false);
+  });
+});
+
+describe("cloud browser timings", () => {
+  const events = [
+    { stream: "operational", name: "browser.save.finished", properties: { outcome: "saved", trigger: "handoff", durationMs: 860, sitesRead: 2, sitesKept: 60 } },
+    { stream: "operational", name: "browser.start.finished", properties: { outcome: "ready", durationMs: 6500, restoreMs: 5100, sitesRestored: 61 } },
+    { stream: "operational", name: "browser.handoff.finished", properties: { outcome: "completed", durationMs: 90000, inputs: 80, inputFailures: 0, inputMedianMs: 149, inputMaxMs: 192 } },
+  ];
+
+  it("accepts browser timings only from Instances and never a site or input", () => {
+    for (const event of events) {
+      const record = createTelemetryRecord({ ...INPUT, component: "instances", event });
+      assert.equal(telemetryRecordSchema.safeParse(record).success, true);
+      assert.equal(telemetryRecordSchema.safeParse({ ...record, component: "gateway" }).success, false);
+      for (const field of ["origin", "url", "text", "profileId"]) {
+        assert.equal(telemetryRecordSchema.safeParse({ ...record, event: { ...event, properties: { ...event.properties, [field]: "https://bank.example" } } }).success, false);
+      }
+    }
+  });
+
+  it("keeps outcomes and triggers closed and the counts optional", () => {
+    const [save, start, handoff] = events;
+    const valid = (event) => telemetryRecordSchema.safeParse({ ...createTelemetryRecord(INPUT), component: "instances", event }).success;
+    assert.equal(valid({ ...save, properties: { ...save.properties, trigger: "background" } }), false);
+    assert.equal(valid({ ...start, properties: { ...start.properties, outcome: "slow" } }), false);
+    assert.equal(valid({ ...handoff, properties: { ...handoff.properties, inputMaxMs: -1 } }), false);
+    // A save that failed before reading, a start with nothing to restore and a handoff
+    // whose input counts a coordinator restart lost report no counts.
+    assert.equal(valid({ ...save, properties: { outcome: "failed", trigger: "stop", durationMs: 20000 } }), true);
+    assert.equal(valid({ ...start, properties: { outcome: "stopped", durationMs: 900 } }), true);
+    assert.equal(valid({ ...handoff, properties: { outcome: "expired", durationMs: 900000 } }), true);
   });
 });

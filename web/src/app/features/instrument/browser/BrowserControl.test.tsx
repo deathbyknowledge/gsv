@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { GSVClient } from "@humansandmachines/gsv/client";
-import { encodeBrowserViewPacket, type BrowserHandoff, type CloudInstance } from "@humansandmachines/gsv/protocol";
+import { bodyToText, encodeBrowserViewPacket, type BinaryBody, type BrowserHandoff, type CloudInstance } from "@humansandmachines/gsv/protocol";
 import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -80,8 +80,10 @@ describe("live browser viewing", () => {
     const inputs = () => viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input");
     try {
       const old = image();
-      await act(() => { viewer.type("first"); viewer.type("unsent from old view"); });
+      // The second input waits behind the first, which is in flight.
+      await act(() => { viewer.type("first"); });
       await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+      await act(() => { viewer.type("unsent from old view"); });
       await act(() => {
         if (reason === "disconnect") viewer.disconnect();
         else {
@@ -109,6 +111,27 @@ describe("live browser viewing", () => {
     } finally { await viewer.close(); }
   });
 
+  it("sends text typed while an input is in flight as one input, in order around keys", async () => {
+    const viewer = await openLinkedViewer("active", "linked-login");
+    const inputs = () => viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input");
+    // SAFETY: The viewer sends each input as a JSON body in the request options.
+    const sent = () => Promise.all(inputs().map(([, , options]) => bodyToText((options as { body: BinaryBody }).body).then(text => JSON.parse(text))));
+    try {
+      // SAFETY: The textarea is the viewer's keyboard input; its key handler reads only key state and preventDefault.
+      const keyboard = () => viewer.nodes().find(node => node.type === "textarea") as VNode<{ onKeyDown: (event: Partial<KeyboardEvent>) => void }>;
+      await act(() => { viewer.type("a"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+      await act(() => {
+        viewer.type("b"); viewer.type("c");
+        keyboard().props.onKeyDown({ key: "Enter", altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, preventDefault: () => {} });
+        viewer.type("d"); viewer.type("e");
+      });
+      await act(async () => { viewer.inputResult.resolve({ data: { accepted: true } }); await viewer.inputResult.promise; });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(4));
+      expect(await sent()).toEqual([{ kind: "text", text: "a" }, { kind: "text", text: "bc" }, { kind: "key", key: "Enter", modifiers: 0 }, { kind: "text", text: "de" }]);
+    } finally { await viewer.close(); }
+  });
+
   it("fences immediate, queued and late-image input until the newly selected view has loaded", async () => {
     const viewer = await openLinkedViewer("active", "linked-login", { manualFrames: true });
     // SAFETY: This selects the intrinsic viewer image and uses its image event props.
@@ -118,8 +141,9 @@ describe("live browser viewing", () => {
     const inputs = () => viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input");
     try {
       const original = image();
-      await act(() => { viewer.type("first"); viewer.type("queued for first tab"); });
+      await act(() => { viewer.type("first"); });
       await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+      await act(() => { viewer.type("queued for first tab"); });
       await act(() => {
         viewer.nodes().find(node => node.type === "button" && collectText(node) === "Other tab")!.props.onClick?.();
         viewer.type("immediately after switching");
@@ -172,8 +196,9 @@ describe("live browser viewing", () => {
       expect(viewer.request.mock.calls.find(([call]) => call === "sys.browser.handoff.open")?.[1]).toEqual({ instanceId: "instance", requestId: "linked-login" });
       await act(() => { viewer.push("active", "linked-login"); });
       await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
-      await act(() => { viewer.type("first"); viewer.type("unsent"); });
+      await act(() => { viewer.type("first"); });
       await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1));
+      await act(() => { viewer.type("unsent"); });
       const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
       await act(() => { finish!.props.onClick?.(); });
       await act(() => { viewer.push("pending"); });

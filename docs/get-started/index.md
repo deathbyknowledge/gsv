@@ -14,13 +14,15 @@ Creating your account signs you in and opens Chat, your conversation with your S
 The first time you sign in, Ship wakes and greets you in a language detected
 from your browser; the chat reads "Ship is waking up" until its first message
 lands. In front of the chat, the web app asks once where you want to message
-Ship: **WhatsApp**, **Telegram**, the **Desktop app**, or right here. A
-messenger pairs right there, through the same steps as **Settings →
-Messengers**, and Ship says hello on it once it connects; from then on Ship
-replies wherever you last wrote to it. If your device's language points to a
+Ship. Choose **WhatsApp** or **Telegram** to connect it right there: open the
+messenger and send the message it opens with, which carries a one-time code. On a
+computer you can scan the QR code with your phone instead. The screen connects on
+its own and names the account that connected, with **Not you?** to undo it.
+**Trouble connecting?** shows the code to send by hand. Ship says hello on the
+messenger once it connects; from then on Ship replies wherever you last wrote to it. If your device's language points to a
 country the Ship's WhatsApp number cannot reach, the WhatsApp steps say so, and
-a (?) note explains that connecting a messenger gives Ship only the messages you
-send it. The screen shows once per account, so Desktop and later visits go
+a note under the choices explains that connecting a messenger gives Ship only
+the messages you send it. You can also skip and chat right here. The screen shows once per account, so Desktop and later visits go
 straight to the chat. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
@@ -48,10 +50,10 @@ If creation is interrupted, retry with the same handle to resume that activation
 While activation completes, **Opening Ship** cycles through three, two, one and
 no dots. With reduced motion enabled, the three dots stay still.
 
-A friend's invitation link opens an invitation modal on the signup page. Continue
-and verify your email; existing users choose their Ship, while new users choose a
-handle and finish activation. The invitation stays with you through activation; accept it
-in People after choosing who handles incoming messages.
+A friend's invitation link opens signup with their name on it. Verify your email
+and choose a handle; when your Ship opens, People has a message request to them
+ready to send. If you already have a Ship, choose **Already have a Ship?** and sign
+in to send the same request from there. They accept it in their People.
 
 If activation is interrupted or its link expires, opening the unfinished Ship shows
 **Continue activation**. Sign in with the same email and select **Continue** beside its
@@ -160,11 +162,7 @@ dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** follows the system across signup, sign-in and the
 app, including changes while the page is open.
 
-The app starts at 75% text size on a device without a saved preference.
-Outside a text field, press **x** to cycle through 65%, 75%, 85%, 100%, 150% and 200%
-sizes. The 65% and 75% sizes use compact message text and tighter spacing to fit
-more conversation on screen. The choice is remembered on this device; existing
-saved sizes are preserved.
+To make text larger or smaller, use your browser's zoom.
 
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
@@ -173,7 +171,7 @@ separate from Chat's typed text and attachments. These preferences stay on that 
 **voice** panel keeps the recording controls and a link to those settings.
 
 Open **People** to try making plans or working together with someone on Ship.
-**connect** creates a shareable invitation; accepting it opens your conversation.
+**Invite** shows your invitation link, which anyone can use to send you a message request; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
 A dot beside **people** marks waiting activity, and Chat shows unread conversations
 and message requests above the prompt, including after a reload. See

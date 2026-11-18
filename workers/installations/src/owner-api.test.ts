@@ -196,7 +196,7 @@ describe("signup attribution body", () => {
 });
 
 describe("signup inviter body", () => {
-  it("accepts the inviting Ship's hostname and drops a claim that is not one without refusing the signup", async () => {
+  it("accepts the Ship an invitation link named and drops a claim outside that shape without refusing the signup", async () => {
     const f = await fixture();
     await f.signIn();
     const inviterOwner = await f.accounts.createPrincipal({ email: `inviter-${crypto.randomUUID()}@example.com`, displayName: "Inviter", verified: true });
@@ -220,10 +220,14 @@ describe("signup inviter body", () => {
       expect(spy.mock.lastCall?.[4]).toBeUndefined();
       await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'cancelled' WHERE handle = ?").bind(own).run();
     }
+    // A host name and a bare handle both reach Accounts as the link wrote them, lowercased.
+    for (const [value, target] of [[`${inviter.handle.toUpperCase()}.Example.com`, `${inviter.handle}.example.com`], [inviter.handle.toUpperCase(), inviter.handle]]) {
+      const operationId = crypto.randomUUID(), own = `inv-${crypto.randomUUID()}`;
+      expect((await f.request("/spaces", f.sessionSecret, { operationId, handle: own, inviter: value })).status).toBe(200);
+      expect(spy.mock.lastCall?.[4]).toBe(target);
+      expect(await f.accounts.getReservationByOperation(operationId)).not.toBeNull();
+      await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'cancelled' WHERE handle = ?").bind(own).run();
+    }
     spy.mockRestore();
-    const operationId = crypto.randomUUID();
-    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: `${inviter.handle.toUpperCase()}.Example.com.` });
-    expect(accepted.status).toBe(200);
-    expect(await f.accounts.getReservationByOperation(operationId)).not.toBeNull();
   });
 });

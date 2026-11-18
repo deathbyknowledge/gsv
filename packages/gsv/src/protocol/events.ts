@@ -224,6 +224,7 @@ export const procHistoryEventPayloadSchemas = {
   }),
   "owner.notified": z.strictObject({
     noticeId: z.string(),
+    // Earlier Ships recorded accepted contact invitations; histories keep those events.
     topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted", "mail.received", "machine.added", "adapter.connected", "adapter.auth_required", "event.received", "event.silent"]),
     adapter: z.optional(z.string()),
     shownInClient: z.optional(z.boolean()),
@@ -351,6 +352,7 @@ export type ProcHistoryEventPayloadMap = {
   /** Something that happened to the owner, recorded for Ship; `sentAtMs` is set when they were told, with `adapter` when by their messenger. */
   "owner.notified": {
     noticeId: string;
+    /** `contact.invite.accepted` only in histories from before contact invitations ended. */
     topic: "contact.message" | "contact.request" | "contact.invite.accepted" | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required" | "event.received" | "event.silent";
     /** The adapter that carried the notice, such as whatsapp; each reader names it with adapterDisplayName. */
     adapter?: string;

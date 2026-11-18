@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { t } from "../../i18n/locale";
-import { contactInvitationInviter } from "./contactInvitationIntent";
 
 export const ONBOARDING_KEY = "gsv.ui.installation-onboarding.v1";
 export type WelcomeState = {
@@ -10,7 +9,8 @@ export type WelcomeState = {
   challenge: { id: string; email: string; browserSecret: string } | null;
   operationId: string | null;
   handle: string | null;
-  contactInvite?: string | null;
+  /** The `invite` value of the invitation link that brought the person here, until their Ship opens. */
+  invite?: string | null;
   /** The slugs the signup link carried: the website's placement and example, and the campaign tags; reported when the Ship is reserved. */
   attribution?: SignupAttribution | null;
 };
@@ -42,7 +42,7 @@ type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
 }) => Promise<Pick<Response, "ok" | "status" | "text">>;
 export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-26"; locale: "en" | "es" | "pt-BR" };
-/** The space reservation body: the website's attribution, the inviting Ship's hostname and the product-email choice ride along only when known. */
+/** The space reservation body: the website's attribution, the Ship the invitation link named and the product-email choice ride along only when known. */
 type SpaceRequest = { operationId: string; handle: string; attribution?: SignupAttribution; inviter?: string; productEmails?: ProductEmailChoice };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
@@ -123,7 +123,8 @@ export class OwnerWelcome {
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID(), productEmails?: ProductEmailChoice): Promise<PreparedSpace> {
     await this.save({ flow: "create", operationId, handle });
     const attribution = this.state.attribution ?? undefined;
-    const inviter = this.state.contactInvite ? contactInvitationInviter(this.state.contactInvite) : null;
+    // The link's `invite` value as it came, a handle or a host name; Accounts resolves it and counts the signup for that Ship.
+    const inviter = this.state.invite ?? null;
     const body: SpaceRequest = { operationId, handle };
     if (attribution) body.attribution = attribution;
     if (inviter) body.inviter = inviter;
@@ -136,7 +137,7 @@ export class OwnerWelcome {
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
     const change: Partial<WelcomeState> = { flow: "open", challenge: null, operationId: null, handle: null };
-    if (this.state.contactInvite !== undefined) change.contactInvite = null;
+    if (this.state.invite !== undefined) change.invite = null;
     await this.save(change);
   }
 

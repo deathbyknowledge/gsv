@@ -1,77 +1,70 @@
 import { Fragment, type VNode } from "preact";
-import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
+import { AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage, signupMessenger } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
-import { captureContactInvitation } from "./invitation";
-import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
-import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
+import { captureInvite } from "./invitation";
+import { contactInviteFrom } from "@humansandmachines/gsv/protocol";
 import { t } from "../app/i18n/locale";
 
 export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise<WelcomeSnapshot> }, accountsOrigin: string): Promise<VNode> {
   const welcome = new URLSearchParams(window.location.search).get("view") === "welcome";
-  let contactInvitation = pendingContactInvitation();
+  const spaceDomain = publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname);
+  // Someone's invitation link names them; it carries no secret, so it only leads to a message request.
+  const linked = new URL(window.location.href).searchParams.get("invite");
+  let linkedInvite = contactInviteFrom(linked, spaceDomain) ? linked : null;
   let client: OwnerWelcome | undefined;
   let load: () => Promise<OwnerWelcome>;
   try {
     const snapshot = await storage.load();
-    contactInvitation ??= snapshot.value?.contactInvite ?? null;
     const candidate = new OwnerWelcome(snapshot, storage, accountsOrigin);
-    await captureContactInvitation(candidate, contactInvitation);
+    linkedInvite = await captureInvite(candidate, linkedInvite);
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
     // The signup link names where it was clicked and which campaign brought it; that rides along until the Ship is reserved.
     const attribution = signupAttributionFromLink(new URL(window.location.href));
-    // A new signup takes this link's origin or none; only a resumed one keeps what was stored.
-    if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create", attribution });
-    else if (attribution) await candidate.save({ attribution });
+    if (!resume || linkedInvite) await candidate.save({ flow: welcome && !linkedInvite ? "open" : "create" });
+    // A link's own origin replaces the stored one. A load without one keeps it, because the page has
+    // already taken it off the URL: a reload, or a tab the phone restores, must not report the signup as direct.
+    if (attribution) await candidate.save({ attribution });
     client = candidate;
     load = async () => candidate;
   } catch (error) {
-    // Signup needs durable state; opening an existing space with a contact link does not.
+    // Signup needs durable state; opening an existing space from an invitation link does not.
     load = async () => { throw error; };
   }
-  const preview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
-  const invitationError = preview && ("error" in preview ? preview.error
-    : preview.expired ? t("signup.invitationExpired", { name: preview.name }) : null);
-  // Old signup links remain useful destinations, but their codes no longer authorize creation.
+  const invite = contactInviteFrom(linkedInvite, spaceDomain);
+  // What the link carried is kept above, so it comes off the address. Old signup links' `#invite` codes no longer authorize creation.
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
   const carried = SIGNUP_LINK_SLUGS.filter((slug) => (slug.part === "fragment" ? fragment : url.searchParams).has(slug.name));
-  if (fragment.has("invite") || carried.length) {
+  if (fragment.has("invite") || url.searchParams.has("invite") || carried.length) {
     fragment.delete("invite");
+    url.searchParams.delete("invite");
     for (const slug of carried) (slug.part === "fragment" ? fragment : url.searchParams).delete(slug.name);
     url.hash = fragment.toString();
     window.history.replaceState(null, "", url);
   }
-  const leave = async (destination: string) => {
+  const connect = async (origin: string, onboardingToken?: string | null) => {
+    // Someone a messenger sent here finds its connection open on their new Ship.
+    const messenger = signupMessenger(client?.state.attribution?.utmSource);
+    const destination = signupDestination(origin, onboardingToken, { invite: invite?.profile, messenger });
     try {
-      if (contactInvitation && client) await client.save({ contactInvite: null });
+      if (linkedInvite && client) await client.save({ invite: null });
     } finally {
-      clearContactInvitation();
       window.location.assign(destination);
     }
   };
-  const connect = async (origin: string, onboardingToken?: string | null) => {
-    const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
-      : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
-    await leave(destination);
-  };
-  // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
-  const Frame = contactInvitation ? SignupDialog : Fragment;
-  return <AuthScene layout="welcome" homeHref={signupHomepage(accountsOrigin)} headerActions={!contactInvitation && !welcome
-    ? <a class="gsv-auth-link" href="/owner/signup/?view=welcome">{t("session.welcome.alreadyHaveShip")}</a> : undefined}><Frame>{invitationError
-    ? <AuthLayout visible><section class="desktop-welcome"><h1>{t("session.contact.title")}</h1><p role="alert">{invitationError}</p>
-      <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
-        event.preventDefault(); await leave("/owner/signup/?resume=1");
-      }}>{t("signup.openShip")}</a></section></AuthLayout>
-    : <OwnerWelcomeScreen ready resume={!welcome} initialStep={contactInvitation ? "email" : welcome ? "welcome" : "claim"} compact={!!contactInvitation}
-      homeHref={contactInvitation ? undefined : signupHomepage(accountsOrigin)}
-      spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
-      invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
-      addressPanel={contactInvitation || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame></AuthScene>;
+  // An invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
+  const Frame = invite ? SignupDialog : Fragment;
+  return <AuthScene layout="welcome" homeHref={signupHomepage(accountsOrigin)} headerActions={!invite && !welcome
+    ? <a class="gsv-auth-link" href="/owner/signup/?view=welcome">{t("session.welcome.alreadyHaveShip")}</a> : undefined}><Frame>
+    <OwnerWelcomeScreen ready resume={!welcome} initialStep={invite ? "email" : welcome ? "welcome" : "claim"} compact={!!invite}
+      homeHref={invite ? undefined : signupHomepage(accountsOrigin)} spaceDomain={spaceDomain}
+      invitation={invite ? { name: invite.name } : undefined} chooseSpace={!!invite}
+      addressPanel={invite || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
+      load={load} onConnect={connect} />{!invite && <DesktopAppLink />}</Frame></AuthScene>;
 }

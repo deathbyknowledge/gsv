@@ -24,7 +24,7 @@ async function listen(server) {
 
 test("source paths stay inside their declared workspace and only expose Markdown", async () => {
   const workspace = createWorkspaceRegistry().get("prompts");
-  assert.equal((await resolveWorkspacePath(workspace, "ship/context.d/00-role.md")).relativePath, "ship/context.d/00-role.md");
+  assert.equal((await resolveWorkspacePath(workspace, "ship/context.d/voice.md")).relativePath, "ship/context.d/voice.md");
   await assert.rejects(resolveWorkspacePath(workspace, "../process/do.ts"), /outside/);
   await assert.rejects(resolveWorkspacePath(workspace, "system.ts"), /file type/);
 });
@@ -50,22 +50,23 @@ test("workspace listing includes allowed files and skips repository metadata", a
 
 test("previews assemble account-specific defaults with the runtime providers", async () => {
   const [ship, crew] = await Promise.all([loadPromptPreview("ship"), loadPromptPreview("crew")]);
-  assert.match(ship.prompt, /<system path="\/sys\/config\/ai\/context.d\/">/);
-  assert.match(ship.prompt, /<program path="\/home\/ship\/context.d\/">/);
-  assert.match(ship.prompt, /<05-voice.md>/);
+  assert.match(ship.prompt, /^system  \/sys\/config\/ai\/context.d\/ +read-only$/m);
+  assert.match(ship.prompt, /^base    \/sys\/config\/ai\/ship\/context.d\/ +read-only$/m);
+  assert.match(ship.prompt, /<voice.md>\n<base>\n# Voice/);
   assert.match(ship.prompt, /Crew account: `crew`/);
-  assert.doesNotMatch(crew.prompt, /<05-voice.md>/);
+  assert.doesNotMatch(crew.prompt, /<voice.md>/);
   assert.doesNotMatch(crew.prompt, /<00-style.md>/);
-  assert.match(crew.prompt, /<program path="\/home\/crew\/context.d\/">/);
+  assert.match(crew.prompt, /^base    \/sys\/config\/ai\/crew\/context.d\/ +read-only$/m);
   for (const preview of [ship, crew]) {
-    assert.match(preview.prompt, /<user path="\/home\/alex\/context.d\/">/);
+    assert.match(preview.prompt, /^user    \/home\/alex\/context.d\/ +editable$/m);
+    assert.match(preview.prompt, /<personal.md>\n<user>\n/);
     assert.match(preview.prompt, /<available_skills>/);
     assert.doesNotMatch(preview.prompt, /\{\{/);
     assert.equal(preview.sources.length, preview.sections.length);
     assert.ok(preview.sources.some((source) => source.responsibilityBaseline));
     assert.ok(preview.sources.every((source) => source.sha256.length === 64));
     assert.equal(preview.prompt.split("# Knowledge").length - 1, 1);
-    assert.equal(preview.sections.find((section) => section.name === "15-memory.md")?.provider, "system.context");
+    assert.equal(preview.sections.find((section) => section.name === "environment.md")?.provider, "system.context");
     for (const section of preview.sections.filter((section) => section.contextRoot)) {
       assert.equal(section.paths.length, 1);
       assert.ok(section.paths[0].endsWith(`/context.d/${section.name}`));
@@ -83,7 +84,7 @@ test("previews assemble account-specific defaults with the runtime providers", a
 });
 
 test("unsaved Markdown changes the real assembled prompt without touching disk or leaking into the next preview", async () => {
-  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/system/context.d/00-runtime.md");
+  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/system/context.d/environment.md");
   const original = await readFile(absolutePath, "utf8");
   const preview = await loadPromptPreview("ship", {
     absolutePath, content: "# Edited\n\nHello {{program.username}} from {{user.username}}.\nLiteral `code` and ${notJavaScript}.\n",
@@ -93,7 +94,7 @@ test("unsaved Markdown changes the real assembled prompt without touching disk o
   assert.equal(await readFile(absolutePath, "utf8"), original);
   assert.doesNotMatch((await loadPromptPreview("ship")).prompt, /# Edited/);
   const blank = await loadPromptPreview("ship", { absolutePath, content: "" });
-  assert.ok(!blank.sections.some((section) => section.name === "00-runtime.md"));
+  assert.ok(!blank.sections.some((section) => section.name === "environment.md"));
 });
 
 test("each category draft reaches its intended accounts without changing another account's instructions", async () => {
@@ -151,7 +152,7 @@ test("the preview API validates drafts and renders their Markdown", async (conte
   const post = (body) => fetch(`${origin}/api/prompt-preview`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const response = await post({ account: "crew", draft: { path: "crew/context.d/00-role.md", content: "# Draft\n\nDo **this**." } });
+  const response = await post({ account: "crew", draft: { path: "crew/context.d/behaviour.md", content: "# Draft\n\nDo **this**." } });
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.match(data.prompt, /Do \*\*this\*\*/);

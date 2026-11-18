@@ -3,8 +3,6 @@ import type {
   ContactSendResult,
   ContactDeliveryStatus,
   OriginMessageRef,
-  ContactInviteCreateResult,
-  ContactInviteSummary,
   ContactRequestRecord,
   ContactRequestState,
   ContactSummary,
@@ -18,7 +16,6 @@ import {
 export type ContactsClient = Pick<GSVClient, "request"> & {
   contact: Pick<GSVClient["contact"], "list" | "revoke" | "send"> & {
     alias: Pick<GSVClient["contact"]["alias"], "set">;
-    invite: Pick<GSVClient["contact"]["invite"], "accept" | "cancel" | "create" | "list">;
     request: Pick<GSVClient["contact"]["request"], "list" | "update">;
   };
   conversation: Pick<GSVClient["conversation"], "history">;
@@ -26,7 +23,6 @@ export type ContactsClient = Pick<GSVClient, "request"> & {
 
 export type ContactsWorkspace = {
   contacts: ContactSummary[];
-  invites: ContactInviteSummary[];
   requests: ContactRequestRecord[];
 };
 
@@ -38,9 +34,6 @@ export type ContactSendIntent = {
 };
 
 export type ContactsWorkspaceMutation =
-  | { kind: "invite.create" }
-  | { kind: "invite.accept"; code: string }
-  | { kind: "invite.cancel"; inviteId: string }
   | { kind: "contact.alias.set"; contactId: string; alias: string | null }
   | { kind: "contact.revoke"; contactId: string }
   | {
@@ -50,19 +43,15 @@ export type ContactsWorkspaceMutation =
       state: Exclude<ContactRequestState, "offered">;
     };
 
-export type ContactsMutationResult =
-  | { kind: "invite.created"; invite: ContactInviteCreateResult }
-  | { kind: "updated" };
+export type ContactsMutationResult = { kind: "updated" };
 
 export async function loadContactsWorkspace(client: ContactsClient): Promise<ContactsWorkspace> {
-  const [contacts, invites, requests] = await Promise.all([
+  const [contacts, requests] = await Promise.all([
     client.contact.list({ includeRevoked: true }),
-    client.contact.invite.list({ includeTerminal: true }),
     client.contact.request.list({ includeTerminal: true }),
   ]);
   return {
     contacts: contacts.contacts,
-    invites: invites.invites,
     requests: requests.requests,
   };
 }
@@ -71,20 +60,6 @@ export async function mutateContactsWorkspace(
   client: ContactsClient,
   mutation: ContactsWorkspaceMutation,
 ): Promise<ContactsMutationResult> {
-  if (mutation.kind === "invite.create") {
-    return {
-      kind: "invite.created",
-      invite: await client.contact.invite.create({}),
-    };
-  }
-  if (mutation.kind === "invite.accept") {
-    await client.contact.invite.accept({ code: mutation.code });
-    return { kind: "updated" };
-  }
-  if (mutation.kind === "invite.cancel") {
-    await client.contact.invite.cancel({ inviteId: mutation.inviteId });
-    return { kind: "updated" };
-  }
   if (mutation.kind === "contact.alias.set") {
     await client.contact.alias.set({ contactId: mutation.contactId, alias: mutation.alias });
     return { kind: "updated" };

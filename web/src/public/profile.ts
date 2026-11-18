@@ -43,7 +43,7 @@ ${restricted}
 </main></body></html>`;
 }
 
-const RESTRICTED = "This person only connects with people they invite. Ask them for an invitation link.";
+const RESTRICTED = "This person isn’t taking new message requests.";
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");

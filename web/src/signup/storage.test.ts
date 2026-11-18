@@ -5,7 +5,7 @@ const saved = {
   revision: "r1",
   value: {
     origin: "https://accounts.example", flow: "create", sessionSecret: null, challenge: null,
-    operationId: "op-1", handle: "newbie", contactInvite: null,
+    operationId: "op-1", handle: "newbie", invite: null,
   },
 };
 

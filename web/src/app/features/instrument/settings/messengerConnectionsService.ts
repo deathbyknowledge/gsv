@@ -21,6 +21,12 @@ export async function loadMessengerConnections(client: Pick<GSVClient, "call">, 
   };
 }
 
+/** Names a connected account as its messenger did when it linked, falling back to the platform's id for it. */
+export function messengerLinkName(link: ConsoleIdentityLink): string {
+  if (link.actorName && link.actorHandle) return `${link.actorName} · ${link.actorHandle}`;
+  return link.actorName ?? link.actorHandle ?? link.actorId;
+}
+
 export function messengerConnectionStatus(adapter: ConsoleAdapter | undefined, accountId: string): MessengerConnectionStatus {
   if (!adapter?.available) return "service-unavailable";
   const account = adapter.accounts.find((entry) => entry.accountId === accountId);

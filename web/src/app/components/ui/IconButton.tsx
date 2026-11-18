@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit" | "copy" | "arrowUp" | "arrowDown" | "delete" | "grip";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit" | "copy" | "receipt" | "arrowUp" | "arrowDown" | "delete" | "grip";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 /** Visual treatment. "default" = filled box with border; "floating" = borderless
  *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
@@ -40,6 +40,8 @@ export interface IconButtonProps {
   "aria-describedby"?: string;
   /** On/off state of a toggle, announced as pressed and shown in the accent colour. */
   pressed?: boolean;
+  /** Whether the content this control discloses is showing, announced as expanded and shown in the accent colour. */
+  expanded?: boolean;
   onClick?: () => void;
 }
 
@@ -221,6 +223,12 @@ const GLYPHS = {
       <path d="M10 3V2H2v9h1" />
     </svg>
   ),
+  receipt: (
+    <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 1.5h9v13l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1-1.5 1z" />
+      <path d="M6 5h4M6 8h4M6 11h2" />
+    </svg>
+  ),
 };
 
 const VARIANT_BASE = {
@@ -231,7 +239,7 @@ const VARIANT_BASE = {
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
  *  selects the visual treatment (default filled / floating borderless). */
-export function IconButton({ glyph = "back", icon, size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, pressed, onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", icon, size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, pressed, expanded, onClick }: IconButtonProps) {
   const numericSize = Number(size);
   const px = Number.isFinite(numericSize) && numericSize > 0
     ? numericSize
@@ -250,6 +258,7 @@ export function IconButton({ glyph = "back", icon, size = "medium", disabled = f
       aria-label={ariaLabel || title || undefined}
       aria-describedby={describedBy}
       aria-pressed={pressed}
+      aria-expanded={expanded}
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", width: `${px}px`, height: `${px}px` }}

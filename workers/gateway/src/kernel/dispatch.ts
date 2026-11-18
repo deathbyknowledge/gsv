@@ -118,6 +118,7 @@ import {
   handleAdapterPairConfirm,
   handleAdapterPairDisconnect,
   handleAdapterPairInfo,
+  handleAdapterPairCreate,
   handleAdapterPairInspect,
 } from "./adapter-pairing";
 import {
@@ -125,12 +126,6 @@ import {
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
-import {
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
-} from "./federation/invitations";
 import {
   handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet, handleProfilePublish,
   handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
@@ -914,18 +909,6 @@ async function dispatchKernel(
           ...handleProfileAvatarRead(frame.args, ctx),
         };
       // --- contact.* ---
-      case "contact.invite.create":
-        data = await handleContactInviteCreate(frame.args, ctx);
-        break;
-      case "contact.invite.accept":
-        data = await handleContactInviteAccept(frame.args, ctx);
-        break;
-      case "contact.invite.list":
-        data = handleContactInviteList(frame.args, ctx);
-        break;
-      case "contact.invite.cancel":
-        data = handleContactInviteCancel(frame.args, ctx);
-        break;
       case "contact.list":
         data = await handleContactList(frame.args, ctx);
         break;
@@ -993,6 +976,9 @@ async function dispatchKernel(
         break;
       case "adapter.pair.info":
         data = await handleAdapterPairInfo(frame.args, ctx);
+        break;
+      case "adapter.pair.create":
+        data = await handleAdapterPairCreate(frame.args, ctx);
         break;
       case "adapter.pair.inspect":
         data = await handleAdapterPairInspect(frame.args, ctx);

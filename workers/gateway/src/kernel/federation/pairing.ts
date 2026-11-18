@@ -1,9 +1,5 @@
 import type { KernelContext } from "../context";
-import type {
-  FederationContactRecord,
-  FederationPairingAttemptRecord,
-  FederationStore,
-} from "../federation-store";
+import type { FederationContactRecord, FederationStore } from "../federation-store";
 import { endContactHandling } from "./attention";
 import { cancelRequestResponsibilities } from "./requests";
 
@@ -37,45 +33,4 @@ export function revokeFederationContact(
   const revoked = ctx.federation.revoke(contact.id, contact.ownerUid, now);
   cancelRequestResponsibilities(contact.ownerUid, pending, "contact-revoked", now, ctx);
   return revoked;
-}
-
-export function assertPairingAttemptIdentity(
-  attempt: FederationPairingAttemptRecord,
-  expected: { ownerUid: number; expiresAtMs: number; remoteDid: string },
-): void {
-  if (
-    attempt.ownerUid !== expected.ownerUid
-    || attempt.expiresAtMs !== expected.expiresAtMs
-    || attempt.remoteDid !== expected.remoteDid
-  ) {
-    throw new Error("Contact pairing attempt identity changed");
-  }
-}
-
-export function assertPairingAttemptCanContinue(
-  attempt: FederationPairingAttemptRecord,
-): asserts attempt is Exclude<FederationPairingAttemptRecord, { state: "terminal" }> {
-  if (attempt.state !== "terminal") return;
-  if (attempt.terminalReason === "superseded") {
-    throw new Error("Contact pairing attempt was superseded");
-  }
-  throw new Error(`Contact pairing attempt is terminal (${attempt.terminalReason})`);
-}
-
-export function requireCommittedPairingContact(
-  attempt: Extract<FederationPairingAttemptRecord, { state: "committed" }>,
-  ctx: KernelContext,
-): FederationContactRecord {
-  const contact = ctx.federation.get(attempt.contactId);
-  if (
-    !contact
-    || contact.ownerUid !== attempt.ownerUid
-    || contact.state !== "active"
-    || contact.generation !== attempt.generation
-    || contact.threadId !== attempt.threadId
-    || contact.remoteDid !== attempt.remoteDid
-  ) {
-    throw new Error("Contact pairing attempt was superseded");
-  }
-  return contact;
 }

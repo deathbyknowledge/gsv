@@ -52,9 +52,14 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // Only applies to models that support extended thinking.
   "config/ai/reasoning": "medium",
   // System prompt context, assembled in lexical order, applied to every
-  // process. Per-agent persona/context lives in each account's home
-  // (/home/<account>/context.d), seeded at account creation.
+  // process. Each account's own additions live in its home
+  // (/home/<account>/context.d).
   ...Object.fromEntries(contextFiles("system").map(({ name, text }) => [`config/ai/context.d/${name}`, text])),
+  // Standing context for the Ship and its Crew, served read-only to processes
+  // running as those accounts. Anything particular to one person belongs in
+  // that person's own ~/context.d.
+  ...Object.fromEntries(contextFiles("ship").map(({ name, text }) => [`config/ai/ship/context.d/${name}`, text])),
+  ...Object.fromEntries(contextFiles("crew").map(({ name, text }) => [`config/ai/crew/context.d/${name}`, text])),
   // Prompt-visible skill enumeration. Detailed skill discovery remains available
   // through `man --search` and `skills` even when this is `off`.
   "config/ai/skills/index_mode": "summary",
@@ -90,7 +95,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // Timezone used for cron scheduling and log timestamps (IANA format).
   "config/server/timezone": "UTC",
   // The current server version (set at boot, read-only for users).
-  "config/server/version": "0.7.7",
+  "config/server/version": "0.7.9",
 
   // -- Shell ------------------------------------------------------------------
   // Default shell timeout in ms for native shell.exec.

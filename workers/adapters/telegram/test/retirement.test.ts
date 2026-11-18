@@ -12,13 +12,20 @@ const installationId = "retired-telegram-fixture";
 const request = { version: 1 as const, installationId, operationId: "retire-telegram-fixture" };
 const stateKey = "managed_telegram_peer:v1:state";
 
+/** Connects a sender through a link minted for `space`, as the Kernel and the person would. */
 async function pair(surfaceId: string, space: string) {
+  const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31]).join("");
+  await bindings.MANAGED_TELEGRAM_PAIRING.getByName(`pair:${code}`).offer({
+    claimId: crypto.randomUUID(), expiresAt: Date.now() + 10 * 60_000,
+    link: { installationId: space, localUid: 1000, canonicalOrigin: "https://fixture.gsv.space" },
+  });
   const peer = bindings.MANAGED_TELEGRAM_PEER.getByName(`managed:${surfaceId}`);
   await peer.handleWebhook({ kind: "message", inbound: {
     deliveryId: `first:${surfaceId}`, messageId: `1`, actorId: surfaceId, surfaceId,
-    text: "/start", sequence: 1, unsupportedContent: false, timestamp: Date.now(),
+    text: `/start ${code}`, sequence: 1, unsupportedContent: false, timestamp: Date.now(),
   } });
   const pending = await runInDurableObject(peer, async (_instance, state) => (await state.storage.get<ManagedTelegramPeerState>(stateKey))!.pairing!);
+  expect(pending.code).toBe(code);
   const claim = bindings.MANAGED_TELEGRAM_PAIRING.getByName(`pair:${pending.code}`);
   const input = { code: pending.code, installationId: space, localUid: 1000, operationId: `pair-${surfaceId}`, canonicalOrigin: "https://fixture.gsv.space" };
   const prepared = await claim.prepare(input);

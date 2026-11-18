@@ -29,8 +29,8 @@
           },
           "contactPolicy": {
             "type": "string",
-            "description": "What visitors may do: send a message request, ask for an invitation, or nothing. Known values are requests, invitation and closed; a Ship reads any other value as closed.",
-            "knownValues": ["requests", "invitation", "closed"],
+            "description": "What visitors may do: send a message request, or nothing. Known values are requests and closed; a Ship reads any other value as closed.",
+            "knownValues": ["requests", "closed"],
             "maxLength": 64
           }
         }

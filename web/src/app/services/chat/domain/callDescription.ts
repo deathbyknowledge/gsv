@@ -53,6 +53,19 @@ const PLACED_CALLS = new Map<string, PlacedCall>([
   ["net.fetch", ["chat.call.fetch", "chat.call.fetchIn", "chat.call.fetchOn"]],
 ]);
 const TOOL_CALL: PlacedCall = ["chat.call.tool", "chat.call.toolIn", "chat.call.toolOn"];
+const SESSION_READ: PlacedCall = ["chat.call.shellRead", "chat.call.shellReadIn", "chat.call.shellReadOn"];
+const SESSION_INPUT: PlacedCall = ["chat.call.shellInput", "chat.call.shellInputIn", "chat.call.shellInputOn"];
+
+/**
+ * A shell request without command text that names a session continues a running command:
+ * an empty input reads its output, and other input, such as a lone newline, is written to it.
+ */
+function continuedCommand(request: DescribedCall): PlacedCall | null {
+  if (request.syscall !== "shell.exec" || callArgumentText(request, "input") || callArgumentText(request, "command")) return null;
+  const session = z.object({ sessionId: z.string().min(1), input: z.string().default(""), start: z.boolean().optional() }).safeParse(request.args);
+  if (!session.success || session.data.start) return null;
+  return session.data.input === "" ? SESSION_READ : SESSION_INPUT;
+}
 
 /** A bare verb phrase for a request the model did not explain, in the shape the purpose would take. */
 export function describeCall(request: DescribedCall, place?: string): string {
@@ -74,7 +87,7 @@ export function describeCall(request: DescribedCall, place?: string): string {
       return t("chat.call.mail");
     }
     default: {
-      const [alone, inHome, onPlace] = PLACED_CALLS.get(request.syscall ?? "") ?? TOOL_CALL;
+      const [alone, inHome, onPlace] = continuedCommand(request) ?? PLACED_CALLS.get(request.syscall ?? "") ?? TOOL_CALL;
       return t(!place ? alone : request.target === "gsv" ? inHome : onPlace, { tool: request.toolName, place: place ?? "" });
     }
   }

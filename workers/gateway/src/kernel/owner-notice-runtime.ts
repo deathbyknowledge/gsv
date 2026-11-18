@@ -189,7 +189,6 @@ export class OwnerNoticeRuntime {
     if (!contact || contact.ownerUid !== notice.ownerUid || contact.state !== "active" || contact.blocked
       || contact.generation !== subject.contactGeneration) return null;
     const from = contactDisplayName(contact);
-    if (notice.topic === "contact.invite.accepted") return { ...notice, subject: { ...subject, from } };
     if (contact.preferences.muted || contact.preferences.shipHandlesMessages) return null;
     const entry = subject.conversationId ? ctx.conversations.inboxEntry(notice.ownerUid, subject.conversationId) : null;
     if (!entry?.unread) return null;

@@ -84,4 +84,4 @@ revocation. The password field is cleared when the section is hidden. Ordinary
 sign-in asks only for a password; the explicit **admin** toggle (Administrator sign-in) selects the administrator account (`root`).
 
 Profile editing and publication belong to People, reached through the display-name
-link at the bottom of its sidebar. Cross-space contact invitations also belong to People.
+link at the bottom of its sidebar. Cross-space contacts and the invitation link also belong to People.

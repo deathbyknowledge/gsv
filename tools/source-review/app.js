@@ -124,7 +124,7 @@ async function refresh() {
   const currentExists = state.files.some((file) => file.path === state.selectedPath);
   const preferred = state.workspace === "manual"
     ? state.files.find((file) => file.path === "index.md")?.path
-    : state.files.find((file) => file.path === "system/context.d/01-gsv.md")?.path;
+    : state.files.find((file) => file.path === "system/context.d/environment.md")?.path;
   if (!currentExists) {
     await selectFile(preferred ?? state.files[0]?.path ?? null, true);
   } else if (state.selectedPath) {

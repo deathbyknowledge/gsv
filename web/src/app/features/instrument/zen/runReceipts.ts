@@ -1,4 +1,4 @@
-import { linkReceiptRetries, type CallEvent, type Moment, type MomentEvent } from "./zenModel";
+import { linkReceiptRetries, timelineCalls, type CallEvent, type Moment, type MomentEvent } from "./zenModel";
 
 export type RunReceipt = {
   key: string;
@@ -40,6 +40,32 @@ export function receiptsForMoments(moments: readonly Moment[], activeRunId: stri
     }
   }
   return receipts;
+}
+
+/** How many of a receipt's calls hit an error that Ship did not try again. A command's exit code is never one. */
+export function unresolvedErrors(receipt: RunReceipt): number {
+  return timelineCalls(receipt.work).filter((event) => event.call.ending === "error"
+    && !receipt.relatedCalls.some((later) => later.retryOf === event.call.callId)).length;
+}
+
+/**
+ * Where a receipt shows. Work that ended in a message folds behind that message's receipt control. Work under way,
+ * waiting on the person, or stopped on an error with nothing said stays a line in the conversation. Work that
+ * finished cleanly with nothing said is Work's to show.
+ */
+export type ReceiptPlacement = "line" | "message" | "work";
+
+export function receiptPlacement(receipt: RunReceipt, waiting: boolean): ReceiptPlacement {
+  if (receipt.work.thinking || waiting) return "line";
+  if (receipt.replies.length > 0) return "message";
+  return unresolvedErrors(receipt) > 0 ? "line" : "work";
+}
+
+/** A ship moment with nothing to read: no words, media or stream, no work in progress, and no receipt the conversation keeps. */
+export function silentWork(moment: Moment, receipt: RunReceipt | undefined): boolean {
+  if (moment.role !== "ship" || moment.text || moment.media?.length || moment.streaming || moment.thinking) return false;
+  if (moment.activities.some((activity) => activity.you)) return false;
+  return !receipt || receiptPlacement(receipt, false) === "work";
 }
 
 export type ReceiptNote = Extract<MomentEvent, { kind: "thought" }>;

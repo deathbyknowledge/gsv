@@ -5,7 +5,6 @@ import type { ApproachRecord } from "../../../kernel/approach-store";
 import type { KernelContext } from "../../../kernel/context";
 import * as admission from "../../../kernel/approaches/admission";
 import * as runtime from "../../../kernel/approaches/runtime";
-import * as invitations from "../../../kernel/federation/invitations";
 import * as profiles from "../../../kernel/profiles";
 import { testPeer } from "../../../test-support/peers";
 import { buildContactCommand } from "./contact";
@@ -13,12 +12,13 @@ import { buildContactCommand } from "./contact";
 type ShellApproaches = Pick<KernelContext["approaches"], "byIdempotencyKey" | "unresolved">;
 const OWNER_ACCOUNT = { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" };
 
-function shell(approaches: Partial<ShellApproaches> = {}, caller: { processId?: string } = {}) {
+function shell(approaches: Partial<ShellApproaches> = {}, caller: { processId?: string } = {}, extra: Partial<KernelContext> = {}) {
   const store: ShellApproaches = { byIdempotencyKey: () => null, unresolved: () => null, ...approaches };
   // SAFETY: handlers are mocked here; command parsing reads only the caller grant and identity.
   const ctx = {
+    ...extra,
     approaches: store, connection: caller.processId ? undefined : {}, ...caller,
-    peer: testPeer({ account: OWNER_ACCOUNT, calls: ["contact.*", "profile.resolve", "approach.create"] }),
+    peer: testPeer({ account: OWNER_ACCOUNT, calls: ["contact.*", "profile.resolve", "profile.get", "approach.create"] }),
     procs: { get: () => ({ isPersonalController: false, ownerUid: OWNER_ACCOUNT.uid }), getOwnerUid: () => OWNER_ACCOUNT.uid },
     auth: { getPasswdByUid: () => OWNER_ACCOUNT, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
   } as KernelContext;
@@ -27,26 +27,38 @@ function shell(approaches: Partial<ShellApproaches> = {}, caller: { processId?: 
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("contact invitation handling", () => {
-  it("passes each owner's explicit choice through create and accept", async () => {
-    const create = vi.spyOn(invitations, "handleContactInviteCreate").mockResolvedValue({ inviteId: "invite:test", code: "code", url: "https://example.com/connect#contact=code", expiresAtMs: 1 });
-    const accept = vi.spyOn(invitations, "handleContactInviteAccept").mockImplementation(async () => { throw new Error("reached acceptance"); });
-    const bash = shell();
-    expect((await bash.exec("contact invite create --handling ship --expires 7d")).exitCode).toBe(0);
-    expect(create).toHaveBeenCalledWith({ shipHandlesMessages: true, expiresInSeconds: 604800 }, expect.anything());
-    expect((await bash.exec("contact invite accept 'https://example.com/connect#contact=code' --handling manual")).stderr).toContain("reached acceptance");
-    expect(accept).toHaveBeenCalledWith({ code: "https://example.com/connect#contact=code", shipHandlesMessages: false }, expect.anything());
+describe("contact invite", () => {
+  const signup = JSON.stringify({ primaryDomain: "ship.space", signupUrl: "https://signup.ship.space/" });
+  const invite = (policy: string | null, presentation = signup) => {
+    const published = policy ? { cid: "bafyprofile", record: { contactPolicy: policy } } : null;
+    // SAFETY: contact invite reads only the deployment presentation, the installation's handle and origin, and the published policy.
+    return shell({}, {}, {
+      env: { GSV_PUBLIC_CONFIG: presentation },
+      installationIdentity: { handle: "esteve", canonicalOrigin: "https://esteve.ship.space" },
+      profiles: { published: () => published },
+    } as Partial<KernelContext>);
+  };
+
+  it("prints the owner's reusable signup link", async () => {
+    expect(await invite("requests").exec("contact invite")).toMatchObject({ exitCode: 0, stdout: "https://signup.ship.space/?invite=esteve\n" });
   });
 
-  it("makes no invitation mutation when the handling choice is missing or invalid", async () => {
-    const create = vi.spyOn(invitations, "handleContactInviteCreate");
-    const accept = vi.spyOn(invitations, "handleContactInviteAccept");
-    const bash = shell();
-    for (const command of ["contact invite create", "contact invite accept code", "contact invite create --handling auto", "contact invite create --handling manual --handling ship"]) {
-      expect((await bash.exec(command)).exitCode).toBe(1);
+  it("says when no one can send a request from it yet", async () => {
+    for (const policy of [null, "closed"]) {
+      const result = await invite(policy).exec("contact invite");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("https://signup.ship.space/?invite=esteve\n");
+      expect(result.stdout).toContain("public with message requests on");
     }
-    expect(create).not.toHaveBeenCalled();
-    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the public profile without operator signup", async () => {
+    const result = await invite("requests", JSON.stringify({ primaryDomain: "ship.space" })).exec("contact invite");
+    expect(result.stdout).toBe("https://esteve.ship.space/profile\n");
+  });
+
+  it("takes no arguments", async () => {
+    expect((await invite("requests").exec("contact invite create --handling ship")).exitCode).toBe(1);
   });
 });
 

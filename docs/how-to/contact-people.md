@@ -2,8 +2,12 @@
 
 **People** holds conversations with people on other Ships. Open it with `p`.
 It opens **Recent**, your conversations newest first; older ones load as you scroll.
-The search icon beside the heading filters the list by name or handle; **Escape**
-or the close button puts the heading back. The icons at the bottom of the list, beside
+The search icon beside the heading searches all of People by name or handle,
+whichever list it opens from: recent and archived conversations, pending requests
+you received or sent, and blocked people. When nothing matches and what you typed
+is a handle or profile address, People looks it up and shows that public profile,
+with **open your conversation** or **send a message request**. **Escape** or the
+close button puts the heading back. The icons at the bottom of the list, beside
 your handle, open **archived**, **contacts**, **requests** and **add contact**. Requests are first messages from new people; the count on its icon
 shows the loaded active requests, with `+` when more remain. Each list has a
 **← recent** action to return to Recent.
@@ -23,44 +27,18 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **add contact**, choose who should handle new messages, then **create invitation
-link**. Share it wherever you already talk. The same link works for someone new
-to Ship or someone who already has a Ship. It connects one person and lasts seven
-days; you can cancel it before acceptance.
+Choose **add contact** to open **Add a contact**. Type their handle, such as `esteve`
+or `esteve.ship.space`. People shows your matching contacts as you type and, once
+the handle names a public profile, that person. **Message** opens a conversation
+you already have, or a first message request to someone new. When nothing matches,
+People says no public profile matches: the handle may be mistyped, or their profile
+may be private.
 
-On a managed deployment, the link opens a centered invitation showing who invited you.
-Choose **Continue**. Existing users select their Ship; new users verify their
-email and create one. The contact invitation stays with them through signup and
-activation. In their Ship, they choose who handles new messages and accept the connection.
-On a managed deployment, a Ship created through your invitation link is counted for
-your Ship in the operator's metrics, without naming the new Ship; what the two of
-you say stays between your Ships.
-Each person's choice affects only their own incoming messages. Neither person
-needs to publish a profile.
+The request has **Also add them as a contact** ticked, so they join Contacts once they
+accept; untick it to keep them out of Contacts. Choose **Let Ship answer their messages**
+or **I’ll read and reply to their messages myself**, then send.
 
-The recipient can also enter their handle or address, including a Ship hosted by another
-operator. This remains available if the browser cannot load or save signup state.
-Deployments without a signup service open that address form directly.
-If someone shares a link or a contact code, **I have an invitation** lets you
-paste it in People.
-
-Ship can create or accept these same invitations when asked, after you choose
-who handles new messages. The built-in `contacts` skill covers inviting people,
-accepting links, messaging and coordinating work; load it with `skills show contacts`.
-In Shell, use `contact invite create --handling manual`
-or `--handling ship`. A private invitation needs neither a published profile nor
-an existing contact. If you know the person's email address, Ship can send the
-returned URL with `mail send`, using the ordinary mail approval policy. Use the
-recipient's known email address, including their managed Ship mailbox; a custom
-Ship website address does not establish its email address.
-
-Emailing the link leaves acceptance to the recipient. `mail status DELIVERY_ID`
-tracks the email, while `contact invite list --all` shows whether the invitation was
-accepted. There are no signup-place reservations or registration codes. Ordinary
-contact expiry, cancellation and rate limits still apply.
-
-Choose **connect → use a profile address** to find a saved contact by name or enter
-a handle such as `esteve` or `@esteve`, or someone's public profile address.
+**Add a contact** also takes a handle with `@` or someone's public profile address.
 Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; overlapping domains use the most specific match. Full addresses still reach other operators.
 In Shell, `contact find @esteve` (or a full address) shows the same public profile,
 and `contact connect @esteve --message TEXT --handling manual|ship` sends the same
@@ -70,13 +48,47 @@ handle, asks you to approve sending it (an `approach.create` rule in the
 and Esteve decides whether to accept. A handle resolves when its owner made their profile public.
 You can send 50 new message requests a day.
 An unavailable profile does not establish whether the Ship exists: the handle may
-be mistyped, the Ship elsewhere, or the profile private. It does not prevent
-sharing a private invitation.
+be mistyped, the Ship elsewhere, or the profile private.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
+
+### Invite someone {#invite-someone}
+
+For someone without a Ship, choose **Don’t have a Ship? Invite them to connect.**
+It shows your invitation link, such as `https://signup.ship.space/?invite=esteve`,
+with **copy link**. Share it wherever you already talk, as often as you like: it
+doesn't expire, and anyone may use it.
+
+The link works through message requests, so it shows only while your profile is
+public and open to them. Otherwise it offers **turn on message requests**, which
+publishes your profile with requests on. When your profile has changes you haven't
+published, it offers **review my profile** instead, since turning requests on would
+publish those changes too.
+
+Someone new to Ship sees your name on the signup page, verifies their email and
+chooses a handle. When their Ship opens, **Add a contact** has you ready: they
+choose **Message**, write a first message, choose who handles your messages and
+send it. Someone who already has a Ship chooses **Already have a Ship?** and signs
+in, or enters their handle or address, including a Ship hosted by another
+operator, and gets the same request. You accept or decline it under People like
+any other request. Deployments without a signup site share your profile address,
+`https://YOUR-SPACE/profile`, instead; its form sends you the same request.
+
+On a managed deployment, a Ship created through your invitation link is counted for
+your Ship in the operator's metrics, without naming the new Ship; what the two of
+you say stays between your Ships.
+
+Ship can share the link when asked: `contact invite` in Shell prints it, and says
+when your profile isn't taking requests. The built-in `contacts` skill covers
+inviting people, messaging and coordinating work; load it with `skills show contacts`.
+If you know the person's email address, Ship can send the link with `mail send`,
+using the ordinary mail approval policy. Use the recipient's known email address,
+including their managed Ship mailbox; a custom Ship website address does not
+establish its email address. `mail status DELIVERY_ID` tracks only the email.
+There are no signup-place reservations or registration codes.
 
 ## Your profile {#your-profile}
 
@@ -87,8 +99,8 @@ choices. Ticked, your profile is public: it is published on the open network at 
 first sign-in, named by your handle and open to message requests, so people can
 add you by handle, and Bluesky and other apps can show it. Those apps and search
 engines can save a copy of a public profile, and a copy they saved may remain
-after you make it private. A private profile publishes nothing: only people you
-invite can reach you, and you can publish it later in People. Choose
+after you make it private. A private profile publishes nothing and takes no message
+requests, so your invitation link doesn't work either; you can publish it later in People. Choose
 your handle at the bottom of People to see your profile as others will: a **public**
 or **private** label, your picture, your handle with a button that copies your
 profile address, your bio, and who can start a conversation. An empty bio shows
@@ -105,7 +117,7 @@ button is **publish**, which makes it public; on a public one it is **save**, wh
 updates the public page. **save as draft** keeps changes private, shown as
 **unpublished changes**, and leaves the public page as it is. The note under the
 buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
-anyone, or limited to people you invite.
+anyone, or closed to new ones.
 Your public address is `https://YOUR-SPACE/profile`, and older `/@name` profile
 links open it. Drafts remain when you return to a conversation. The
 public page shows your picture, your handle, your bio, and either a form where visitors enter
@@ -141,11 +153,11 @@ that scroll boundary.
 
 ## Decide who handles it
 
-When connecting in People, both people explicitly choose **I’ll handle them** or
-**Let Ship handle them** for their own side. Neither option is preselected. The
-choice stays with the invitation or request, even if acceptance happens later.
-Existing contacts keep their settings. Ship-led invitations use the same explicit
-choice; creating or accepting one does not silently choose automatic handling.
+When connecting in People, both people explicitly choose **Let Ship answer their
+messages** or **I’ll read and reply to their messages myself** for their own side. Neither option is preselected. The
+choice stays with the request, even if acceptance happens later.
+Existing contacts keep their settings. Requests Ship sends use the same explicit
+choice; sending one does not silently choose automatic handling.
 
 **Automatically handle new messages**, in the conversation's **details**, changes
 this choice. On phones, **more** opens **ask Ship**, **search** and **details**;
@@ -201,8 +213,7 @@ chat, such as WhatsApp or Telegram, tells you about:
 - a new message from someone whose messages you handle, with the first line of
   what they wrote;
 - a message request, with the sender's name and handle only; read the message
-  and decide in People;
-- someone accepting your invitation.
+  and decide in People.
 
 Each notice links to the conversation or request. While you keep a conversation
 unread, later messages from the same person arrive as one notice at most every
@@ -276,8 +287,7 @@ An update takes effect locally before the other Ship confirms it. **Awaiting con
 Contacts from before the open network keep their conversations and messages. A
 contact that ended with the move to the open network, such as one whose Ship is
 on another operator's deployment, stays ended, and its conversation is kept. To
-keep talking, send them a new invitation or a message request. Invitation links
-from before the open network no longer work, so create a new one.
+keep talking, send them a message request or share your invitation link.
 
 ## Delivery
 
@@ -288,7 +298,7 @@ space was deleted, or reset so that their address now reaches a new Ship. Your
 Ship notices when a message to them fails, or when you open your conversation
 with them. Opening never waits for the check, and each contact is checked at
 most once an hour. The conversation stays, marked ended, and messages still
-waiting fail. To keep talking, send them a new invitation or a message request.
+waiting fail. To keep talking, send them a message request or share your invitation link.
 A slow or unreachable Ship never ends a contact; its messages keep retrying.
 
 See the [contact commands](/reference/cli-commands) and [contact syscalls](/reference/syscalls) for delivery inspection and automation.

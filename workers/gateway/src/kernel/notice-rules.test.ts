@@ -49,7 +49,6 @@ describe("notice rules", () => {
       expect(handleNotifyRuleList(context(rules, notices)).rules).toEqual([
         { kind: "contact.request", ...contact },
         { kind: "contact.message", ...contact },
-        { kind: "contact.invite.accepted", ...contact },
         { kind: "mail.received", ...source },
         { kind: "machine.added", ...source },
         { kind: "adapter.connected", ...source },
@@ -101,7 +100,7 @@ describe("notice rules", () => {
   it("never lets a rule start a run on a contact's words", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { rules, notices } = stores(storage);
-      for (const kind of ["contact.message", "contact.request", "contact.invite.accepted"] as const) {
+      for (const kind of ["contact.message", "contact.request"] as const) {
         expect(() => handleNotifyRuleSet({ kind, ship: "wake" }, context(rules, notices))).toThrow("Ship can't wake");
         expect(rules.ship(OWNER, kind)).toBe("context");
       }

@@ -8,13 +8,12 @@ function clipsTextAtEdge(pane: HTMLElement, edge: "top" | "bottom"): boolean {
   const overflow = style.overflowY;
   if (overflow !== "auto" && overflow !== "scroll") return false;
   const bounds = pane.getBoundingClientRect();
-  const scale = bounds.height / pane.offsetHeight;
-  // clientTop/clientHeight round fractional borders at text zoom, which can put
-  // the hit test in the adjacent toolbar instead of just inside the scroll pane.
-  const border = parseFloat(edge === "top" ? style.borderTopWidth : style.borderBottomWidth) * scale;
+  // clientTop rounds fractional borders, which can put the hit test in the
+  // adjacent toolbar instead of just inside the scroll pane.
+  const border = parseFloat(edge === "top" ? style.borderTopWidth : style.borderBottomWidth);
   const boundary = edge === "top" ? bounds.top + border : bounds.bottom - border;
-  const left = bounds.left + pane.clientLeft * scale;
-  const right = left + pane.clientWidth * scale;
+  const left = bounds.left + pane.clientLeft;
+  const right = left + pane.clientWidth;
   const range = document.createRange();
   const walker = document.createTreeWalker(pane, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     acceptNode(node) {

@@ -65,9 +65,11 @@ describe("whatsAppTextMessages", () => {
     expect(whatsAppTextMessages("   ")).toEqual([]);
   });
 
-  it("sends each long paragraph as its own message within Meta's limit", () => {
+  it("sends a lead paragraph, then the rest together within Meta's limit", () => {
     const paragraph = "word ".repeat(80).trimEnd();
-    expect(whatsAppTextMessages(`${paragraph}\n\n${paragraph}\n\nBye.`)).toEqual([paragraph, paragraph, "Bye."]);
+    expect(whatsAppTextMessages(`${paragraph}\n\n${paragraph}\n\nBye.`)).toEqual([paragraph, `${paragraph}\n\nBye.`]);
+    expect(whatsAppTextMessages(`${paragraph}\n\n${paragraph}\n\nBye.`, "each")).toEqual([paragraph, paragraph, "Bye."]);
+    expect(whatsAppTextMessages(`${paragraph}\n\nBye.`, null)).toEqual([`${paragraph}\n\nBye.`]);
     const messages = whatsAppTextMessages(`# Report\n\n${"word ".repeat(1_000)}`);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatch(/^\*Report\*\n\nword word/);

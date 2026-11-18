@@ -90,18 +90,19 @@ export class InstallationSignup {
   }
 
   /**
-   * The inviter is the signup's own claim: an unknown address is dropped silently here, and the
-   * reservation keeps the Ship only if it is still active and owned by someone else when it is written.
+   * The Ship an invitation link named, only while it is an active installation someone else owns. A bare
+   * handle names a Ship hosted here; anything else is a host name resolved through the directory. The value
+   * is a claim from the link, not proof of who shared it, so anything else is dropped without error.
    */
-  /**
-   * The Ship a contact invitation named, only while it is an active installation someone else owns.
-   * The hostname is a claim from the link, not proof of who sent it, so anything else is dropped without error.
-   */
-  private async inviterInstallation(hostname: string, principalId: string): Promise<string | undefined> {
-    const inviter = await this.accounts.resolveHostname(hostname);
-    if (!inviter.found) return undefined;
-    const other = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND state = 'active' AND owner_principal_id != ?")
-      .bind(inviter.installationId, principalId).first();
-    return other ? inviter.installationId : undefined;
+  private async inviterInstallation(target: string, principalId: string): Promise<string | undefined> {
+    const theirs = "state = 'active' AND owner_principal_id != ?";
+    if (!target.includes(".")) {
+      const hosted = await this.db.prepare(`SELECT id FROM installations WHERE handle = ? AND ${theirs}`).bind(target, principalId).first<{ id: string }>();
+      return hosted?.id;
+    }
+    const resolved = await this.accounts.resolveHostname(target);
+    if (!resolved.found) return undefined;
+    const other = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND ${theirs}`).bind(resolved.installationId, principalId).first();
+    return other ? resolved.installationId : undefined;
   }
 }

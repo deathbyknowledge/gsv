@@ -1,10 +1,10 @@
 import { reset } from "cloudflare:test";
-import { ACCEPT_INVITATION, ATTACHMENT_REVISION_HEADER, ATTACHMENT_SIZE_HEADER, DELIVER, type ContactSendArgs } from "@humansandmachines/gsv/protocol";
+import { ATTACHMENT_REVISION_HEADER, ATTACHMENT_SIZE_HEADER, DELIVER, type ContactSendArgs } from "@humansandmachines/gsv/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as nativeFs from "../../drivers/native/fs";
 import * as utils from "../../shared/utils";
 import { TEST_PLC_URL, TestShipNetwork } from "../../test-support/ship-network";
-import { loseNextAnswer, SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
+import { SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
 import type { KernelContext } from "../context";
 import { handleConversationHistory } from "../conversation-handlers";
 import type { FederationContactRecord } from "../federation-store";
@@ -19,7 +19,9 @@ import {
   processFederationDelivery,
 } from "../federation";
 import { DidDeactivatedError, resolveDid } from "../ships/did-directory";
-import { handleContactInviteAccept, handleContactInviteCreate } from "./invitations";
+import { handleApproachCreate, handleApproachDecide, handleApproachList } from "../approaches/admission";
+import { processApproachMaintenance } from "../approaches/runtime";
+import { handleProfileGet, handleProfilePublish, handleProfileUpdate, readPublicProfile } from "../profiles";
 
 const HOUR_MS = 60 * 60_000;
 
@@ -57,18 +59,6 @@ describe("deliveries between Ships", () => {
       author: { kind: "contact", displayName: "Bob" },
       social: { reference: { did: bob.account.did }, replyTo: asked?.social?.reference },
     });
-  });
-
-  it("keeps a message for later when it reaches a Ship still accepting the connection", async () => {
-    // Alice's Ship records Mallory's acceptance before Mallory's does, and its answer is lost.
-    const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
-    loseNextAnswer(network, alice, ACCEPT_INVITATION);
-    await expect(mallory.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx))).rejects.toThrow("Network connection lost");
-    expect(await send(alice, mallory, { text: "Welcome aboard" })).toBe("pending");
-    // Mallory's Ship accepts again and hears of the same connection, and the message arrives when Alice's Ship tries again.
-    await mallory.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
-    await deliverPending(alice);
-    expect((await conversation(mallory, alice)).map((message) => message.text)).toEqual(["Welcome aboard"]);
   });
 
   it("ends the connection on both sides when one person removes the other", async () => {
@@ -383,22 +373,34 @@ describe("a Ship its host took down", () => {
     expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
     expect(await send(bob, alice, { text: "Are you there?" })).toBe("delivered");
   });
-
-  it("refuses an invitation with the reason, and accepts the same one once restored", async () => {
-    const { code } = await mallory.run((ctx) => handleContactInviteCreate({}, ctx));
-    network.takenDown.add(alice.account.did);
-    await expect(alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
-      .rejects.toThrow("Your Ship is taken down on the open network, so it can't reach other Ships");
-    network.takenDown.delete(alice.account.did);
-    await alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
-    expect(await alice.run((ctx) => contactFor(ctx, mallory).state)).toBe("active");
-  });
 });
 
-/** Connects two spaces' people through an invitation. */
-async function connect(inviter: TestSpace, acceptor: TestSpace): Promise<void> {
-  const { code } = await inviter.run((ctx) => handleContactInviteCreate({}, ctx));
-  await acceptor.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+const FIRST_MESSAGE = "Hello from your invitation link";
+
+/** Connects two spaces' people the way an invitation link does: the invitee sends a message request, which the inviter accepts. */
+async function connect(inviter: TestSpace, invitee: TestSpace): Promise<void> {
+  const paused = (ctx: KernelContext): KernelContext => ({ ...ctx, scheduleApproachMaintenance: async () => {}, scheduleFederationDelivery: async () => {} });
+  // Each person goes by their name, as their account has it.
+  const named = (space: TestSpace) => `${space.name.slice(0, 1).toUpperCase()}${space.name.slice(1)}`;
+  await inviter.run(async (ctx) => {
+    const { revision, draft, published } = handleProfileGet(ctx).profile;
+    if (published?.contactPolicy === "requests") return;
+    handleProfileUpdate({ expectedRevision: revision, draft: { ...draft, displayName: named(inviter), contactPolicy: "requests" } }, ctx);
+    await handleProfilePublish({ expectedRevision: revision + 1 }, ctx);
+  });
+  const profile = await invitee.run((ctx) => readPublicProfile(inviter.account.did, ctx));
+  await invitee.run(async (ctx) => {
+    await handleApproachCreate({ did: profile.did, profileCid: profile.cid, displayName: named(invitee),
+      text: FIRST_MESSAGE, idempotencyKey: crypto.randomUUID() }, paused(ctx));
+    await processApproachMaintenance(paused(ctx));
+  });
+  await inviter.run(async (ctx) => {
+    const received = handleApproachList({ direction: "incoming" }, ctx).approaches
+      .find((entry) => entry.peerDid === invitee.account.did && entry.state === "pending");
+    if (!received) throw new Error(`${invitee.name}'s request did not reach ${inviter.name}`);
+    await handleApproachDecide({ approachId: received.id, expectedRevision: received.revision, decision: "accept" }, paused(ctx));
+    await processApproachMaintenance(paused(ctx));
+  });
 }
 
 function contactFor(ctx: KernelContext, other: TestSpace): FederationContactRecord {
@@ -481,8 +483,10 @@ async function ageCachedDocument(space: TestSpace, other: TestSpace, ms: number)
 }
 
 /** A space's conversation with a contact, as its person sees it. */
+/** The conversation after the request that connected the two. */
 async function conversation(space: TestSpace, other: TestSpace) {
-  return await space.run(async (ctx) => (await utils.getConversationById(ctx.installationId, contactFor(ctx, other).conversationId).history()).messages);
+  const { messages } = await space.run(async (ctx) => await utils.getConversationById(ctx.installationId, contactFor(ctx, other).conversationId).history());
+  return messages.filter((message) => message.text !== FIRST_MESSAGE);
 }
 
 function grantNote(ctx: KernelContext, contact: FederationContactRecord) {

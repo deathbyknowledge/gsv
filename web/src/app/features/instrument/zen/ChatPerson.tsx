@@ -1,12 +1,12 @@
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
-import { useMutation } from "@tanstack/preact-query";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useContacts } from "../people/Contacts";
 import { NewConversation } from "../people/NewConversation";
-import { contactProfileUrl, emptyApproachDraft, handleLabel, profileAddress } from "../people/peopleModel";
+import { contactProfileUrl, emptyApproachDraft, handleLabel, matchesPerson, profileAddress } from "../people/peopleModel";
+import { usePersonLookup } from "../people/usePersonLookup";
 import type { PeopleOpenRequest } from "../people/People";
 import { canConfigure } from "../settings/settingsModel";
 import { useT } from "../../../i18n/locale";
@@ -20,27 +20,21 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
   onDirty: (dirty: boolean) => void;
 }) {
   const t = useT();
-  const { client, connected } = useGateway();
+  const { connected } = useGateway();
   const [address, setAddress] = useState(request.url ?? "");
   const [draft, setDraft] = useState(() => emptyApproachDraft());
   const [contacting, setContacting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-  const revision = useRef(0);
   const handled = useRef<typeof request>();
   const contacts = useContacts(account);
-  const resolve = useMutation({
-    mutationFn: async ({ address, revision }: { address: string; revision: number }) => ({ ...(await client.profile.resolve({ address })), revision }),
-    onSuccess: ({ profile, revision: resolved }) => {
-      if (revision.current === resolved) { setAddress(profile.url); setDraft({ ...emptyApproachDraft(profile.url), profile }); }
-    },
-  });
+  const resolve = usePersonLookup((profile) => { setAddress(profile.url); setDraft({ ...emptyApproachDraft(profile.url), profile }); });
   const mayReplace = () => !busy && (!draft.text || window.confirm(t("chat.person.discard")));
   const lookup = (address: string) => {
     if (!mayReplace()) return;
     setSelectedContactId(null); setDraft(emptyApproachDraft()); setContacting(false); setSent(false);
-    resolve.mutate({ address, revision: ++revision.current });
+    resolve.lookup(address);
   };
   useLayoutEffect(() => { onDirty(!!draft.text || busy); }, [draft.text, busy, onDirty]);
   useLayoutEffect(() => {
@@ -51,12 +45,12 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
     handled.current = request;
     if (saved) {
       if (!mayReplace()) return;
-      revision.current++; resolve.reset(); setDraft(emptyApproachDraft());
+      resolve.reset(); setDraft(emptyApproachDraft());
       setAddress(url); setContacting(false); setSent(false); setSelectedContactId(saved.id);
     } else lookup(url);
   }, [request, connected, account?.uid, contacts.data]);
   const found = (contacts.data?.contacts ?? []).filter((contact) => contact.state === "active" && !contact.blocked
-    && `${contactDisplayName(contact)} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(address.trim().replace(/^@/, "").toLocaleLowerCase()));
+    && matchesPerson([contactDisplayName(contact), contact.remoteHandle], address));
   const profile = draft.profile;
   const selectedContact = contacts.data?.contacts.find((contact) => contact.id === selectedContactId && contact.state === "active" && !contact.blocked);
   const preview = selectedContact ? {
@@ -76,9 +70,9 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         if (url && allowed) lookup(url);
       }}>
         <label>{t("chat.person.find")}<input placeholder={t("chat.person.placeholder")} value={address} autoComplete="off" autoCapitalize="none" spellcheck={false}
-          onInput={(event) => { revision.current++; resolve.reset(); setAddress(event.currentTarget.value); if (!draft.text) setDraft(emptyApproachDraft()); setSent(false); setSelectedContactId(null); }} /></label>
-        {profileAddress(address) && <button type="submit" class="fleet-text-action" disabled={!allowed || resolve.isPending}>
-          {resolve.isPending ? <LoadingState>{t("chat.person.opening")}</LoadingState> : t("chat.person.open")}
+          onInput={(event) => { resolve.reset(); setAddress(event.currentTarget.value); if (!draft.text) setDraft(emptyApproachDraft()); setSent(false); setSelectedContactId(null); }} /></label>
+        {profileAddress(address) && <button type="submit" class="fleet-text-action" disabled={!allowed || resolve.pending}>
+          {resolve.pending ? <LoadingState>{t("chat.person.opening")}</LoadingState> : t("chat.person.open")}
         </button>}
       </form>
       {(resolve.error ?? contacts.error) && <p class="people-error" role="alert">{(resolve.error ?? contacts.error)?.message}</p>}
@@ -91,7 +85,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         </div>
       </div> : <ul class="people-recipient-list" aria-label={t("chat.person.saved")} data-scroll-edge>
         {found.map((contact) => <li key={contact.id}><button type="button" class="people-recipient"
-          onClick={() => { if (!mayReplace()) return; revision.current++; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(contactProfileUrl(contact) ?? address); setSelectedContactId(contact.id); }}>
+          onClick={() => { if (!mayReplace()) return; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(contactProfileUrl(contact) ?? address); setSelectedContactId(contact.id); }}>
           <span>{contactDisplayName(contact)}</span>{contact.remoteHandle && <small>{handleLabel(contact.remoteHandle)}</small>}
         </button></li>)}
         {!found.length && <li class="people-note">{t("chat.person.hint")}</li>}

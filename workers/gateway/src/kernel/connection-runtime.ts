@@ -353,7 +353,6 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       : signal === "contact.delivery.changed" ? "contact.delivery.list"
       : signal === "profile.changed" ? "profile.get"
       : signal === "approach.changed" ? "approach.list"
-      : signal === "contact.invite.changed" ? "contact.invite.list"
       : signal === "contact.request.changed" ? "contact.request.list"
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"

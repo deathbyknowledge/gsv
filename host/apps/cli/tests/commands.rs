@@ -426,7 +426,7 @@ async fn empty_lists_say_what_to_do_next() {
     let output = cli.run(&["contacts"]).await;
     assert_eq!(
         stdout(&output),
-        "No contacts yet.\nInvite someone: gsv contacts invite\n"
+        "No contacts yet.\nInvite someone with your link: gsv run contact invite\n"
     );
     let output = cli.run(&["routines"]).await;
     assert!(stdout(&output).starts_with("No routines yet.\nAdd one: gsv routines add"));

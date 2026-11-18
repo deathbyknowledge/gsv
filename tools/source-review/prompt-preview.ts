@@ -1,15 +1,16 @@
 import { assembleSystemPromptSnapshot } from "../../workers/gateway/src/process/context/assembly";
 import { resolvePromptProviders } from "../../workers/gateway/src/process/context/selection";
-import type { PromptAssemblyInput, PromptAssemblySnapshot, PromptSection } from "../../workers/gateway/src/process/context/types";
+import type {
+  PromptAssemblyInput, PromptAssemblySnapshot, PromptContextProvider, PromptSection, PromptSourceRecord,
+} from "../../workers/gateway/src/process/context/types";
 import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config";
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
 import { BUILTIN_SKILL_NAMES, SYSTEM_SKILLS_ROOT, readSystemSkillPath } from "../../workers/gateway/src/kernel/sys/builtin-skills";
 import { contextFiles } from "../../workers/gateway/src/prompts/context";
-import { shipContextFiles } from "../../workers/gateway/src/prompts/personal-intelligence";
 import { PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
-type PreviewSection = PromptSection & { paths: string[]; provider: string };
+type PreviewSection = PromptSection & { paths: string[]; provider: string; contextRoot?: PromptSourceRecord["contextRoot"] };
 type PromptPreview = PromptAssemblySnapshot & {
   sections: PreviewSection[];
   catalog: PromptSource[];
@@ -17,15 +18,24 @@ type PromptPreview = PromptAssemblySnapshot & {
 
 // This fixture uses the production defaults and providers, with local sample identities.
 // It never contacts a space or reads customer context.
-export async function createPromptPreview(account: PreviewAccount): Promise<PromptPreview> {
+// homeFiles adds sample files to the account's own context.d, such as a voice.md, to show how layers combine.
+export async function createPromptPreview(
+  account: PreviewAccount,
+  homeFiles: Record<string, string> = {},
+): Promise<PromptPreview> {
   const systemContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
   const catalog = PROMPT_SOURCES;
-  const program = account === "ship" ? shipContextFiles("crew") : contextFiles("crew");
+  const roleContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
+    .filter(([key]) => key.startsWith(`config/ai/${account}/context.d/`))
+    .map(([key, text]) => ({
+      name: key.slice(`config/ai/${account}/context.d/`.length),
+      text: text.replaceAll("{{crew.username}}", "crew"),
+    }));
   const files = new Map<string, string>([
-    ...program.map(({ name, text }) => [`home/${account}/context.d/${name}`, text] as const),
     ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
+    ...Object.entries(homeFiles).map(([name, text]) => [`home/${account}/context.d/${name}`, text] as const),
   ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
@@ -40,6 +50,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       contextWindowTokens: 128000, contextWindowSource: "model",
       maxContextBytes: Number(SYSTEM_CONFIG_DEFAULTS["config/ai/max_context_bytes"]),
       systemContextFiles,
+      roleContext: { name: account, location: `/sys/config/ai/${account}/context.d`, files: roleContextFiles },
     },
     skills: {
       mode: "summary",
@@ -73,16 +84,18 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
     },
   };
   const sections: PreviewSection[] = [];
-  const providers = resolvePromptProviders().map((provider) => ({
-    name: provider.name,
+  const providers = resolvePromptProviders().map((provider): PromptContextProvider => ({
+    ...provider,
     async collect(assemblyInput: PromptAssemblyInput) {
       const collected = await provider.collect(assemblyInput);
+      const contextRoot = provider.layer?.(assemblyInput) ?? undefined;
+      const sourceScope = contextRoot?.key === "base" ? account : contextRoot?.key === "user" ? "user" : "system";
       for (const section of collected) {
-        const root = section.contextRoot?.key;
-        const sourceScope = root === "program" ? account : root === "user" ? "user" : "system";
         const path = `${sourceScope}/context.d/${section.name}`;
         const paths = catalog.some((source) => source.path === path) ? [path] : [];
-        sections.push({ ...section, paths, provider: provider.name });
+        const previewSection: PreviewSection = { ...section, paths, provider: provider.name };
+        if (contextRoot) previewSection.contextRoot = contextRoot;
+        sections.push(previewSection);
       }
       return collected;
     },

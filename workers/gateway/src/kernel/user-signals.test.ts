@@ -44,7 +44,6 @@ describe("user-facing signal policy", () => {
       "sched.changed",
       "notify.rule.changed",
       "event.source.changed",
-      "contact.invite.changed",
       "contact.request.changed",
     ]));
     expect(USER_CONNECTION_SIGNALS).not.toContain("ledger.appended");

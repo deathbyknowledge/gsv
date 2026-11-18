@@ -11,7 +11,7 @@ Usage: gsv <COMMAND> [--json]
 
 Talk
   ship [MESSAGE]     Talk to your Ship, or open a prompt (also: chat)
-  contacts           People you talk to, and invitations
+  contacts           People you talk to
   requests           Message requests from people you don't know yet
   mail               Your Ship's mailbox
 
@@ -103,7 +103,7 @@ pub(crate) enum Commands {
         action: Option<FilesAction>,
     },
 
-    /// People you talk to, and invitations
+    /// People you talk to
     Contacts {
         #[command(subcommand)]
         action: Option<ContactsAction>,
@@ -473,17 +473,6 @@ pub(crate) enum FilesAction {
 pub(crate) enum ContactsAction {
     /// Your conversations with contacts, newest first
     Inbox,
-    /// Make an invitation to share with someone
-    Invite {
-        /// Days before the invitation expires
-        #[arg(long)]
-        days: Option<u32>,
-    },
-    /// Use an invitation someone shared with you
-    Accept {
-        /// The invitation link or code
-        code: String,
-    },
     /// Message a contact
     Send {
         /// Contact name

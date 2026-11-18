@@ -303,7 +303,7 @@ describe("owner notice delivery", () => {
     });
   });
 
-  it("retries a retryable failure under the same delivery id and drops a refused one", async () => {
+  it("retries a retryable failure under the same delivery id", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, shipEvents, schedule } = fixture(storage);
       const send = vi.spyOn(adapterSend, "deliverAdapterDestination")
@@ -321,11 +321,6 @@ describe("owner notice delivery", () => {
       const [failed, retried] = send.mock.calls.map(([, , message]) => message.deliveryId);
       expect(retried).toBe(failed);
       expect(shipEvents.next(OWNER)?.eventId).toBe(`owner.notified:contact.message:contact:ada:${at}:0`);
-
-      send.mockResolvedValueOnce({ ok: false, error: "Destination is no longer linked", retryable: false });
-      notices.noteOnce(OWNER, "contact.invite.accepted:contact:ada:generation:one", "contact.invite.accepted", adaSubject(), Date.now());
-      await runtime.onOwnerNotices(OWNER, { id: "task:refused" });
-      expect(notices.next(OWNER)).toBeNull();
     });
   });
 

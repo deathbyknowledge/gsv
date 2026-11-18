@@ -43,50 +43,6 @@ export class FederationActorBlockedError extends Error {
   }
 }
 
-type FederationInviteBase = {
-  inviteId: string;
-  ownerUid: number;
-  shipHandlesMessages: boolean;
-  tokenHash: string;
-  expiresAtMs: number;
-  createdAtMs: number;
-};
-
-export type FederationInviteRecord = FederationInviteBase & (
-  | { state: "issued" }
-  | { state: "cancelled"; cancelledAtMs: number }
-  | {
-      state: "accepted";
-      acceptedContactId: string;
-      acceptedRemoteDid: string;
-      acceptedGeneration: string;
-      acceptedThreadId: string;
-      acceptedAtMs: number;
-    }
-);
-
-type FederationPairingAttemptBase = {
-  tokenHash: string;
-  ownerUid: number;
-  shipHandlesMessages: boolean;
-  expiresAtMs: number;
-  /** The inviting Ship, from the invitation code. */
-  remoteDid: string;
-  createdAtMs: number;
-  updatedAtMs: number;
-};
-
-export type FederationPairingAttemptRecord = FederationPairingAttemptBase & (
-  | { state: "pending" }
-  | {
-      state: "committed";
-      contactId: string;
-      generation: string;
-      threadId: string;
-    }
-  | { state: "terminal"; terminalReason: string }
-);
-
 export type FederationOutboxLocalMessage = {
   messageId: string;
   text: string;
@@ -283,37 +239,6 @@ const CONTACT_SELECT = `SELECT c.*, EXISTS (
   SELECT 1 FROM federation_actor_blocks b WHERE b.owner_uid = c.owner_uid AND b.did = c.remote_did
 ) AS actor_blocked FROM federation_contacts c`;
 
-type InviteRow = {
-  ship_handles_messages: number;
-  invite_id: string;
-  owner_uid: number;
-  token_hash: string;
-  state: FederationInviteRecord["state"];
-  expires_at: number;
-  cancelled_at: number | null;
-  accepted_contact_id: string | null;
-  accepted_remote_did: string | null;
-  accepted_generation: string | null;
-  accepted_thread_id: string | null;
-  accepted_at: number | null;
-  created_at: number;
-};
-
-type PairingAttemptRow = {
-  ship_handles_messages: number;
-  token_hash: string;
-  owner_uid: number;
-  expires_at: number;
-  remote_did: string;
-  state: FederationPairingAttemptRecord["state"];
-  contact_id: string | null;
-  generation: string | null;
-  thread_id: string | null;
-  terminal_reason: string | null;
-  created_at: number;
-  updated_at: number;
-};
-
 type OutboxRow = {
   retryable: number;
   retry_epoch: number;
@@ -388,30 +313,6 @@ export class FederationStore {
   }): void {
     this.pruneReplyWaits();
     this.sql.exec(
-      `DELETE FROM federation_invites WHERE invite_id IN (
-         SELECT invite_id FROM federation_invites
-         WHERE (state = 'issued' AND expires_at <= ?)
-            OR (state = 'cancelled' AND cancelled_at <= ?)
-            OR (state = 'accepted' AND accepted_at <= ?)
-         ORDER BY created_at ASC LIMIT ?
-       )`,
-      input.receiptCutoff,
-      input.receiptCutoff,
-      input.receiptCutoff,
-      input.batchSize,
-    );
-    this.sql.exec(
-      `DELETE FROM federation_pairing_attempts WHERE token_hash IN (
-         SELECT token_hash FROM federation_pairing_attempts
-         WHERE (state = 'pending' AND expires_at <= ?)
-            OR (state IN ('committed', 'terminal') AND updated_at <= ?)
-         ORDER BY created_at ASC LIMIT ?
-       )`,
-      input.receiptCutoff,
-      input.receiptCutoff,
-      input.batchSize,
-    );
-    this.sql.exec(
       `DELETE FROM federation_outbox WHERE delivery_id IN (
        SELECT delivery_id FROM federation_outbox
          WHERE state IN ('preparation_failed', 'delivered', 'terminal') AND updated_at <= ?
@@ -482,15 +383,6 @@ export class FederationStore {
     return null;
   }
 
-  outstandingInviteCount(ownerUid: number, now = Date.now()): number {
-    return this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM federation_invites
-       WHERE owner_uid = ? AND state = 'issued' AND expires_at > ?`,
-      ownerUid,
-      now,
-    ).one().count;
-  }
-
   contactCount(ownerUid?: number): number {
     if (ownerUid === undefined) {
       return this.sql.exec<{ count: number }>(
@@ -503,193 +395,6 @@ export class FederationStore {
     ).one().count;
   }
 
-  createInvite(input: {
-    shipHandlesMessages?: boolean;
-    ownerUid: number;
-    tokenHash: string;
-    expiresAtMs: number;
-    now?: number;
-  }): FederationInviteRecord {
-    const now = input.now ?? Date.now();
-    const inviteId = `invite:${crypto.randomUUID()}`;
-    this.sql.exec(
-      `INSERT INTO federation_invites
-       (invite_id, owner_uid, token_hash, state, expires_at, created_at, ship_handles_messages)
-       VALUES (?, ?, ?, 'issued', ?, ?, ?)`,
-      inviteId,
-      input.ownerUid,
-      input.tokenHash,
-      input.expiresAtMs,
-      now,
-      input.shipHandlesMessages ? 1 : 0,
-    );
-    return this.inviteByTokenHash(input.tokenHash)!;
-  }
-
-  inviteByTokenHash(tokenHash: string): FederationInviteRecord | null {
-    const row = this.sql.exec<InviteRow>(
-      "SELECT * FROM federation_invites WHERE token_hash = ? LIMIT 1",
-      tokenHash,
-    ).toArray()[0];
-    return row ? inviteFromRow(row) : null;
-  }
-
-  /** Whether this Ship is still accepting an invitation from the DID, which the inviting Ship may already count as a contact. */
-  pairingPending(remoteDid: string): boolean {
-    return this.sql.exec("SELECT 1 FROM federation_pairing_attempts WHERE remote_did = ? AND state = 'pending' LIMIT 1", remoteDid).toArray().length > 0;
-  }
-
-  pairingAttempt(tokenHash: string): FederationPairingAttemptRecord | null {
-    const row = this.sql.exec<PairingAttemptRow>(
-      `SELECT * FROM federation_pairing_attempts
-       WHERE token_hash = ? LIMIT 1`,
-      tokenHash,
-    ).toArray()[0];
-    return row ? pairingAttemptFromRow(row) : null;
-  }
-
-  beginPairingAttempt(input: {
-    shipHandlesMessages?: boolean;
-    tokenHash: string;
-    ownerUid: number;
-    expiresAtMs: number;
-    remoteDid: string;
-    now?: number;
-  }): FederationPairingAttemptRecord {
-    if (this.isBlocked(input.ownerUid, input.remoteDid)) throw new FederationActorBlockedError();
-    const existing = this.pairingAttempt(input.tokenHash);
-    if (existing) {
-      if (
-        existing.ownerUid !== input.ownerUid
-        || existing.expiresAtMs !== input.expiresAtMs
-        || existing.remoteDid !== input.remoteDid
-      ) {
-        throw new Error("Contact pairing attempt identity changed");
-      }
-      if (existing.state === "pending" && input.shipHandlesMessages !== undefined
-        && existing.shipHandlesMessages !== input.shipHandlesMessages) {
-        throw new Error("This invitation is already connecting with a different handling choice; keep that choice until connected, then change it in People");
-      }
-      return existing;
-    }
-    const now = input.now ?? Date.now();
-    this.sql.exec(
-      `UPDATE federation_pairing_attempts SET
-         state = 'terminal', terminal_reason = 'superseded', updated_at = ?
-       WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`,
-      now,
-      input.ownerUid,
-      input.remoteDid,
-    );
-    this.sql.exec(
-      `INSERT INTO federation_pairing_attempts (
-         token_hash, owner_uid, expires_at, remote_did, state, created_at, updated_at, ship_handles_messages
-       ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-      input.tokenHash,
-      input.ownerUid,
-      input.expiresAtMs,
-      input.remoteDid,
-      now,
-      now,
-      input.shipHandlesMessages ? 1 : 0,
-    );
-    return this.pairingAttempt(input.tokenHash)!;
-  }
-
-  commitPairingAttempt(input: {
-    tokenHash: string;
-    contactId: string;
-    generation: string;
-    threadId: string;
-    now?: number;
-  }): FederationPairingAttemptRecord {
-    const current = this.pairingAttempt(input.tokenHash);
-    if (!current) throw new Error("Contact pairing attempt not found");
-    if (current.state === "terminal") throw new Error("Contact pairing attempt is terminal");
-    if (current.state === "committed") {
-      if (
-        current.contactId !== input.contactId
-        || current.generation !== input.generation
-        || current.threadId !== input.threadId
-      ) {
-        throw new Error("Committed contact pairing attempt changed");
-      }
-      return current;
-    }
-    const now = input.now ?? Date.now();
-    this.sql.exec(
-      `UPDATE federation_pairing_attempts SET
-         state = 'committed', contact_id = ?, generation = ?, thread_id = ?, updated_at = ?
-       WHERE token_hash = ? AND state = 'pending'`,
-      input.contactId,
-      input.generation,
-      input.threadId,
-      now,
-      input.tokenHash,
-    );
-    return this.pairingAttempt(input.tokenHash)!;
-  }
-
-  terminatePairingAttempt(
-    tokenHash: string,
-    reason: string,
-    now = Date.now(),
-  ): FederationPairingAttemptRecord | null {
-    this.sql.exec(
-      `UPDATE federation_pairing_attempts SET
-         state = 'terminal', terminal_reason = ?, updated_at = ?
-       WHERE token_hash = ? AND state = 'pending'`,
-      reason,
-      now,
-      tokenHash,
-    );
-    return this.pairingAttempt(tokenHash);
-  }
-
-  invite(inviteId: string): FederationInviteRecord | null {
-    const row = this.sql.exec<InviteRow>(
-      "SELECT * FROM federation_invites WHERE invite_id = ? LIMIT 1",
-      inviteId,
-    ).toArray()[0];
-    return row ? inviteFromRow(row) : null;
-  }
-
-  listInvites(ownerUid: number, includeTerminal: boolean, now = Date.now()): FederationInviteRecord[] {
-    const terminal = includeTerminal
-      ? ""
-      : "AND state = 'issued' AND expires_at > ?";
-    const values = includeTerminal ? [ownerUid] : [ownerUid, now];
-    return this.sql.exec<InviteRow>(
-      `SELECT * FROM federation_invites
-       WHERE owner_uid = ? ${terminal}
-       ORDER BY created_at DESC`,
-      ...values,
-    ).toArray().map(inviteFromRow);
-  }
-
-  cancelInvite(inviteId: string, ownerUid: number, now = Date.now()): FederationInviteRecord {
-    const current = this.invite(inviteId);
-    if (!current || current.ownerUid !== ownerUid) {
-      throw new Error(`Contact invite not found: ${inviteId}`);
-    }
-    if (current.state === "accepted") {
-      throw new Error("An accepted contact invite cannot be cancelled");
-    }
-    if (current.state === "issued" && current.expiresAtMs <= now) {
-      throw new Error("An expired contact invite cannot be cancelled");
-    }
-    if (current.state === "issued") {
-      this.sql.exec(
-        `UPDATE federation_invites SET state = 'cancelled', cancelled_at = ?
-         WHERE invite_id = ? AND owner_uid = ? AND state = 'issued'`,
-        now,
-        inviteId,
-        ownerUid,
-      );
-    }
-    return this.invite(inviteId)!;
-  }
-
   activateContact(input: {
     ownerUid: number;
     remoteDid: string;
@@ -698,7 +403,6 @@ export class FederationStore {
     remoteHandle?: string;
     generation: string;
     threadId: string;
-    pairingAttemptTokenHash?: string;
     preferredContactId?: string;
     preferredConversationId?: string;
     saved?: boolean;
@@ -708,20 +412,13 @@ export class FederationStore {
     if (this.isBlocked(input.ownerUid, input.remoteDid)) throw new FederationActorBlockedError();
     const now = input.now ?? Date.now();
     const existing = this.getByRemote(input.ownerUid, input.remoteDid);
-    const preservedAttempt = input.pairingAttemptTokenHash
-      ? "AND token_hash <> ?"
-      : "";
-    this.sql.exec(
-      `UPDATE federation_pairing_attempts SET
-         state = 'terminal', terminal_reason = 'superseded', updated_at = ?
-       WHERE owner_uid = ? AND remote_did = ? AND state = 'pending' ${preservedAttempt}`,
-      ...(input.pairingAttemptTokenHash
-        ? [now, input.ownerUid, input.remoteDid, input.pairingAttemptTokenHash]
-        : [now, input.ownerUid, input.remoteDid]),
-    );
     if (existing) {
       if (existing.generation !== input.generation) {
-        this.sql.exec("UPDATE federation_contacts SET ship_handles_messages = ?, policy_revision = policy_revision + 1 WHERE contact_id = ?", input.shipHandlesMessages ? 1 : 0, existing.id);
+        // A choice to keep the person saves a returning contact; without one, its saved preference stands.
+        this.sql.exec(
+          "UPDATE federation_contacts SET ship_handles_messages = ?, saved = MAX(saved, ?), policy_revision = policy_revision + 1 WHERE contact_id = ?",
+          input.shipHandlesMessages ? 1 : 0, input.saved ? 1 : 0, existing.id,
+        );
         this.sql.exec(
           `UPDATE federation_requests SET
              state = 'cancelled', revision = revision + 1, updated_at = ?,
@@ -809,30 +506,6 @@ export class FederationStore {
     return this.get(contactId)!;
   }
 
-  acceptInvite(input: {
-    tokenHash: string;
-    remoteDid: string;
-    contactId: string;
-    generation: string;
-    threadId: string;
-    now?: number;
-  }): boolean {
-    const now = input.now ?? Date.now();
-    const cursor = this.sql.exec(
-      `UPDATE federation_invites SET
-         state = 'accepted', accepted_contact_id = ?, accepted_remote_did = ?,
-         accepted_generation = ?, accepted_thread_id = ?, accepted_at = ?
-       WHERE token_hash = ? AND state = 'issued' AND expires_at > ?`,
-      input.contactId,
-      input.remoteDid,
-      input.generation,
-      input.threadId,
-      now,
-      input.tokenHash,
-      now,
-    );
-    return cursor.rowsWritten > 0;
-  }
 
   get(contactId: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
@@ -949,8 +622,6 @@ export class FederationStore {
       ).one();
       if (counts.owner_count >= 10_000 || counts.installation_count >= 20_000) throw new Error("Blocked actor capacity reached");
       this.sql.exec("INSERT INTO federation_actor_blocks (owner_uid, did, display_name, created_at) VALUES (?, ?, ?, ?)", ownerUid, did, displayName ?? null, now);
-      this.sql.exec(`UPDATE federation_pairing_attempts SET state = 'terminal', terminal_reason = 'actor-blocked', updated_at = ?
-        WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`, now, ownerUid, did);
     } else {
       this.sql.exec("DELETE FROM federation_actor_blocks WHERE owner_uid = ? AND did = ?", ownerUid, did);
     }
@@ -1011,16 +682,6 @@ export class FederationStore {
     );
     const contact = this.get(contactId);
     if (!contact || contact.ownerUid !== ownerUid) throw new Error(`Contact not found: ${contactId}`);
-    if (contact.remoteDid) {
-      this.sql.exec(
-        `UPDATE federation_pairing_attempts SET
-           state = 'terminal', terminal_reason = 'contact-revoked', updated_at = ?
-         WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`,
-        now,
-        ownerUid,
-        contact.remoteDid,
-      );
-    }
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
@@ -1822,67 +1483,6 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
     ...(row.revoked_at !== null ? { revokedAtMs: row.revoked_at } : undefined),
     ...(row.last_received_at !== null ? { lastReceivedAtMs: row.last_received_at } : undefined),
     ...(row.last_delivered_at !== null ? { lastDeliveredAtMs: row.last_delivered_at } : undefined),
-  };
-}
-
-function inviteFromRow(row: InviteRow): FederationInviteRecord {
-  const base: FederationInviteBase = {
-    shipHandlesMessages: row.ship_handles_messages === 1,
-    inviteId: row.invite_id,
-    ownerUid: row.owner_uid,
-    tokenHash: row.token_hash,
-    expiresAtMs: row.expires_at,
-    createdAtMs: row.created_at,
-  };
-  if (row.state === "issued") return { ...base, state: "issued" };
-  if (row.state === "cancelled") {
-    if (row.cancelled_at === null) throw new Error("Cancelled invite has no cancellation time");
-    return { ...base, state: "cancelled", cancelledAtMs: row.cancelled_at };
-  }
-  if (
-    !row.accepted_contact_id
-    || !row.accepted_remote_did
-    || !row.accepted_generation
-    || !row.accepted_thread_id
-    || row.accepted_at === null
-  ) {
-    throw new Error("Accepted invite has an incomplete contact snapshot");
-  }
-  return {
-    ...base,
-    state: "accepted",
-    acceptedContactId: row.accepted_contact_id,
-    acceptedRemoteDid: row.accepted_remote_did,
-    acceptedGeneration: row.accepted_generation,
-    acceptedThreadId: row.accepted_thread_id,
-    acceptedAtMs: row.accepted_at,
-  };
-}
-
-function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttemptRecord {
-  const base: FederationPairingAttemptBase = {
-    shipHandlesMessages: row.ship_handles_messages === 1,
-    tokenHash: row.token_hash,
-    ownerUid: row.owner_uid,
-    expiresAtMs: row.expires_at,
-    remoteDid: row.remote_did,
-    createdAtMs: row.created_at,
-    updatedAtMs: row.updated_at,
-  };
-  if (row.state === "pending") return { ...base, state: "pending" };
-  if (row.state === "terminal") {
-    if (!row.terminal_reason) throw new Error("Terminal pairing attempt has no reason");
-    return { ...base, state: "terminal", terminalReason: row.terminal_reason };
-  }
-  if (!row.contact_id || !row.generation || !row.thread_id) {
-    throw new Error("Committed pairing attempt has an incomplete contact snapshot");
-  }
-  return {
-    ...base,
-    state: "committed",
-    contactId: row.contact_id,
-    generation: row.generation,
-    threadId: row.thread_id,
   };
 }
 

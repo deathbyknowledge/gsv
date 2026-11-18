@@ -40,7 +40,7 @@ function defineNativeCommandDescriptors<T extends NativeCommandDescriptorMap>(va
 }
 
 const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
-  messenger: command("Connect a messenger for your human owner.", "List enabled messengers, get setup instructions, then redeem the code the user pastes in the conversation. Read the code from a file through stdin to keep it out of logged commands.", ["messenger", "adapter", "pair", "connect", "whatsapp", "telegram", "slack", "discord"], [], ["messenger list", "messenger setup ADAPTER", "messenger inspect ADAPTER < code.txt", "messenger connect ADAPTER < code.txt"], ["adapter.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"]),
+  messenger: command("Connect a messenger for your human owner.", "List enabled messengers and get setup instructions. Send the setup link when a messenger connects from one; otherwise redeem the code the user pastes in the conversation, read from a file through stdin to keep it out of logged commands.", ["messenger", "adapter", "pair", "connect", "whatsapp", "telegram", "slack", "discord"], [], ["messenger list", "messenger setup ADAPTER", "messenger inspect ADAPTER < code.txt", "messenger connect ADAPTER < code.txt"], ["adapter.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"]),
   feedback: command("Send feedback to your operator.", "Read a report from a file when the user asks you to share it. Keep report text out of the logged shell command.", ["feedback", "bug", "report", "suggestion", "support"], [], ["feedback [--id UUID] < report.txt"], ["sys.feedback"]),
   instance: command("Start and stop cloud environments.", "Start a Linux computer or start or reuse a browser, wait for readiness, and inspect its lifetime and allowance. When work is finished, export any files you need and stop it with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it.", ["browser", "computer", "linux", "cloud", "instance", "offline", "start", "stop"], [], ["instance catalog", "instance start computer --request-id ID --wait", "instance start browser --request-id ID --wait", "instance stop ID --wait"], ["sys.instance.list"]),
   browser: command("Manage saved browser logins and human handoffs.", "Use a saved profile across browser instances or ask the owner to sign in through GSV.", ["browser", "login", "profile", "sign in", "human", "handoff"], [], ["browser profile list", "browser handoff --help"], ["sys.browser.profile.list"]),
@@ -64,14 +64,11 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Add a person by sending their profile a first message request with contact connect, or connect through a private invitation link when no profile is available. Ask who should handle new messages, then connect, create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Add a person by sending their profile a first message request with contact connect, or share the owner's invitation link from contact invite so they can send one. Ask who should handle new messages, then connect with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact find @HANDLE|ADDRESS",
     "contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "contact list [--all] [--json]",
-    "contact invite create --handling manual|ship [--expires DURATION]",
-    "contact invite accept LINK_OR_CODE --handling manual|ship",
-    "contact invite list [--all] [--json]",
-    "contact invite cancel INVITE_ID",
+    "contact invite",
     "contact handling CONTACT_ID manual|ship --revision N",
     "contact revoke CONTACT_ID",
     "contact request list [--contact CONTACT_ID] [--all] [--json]",

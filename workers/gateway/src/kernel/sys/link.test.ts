@@ -55,6 +55,20 @@ describe("sys.link.list", () => {
     expect(result.links).toHaveLength(1);
   });
 
+  it("names the person as their messenger did when they connected, and skips what it cannot read", () => {
+    const ctx = makeContext(1000, adapters);
+    const link = { adapter: "whatsapp", accountId: "managed", actorId: "US.13491208655302741918", uid: 1000, linkedByUid: 1000, createdAt: 1 };
+    adapters.identityLinks.list.mockReturnValue([
+      { ...link, metadata: { managed: true, actorName: "Hank Human", actorHandle: "@hank", linkedAt: 1_700_000_000_000, routeGeneration: "private" } },
+      { ...link, actorId: "34611111189", metadata: { actorName: 5, actorHandle: "+34•••••••89", linkedAt: "yesterday" } },
+    ]);
+
+    expect(handleSysLinkList({}, ctx).links).toEqual([
+      { ...link, actorName: "Hank Human", actorHandle: "@hank", linkedAt: 1_700_000_000_000 },
+      { ...link, actorId: "34611111189", actorHandle: "+34•••••••89" },
+    ]);
+  });
+
   it("allows root to list links for any uid", () => {
     const ctx = makeContext(0, adapters);
     adapters.identityLinks.list.mockReturnValue([]);

@@ -33,6 +33,8 @@ export type AiContextResult = {
   targets?: AiToolsTarget[];
   mcpServers: string[];
   systemContextFiles?: ContextFile[];
+  /** Read-only standing context the Kernel selects for the caller's account role, if it has one. */
+  roleContext?: AiRoleContext;
   system: {
     timezone: string;
     language?: string;
@@ -44,6 +46,15 @@ export type AiContextResult = {
   ship: AiContextShip | null;
   /** The managed mailbox the caller's owner reads and sends as, or null when this installation has none. */
   mailbox: AiContextMailbox | null;
+};
+
+/** Read-only standing context the Kernel selects for an account role. */
+export type AiRoleContext = {
+  /** The prompt root the files render under. */
+  name: string;
+  /** Where the caller can read the files. */
+  location: string;
+  files: ContextFile[];
 };
 
 export type AiContextShip = {
@@ -208,6 +219,7 @@ export type AiConfigResult = {
   contextWindowTokens: number | null;
   contextWindowSource: "model" | "config" | "unknown";
   systemContextFiles?: ContextFile[];
+  roleContext?: AiRoleContext;
   system?: {
     timezone: string;
     language?: string;

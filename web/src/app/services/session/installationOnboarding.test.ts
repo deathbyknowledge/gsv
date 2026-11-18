@@ -1,8 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearFirstRunMessenger,
   clearInstallationOnboardingToken,
+  readFirstRunMessenger,
   readInstallationOnboardingToken,
   readSignupArrival,
+  takeFirstRunInvite,
 } from "./installationOnboarding";
 import { createSessionService, type SessionClient } from "./sessionService";
 
@@ -50,6 +53,23 @@ describe("installation onboarding capability", () => {
     expect(readSignupArrival(TOKEN)).toBe(false);
   });
 
+  it("keeps the messenger a signup came from past setup, and only from a setup link", () => {
+    window.history.replaceState(null, "", `/onboarding?signup=1#onboarding=${TOKEN}&messenger=whatsapp`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.hash).toBe("");
+    clearInstallationOnboardingToken();
+    expect(readFirstRunMessenger()).toBe("whatsapp");
+    clearFirstRunMessenger();
+    expect(readFirstRunMessenger()).toBeNull();
+
+    window.history.replaceState(null, "", "/onboarding#messenger=telegram");
+    expect(readInstallationOnboardingToken()).toBeNull();
+    expect(readFirstRunMessenger()).toBeNull();
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&messenger=Not%20a%20messenger`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(readFirstRunMessenger()).toBeNull();
+  });
+
   it("moves the capability out of the URL fragment into tab storage", () => {
     window.history.replaceState(null, "", `/onboarding#${TOKEN}`);
 
@@ -59,15 +79,18 @@ describe("installation onboarding capability", () => {
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
   });
 
-  it("preserves contact acceptance through setup, including a repeated token read", () => {
-    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&contact=friend-invitation`);
+  it("keeps the inviter's profile from setup for People to open once", () => {
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&invite=${encodeURIComponent("https://esteve.ship.space/profile")}`);
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
-    expect(window.location.hash).toBe("#contact=friend-invitation");
+    expect(window.location.hash).toBe("");
+    expect(takeFirstRunInvite()).toBe("https://esteve.ship.space/profile");
+    expect(takeFirstRunInvite()).toBeNull();
+  });
+
+  it("ignores an invitation that isn't a profile page", () => {
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&invite=${encodeURIComponent("javascript:alert(1)")}`);
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
-    clearInstallationOnboardingToken();
-    expect(window.location.pathname).toBe("/");
-    expect(window.location.hash).toBe("#contact=friend-invitation");
-    expect(readInstallationOnboardingToken()).toBeNull();
+    expect(takeFirstRunInvite()).toBeNull();
   });
 
   it("keeps the capability in memory when tab storage rejects it", () => {

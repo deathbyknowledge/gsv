@@ -113,6 +113,7 @@ export const telemetryComponentSchema = z.enum([
   "search",
   "mail",
   "ripgit",
+  "instances",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -449,18 +450,7 @@ const installationAttributedSchema = z.strictObject({
 // A Ship issuing a contact invitation link, and the first time another Ship
 // accepts one it issued. Both are counted for the issuing Ship only: the other
 // side's identity, the link and the name stay in the Kernel.
-const contactInviteCreatedSchema = z.strictObject({
-  stream: z.literal("product"),
-  name: z.literal("contact.invite.created"),
-  properties: z.strictObject({}),
-});
-
-const contactInviteAcceptedSchema = z.strictObject({
-  stream: z.literal("product"),
-  name: z.literal("contact.invite.accepted"),
-  properties: z.strictObject({}),
-});
-// Accounts reports a signup that followed one of the Ship's invitations under the
+// Accounts reports a signup that followed the Ship's invitation link under the
 // inviting Ship's pseudonym; the new Ship's own record says only `origin: "invite"`,
 // so the two series share no key.
 const contactInviteSignupSchema = z.strictObject({
@@ -515,6 +505,46 @@ const delegationCompletedSchema = z.strictObject({
   name: z.literal("delegation.completed"),
   properties: z.strictObject({
     durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+// Cloud browser timings carry durations and counts only: never a site, URL, input or profile.
+const browserSaveFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.save.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["saved", "failed"]),
+    trigger: z.enum(["handoff", "stop", "expiry", "request"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present once the save has read its sites.
+    sitesRead: z.optional(nonNegativeIntegerSchema),
+    sitesKept: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserStartFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.start.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["ready", "stopped", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Present when the start restored a saved profile.
+    restoreMs: z.optional(nonNegativeIntegerSchema),
+    sitesRestored: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+const browserHandoffFinishedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("browser.handoff.finished"),
+  properties: z.strictObject({
+    outcome: z.enum(["completed", "cancelled", "expired", "failed"]),
+    durationMs: nonNegativeIntegerSchema,
+    // Absent when a coordinator restart lost the handoff's input counts.
+    inputs: z.optional(nonNegativeIntegerSchema),
+    inputFailures: z.optional(nonNegativeIntegerSchema),
+    inputMedianMs: z.optional(nonNegativeIntegerSchema),
+    inputMaxMs: z.optional(nonNegativeIntegerSchema),
   }),
 });
 
@@ -632,8 +662,6 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   installationAttributedSchema,
-  contactInviteCreatedSchema,
-  contactInviteAcceptedSchema,
   contactInviteSignupSchema,
   shipOwnerConnectedSchema,
   shipMessageCommittedSchema,
@@ -646,6 +674,9 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   adapterConnectedSchema,
   integrationConnectedSchema,
   delegationCompletedSchema,
+  browserSaveFinishedSchema,
+  browserStartFinishedSchema,
+  browserHandoffFinishedSchema,
 ]);
 
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
@@ -673,8 +704,6 @@ export const telemetryEventComponents = {
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
   "installation.attributed": ["accounts"],
-  "contact.invite.created": ["gateway"],
-  "contact.invite.accepted": ["gateway"],
   "contact.invite.signup": ["accounts"],
   "ship.owner.connected": ["gateway"],
   "ship.message.committed": ["gateway"],
@@ -687,6 +716,9 @@ export const telemetryEventComponents = {
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
   "delegation.completed": ["gateway"],
+  "browser.save.finished": ["instances"],
+  "browser.start.finished": ["instances"],
+  "browser.handoff.finished": ["instances"],
 } satisfies TelemetryEventOwnership;
 
 export const telemetryRecordSchema = z.strictObject({

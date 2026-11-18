@@ -149,8 +149,16 @@ one peer Durable Object from the authenticated private Telegram identity. Slack
 admits the signed event through its installed workspace record, then derives a
 peer from that workspace and human author. Discord uses a shared application
 connection plus a separate peer for the author's direct-message or server route.
-WhatsApp derives one peer from the sender's number after verifying Meta's
-webhook signature for the operator's WhatsApp Business number.
+WhatsApp verifies Meta's webhook signature for the operator's WhatsApp Business
+number, then derives one peer from the sender's business-scoped user ID, which
+Meta sends with every message and sends instead of the number when a person with
+a WhatsApp username keeps their number private. A person the adapter knew by
+number before Meta sent user IDs keeps that number's peer: the first message
+carrying both records the user ID as an alias for it, so later messages reach the
+same route even when Meta withholds the number. That holds when the user ID first
+came alone and only heard how to connect; a user ID with a connection of its own
+keeps it. Replies address a user ID as
+Meta's `recipient` and a number as `to`.
 Each peer owns an exclusive route containing the installation, local uid, and a
 fresh generation. Inbound records and queued replies retain that generation and
 recheck it immediately before crossing the Gateway or provider boundary, so
@@ -526,7 +534,31 @@ to a local uid. That mapping is what allows inbound messages to reach the right
 process and lets authenticated native callbacks submit an exact pending
 human-in-the-loop decision as that linked human.
 
-The adapter issues a short-lived code without choosing a space. A signed-in
+An adapter whose descriptor declares `pairingLinks`, as WhatsApp and Telegram
+do, connects people from a link. A signed-in human calls `adapter.pair.create`.
+The Kernel mints a single-use code, keeps only its hash beside the owner, their
+credential epoch and a ten-minute expiry, and asks the adapter for a link that
+carries it. The adapter records which installation offered the code in a claim
+keyed by the code and returns a messenger link, such as a prefilled `wa.me`
+message or a Telegram `start` parameter. When a message carries the code, the
+adapter binds the claim to its sender and calls `redeemAdapterPairing` on the
+Gateway entrypoint, which resolves the installation through the directory. The
+Kernel checks the hash, expiry and owner, then runs the ordinary confirmation as
+that owner. An unknown, spent or expired code connects no one. Connecting with
+one code retires the owner's other codes for that messenger, and a credential
+change cancels them all. A sender already linked to another Ship or account is
+asked to **Move it** or **Keep it** before the adapter redeems. The Kernel
+answers a refusal, which the adapter relays to the sender; any other failure
+throws, and the adapter delivers the code's message, or the answer to move,
+again until the Kernel answers. An expired code starts no connection, but one
+the Kernel began before the expiry still finishes on a retry. Processes cannot
+mint codes: `adapter.pair.info` gives them a `setupUrl` in Settings to send
+instead, so a model never holds a code, and the Kernel refuses inspect and
+confirm for these adapters. The `linkedAt` that `sys.link.list` reports appears
+only once finalization completes, so a page waiting on its link never shows an
+unfinished connection.
+
+Otherwise the adapter issues a short-lived code without choosing a space. A signed-in
 human or an authorized process can inspect and redeem it through
 `adapter.pair.inspect` and `adapter.pair.confirm`. For a process, the Kernel
 derives the active human owner from its registry and honors the process's
@@ -544,21 +576,32 @@ and remote activation. The Kernel retains that promise through finalization,
 even if the caller stops waiting. Credential revocation remains authoritative.
 
 `messenger setup ADAPTER` reads public connection instructions from the adapter.
-The user can paste its code into the conversation; Ship reads that code from a
+For an adapter with `pairingLinks`, Ship sends the user its `setupUrl`. Otherwise
+the user can paste its code into the conversation; Ship reads that code from a
 file through `messenger connect ADAPTER < code.txt`. This uses the existing
 pairing operation without a separate UI confirmation protocol or model tool.
 
-Without a link, addressed messages may request pairing; they do not enter a
-Process. The first message that requested the code is not replayed as agent
-input. Disconnect and credential revocation fence the old link immediately;
+Without a link, addressed messages may request pairing, or, for `pairingLinks`
+adapters, get a reminder to ask their Ship to connect it, which sends its setup link, at most every ten minutes; they
+do not enter a Process. When the operator sets the adapter's `GSV_SIGNUP_URL`,
+the reminder first offers that signup page, tagged with `utm_source` set to the
+adapter. Signup carries the tag to the new Ship's setup link as `messenger`, and
+its first-run screen opens that messenger's link flow once. The first message that requested the code is not replayed as agent
+input. These platform replies (the reminder, link and move answers, unsupported
+message types) come in English, Spanish or Portuguese from what the messenger
+reports about the sender, since a sender without a Ship has no language
+preference: the Telegram app's language, or the WhatsApp number's calling code
+(or the country of a WhatsApp user ID). The shared
+`workers/adapters/shared/src/platform-replies.ts` owns the texts and accepts
+the move answers in any of them. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
 
 A private message on the exact retained route of a password-revoked identity
 returns `revoked_identity`. Managed adapters respond with their own fresh pairing
-code; the revoked message never enters a Process. Removed accounts, unknown
-routes, and obsolete generations remain fenced. Redeeming a fresh code through
-the signed-in human or an authorized owned process releases the retained route
-before activating its replacement.
+code, or with the reminder to make a link; the revoked message never enters a
+Process. Removed accounts, unknown routes, and obsolete generations remain fenced.
+Redeeming a fresh code or link for the signed-in human or an authorized owned
+process releases the retained route before activating its replacement.
 
 Linked group, channel, and thread traffic is not ambient input. The adapter must
 set `wasMentioned: true` when the bot was addressed according to that

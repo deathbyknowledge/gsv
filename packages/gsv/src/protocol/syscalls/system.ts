@@ -612,6 +612,11 @@ export type SysLinkListResult = {
     uid: number;
     createdAt: number;
     linkedByUid: number;
+    /** How the messenger names the person, as they set it; untrusted text. */
+    actorName?: string;
+    actorHandle?: string;
+    /** When this identity last connected, so a client can tell a link made since it asked. */
+    linkedAt?: number;
   }>;
 };
 

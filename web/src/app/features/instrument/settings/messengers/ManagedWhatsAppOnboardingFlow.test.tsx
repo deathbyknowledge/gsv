@@ -1,6 +1,8 @@
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectFlowDef } from "../../../../components/connect-flow/connectFlowTypes";
+import type { ConsoleIdentityLink } from "../../../../domain/system/consoleModels";
+import type { ConsoleAdapterPairingLink } from "../../../../services/system/consoleService";
 import {
   collectText,
   createTestRoot,
@@ -12,17 +14,14 @@ import {
   type ManagedTelegramDependencies,
 } from "./ManagedTelegramOnboardingFlow";
 
+const LINK_URL = "https://wa.me/34600000000?text=Connect%20my%20Ship%20ABCD-EFGH-JKLM";
+
 const mocks = vi.hoisted(() => ({
-  confirm: vi.fn<
-    ReturnType<ManagedTelegramDependencies["useConfirmConsoleAdapterPairing"]>["mutateAsync"]
-  >(),
+  create: vi.fn<(adapter: string) => Promise<ConsoleAdapterPairingLink>>(),
   // SAFETY: the harness initializes this slot before a test reads the mounted flow.
   currentFlow: null as ConnectFlowDef | null,
   currentStep: -1,
   infoAdapter: "",
-  inspect: vi.fn<
-    ReturnType<ManagedTelegramDependencies["useInspectConsoleAdapterPairing"]>["mutateAsync"]
-  >(),
   onConnected: vi.fn<(detailId: string) => void>(),
   unreachableCallingCodes: ["55", "62"],
 }));
@@ -35,21 +34,19 @@ const dependencies: ManagedTelegramDependencies = {
         adapter: "whatsapp",
         accountId: "managed",
         configured: true,
-        installUrl: "https://wa.me/34600000000?text=%2Flink",
+        installUrl: "https://wa.me/34600000000",
         unreachableCallingCodes: mocks.unreachableCallingCodes,
+        pairingLinks: true,
+        setupUrl: "https://ship.example/chat/settings?section=messengers&messenger=whatsapp",
       },
       isError: false,
       error: null,
     };
   },
-  useInspectConsoleAdapterPairing: () => ({
-    isPending: false,
-    mutateAsync: mocks.inspect,
-  }),
-  useConfirmConsoleAdapterPairing: () => ({
-    isPending: false,
-    mutateAsync: mocks.confirm,
-  }),
+  useCreateConsoleAdapterPairingLink: () => ({ isPending: false, mutateAsync: mocks.create }),
+  useDisconnectConsoleAdapterPairing: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useInspectConsoleAdapterPairing: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useConfirmConsoleAdapterPairing: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useUnsavedGuard: () => undefined,
   ConnectFlowShell: ({ current, flow }) => {
     mocks.currentFlow = flow;
@@ -59,6 +56,7 @@ const dependencies: ManagedTelegramDependencies = {
 };
 
 let root: ReturnType<typeof createTestRoot> | null = null;
+let issuedAt = 0;
 
 function currentFlow(): ConnectFlowDef {
   if (!mocks.currentFlow) throw new Error("Flow is not mounted");
@@ -69,49 +67,52 @@ function nodes() {
   return flowStepNodes(currentFlow(), mocks.currentStep);
 }
 
-async function click(label: string): Promise<void> {
-  const node = nodeWithLabel(nodes(), label);
+async function settle(): Promise<void> {
   await act(async () => {
-    await node.props.onClick?.();
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
   });
+}
+
+async function mount({ links = [], disabled = false }: { links?: ConsoleIdentityLink[]; disabled?: boolean } = {}): Promise<void> {
+  root ??= createTestRoot("Managed WhatsApp onboarding harness");
+  await root.render(
+    <ManagedWhatsAppOnboardingFlow
+      onBack={() => undefined}
+      onConnected={mocks.onConnected}
+      disabled={disabled}
+      dependencies={dependencies}
+      links={links}
+    />,
+  );
+  await settle();
+}
+
+async function remount(options?: { links?: ConsoleIdentityLink[]; disabled?: boolean }): Promise<void> {
+  await root?.unmount();
+  root = null;
+  await mount(options);
+}
+
+/** The account the person's message connected, as `sys.link.list` reports it. */
+function connected(fields: Partial<ConsoleIdentityLink>): ConsoleIdentityLink {
+  return { adapter: "whatsapp", accountId: "managed", actorId: "34611111189", uid: 1000, createdAt: 1, linkedByUid: 1000, linkedAt: issuedAt + 5_000, ...fields };
 }
 
 beforeEach(async () => {
   vi.stubGlobal("document", {});
   vi.stubGlobal("navigator", { languages: ["pt-BR", "id"] });
-  mocks.confirm.mockReset();
+  mocks.create.mockReset();
   mocks.currentFlow = null;
   mocks.currentStep = -1;
   mocks.infoAdapter = "";
   mocks.unreachableCallingCodes = ["55", "62"];
-  mocks.inspect.mockReset();
   mocks.onConnected.mockReset();
-  mocks.inspect.mockResolvedValue({
-    adapter: "whatsapp",
-    accountId: "managed",
-    actorId: "34611111189",
-    surfaceId: "34611111189",
-    actorName: "Hank Human",
-    actorHandle: "+34•••••••89",
-    expiresAt: Date.now() + 60_000,
-    linked: false,
+  issuedAt = 1_700_000_000_000;
+  mocks.create.mockImplementation(async () => {
+    issuedAt += 60_000;
+    return { adapter: "whatsapp", code: "ABCD-EFGH-JKLM", url: LINK_URL, createdAt: issuedAt, expiresAt: issuedAt + 600_000 };
   });
-  mocks.confirm.mockResolvedValue({
-    paired: true,
-    adapter: "whatsapp",
-    accountId: "managed",
-    actorId: "34611111189",
-    surfaceId: "34611111189",
-    uid: 1000,
-  });
-  root = createTestRoot("Managed WhatsApp onboarding harness");
-  await root.render(
-    <ManagedWhatsAppOnboardingFlow
-      onBack={() => undefined}
-      onConnected={mocks.onConnected}
-      dependencies={dependencies}
-    />,
-  );
+  await mount();
 });
 
 afterEach(async () => {
@@ -121,96 +122,77 @@ afterEach(async () => {
 });
 
 describe("ManagedWhatsAppOnboardingFlow", () => {
-  it("shows the operator's number and leads with opening WhatsApp on it without asking for credentials", () => {
+  it("opens WhatsApp on the operator's number with a one-time code and never asks for credentials or a code", () => {
     expect(mocks.infoAdapter).toBe("whatsapp");
+    expect(mocks.create).toHaveBeenCalledWith("whatsapp");
     expect(currentFlow().title).toBe("Connect WhatsApp");
     const allNodes = currentFlow().steps.flatMap((step) => flowStepNodes(currentFlow(), step.key));
-    expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
-    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Send message\""));
+    expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN" || node.props.label === "WHATSAPP CODE")).toBe(false);
+    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Open WhatsApp\""));
     expect(instructions?.props.text).toBe(
-      "Clicking \"Send message\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
+      "Clicking \"Open WhatsApp\" opens a message to Ship with your one-time code. Send it, and this page connects on its own.",
     );
-    expect(collectText(nodes())).toContain("To message Ship manually, send \"/link\" to +34600000000.");
-    const open = nodeWithLabel(nodes(), "SEND MESSAGE");
-    expect(open.props.href).toBe("https://wa.me/34600000000?text=%2Flink");
-    expect(open.props.variant).toBe("secondary");
-    expect(nodeWithLabel(nodes(), "WHATSAPP CODE").props.disabled).toBe(false);
+    expect(collectText(nodes())).toContain("You can also send ABCD-EFGH-JKLM to +34600000000 in WhatsApp.");
+    const open = nodeWithLabel(nodes(), "OPEN WHATSAPP");
+    expect(open.props.href).toBe(LINK_URL);
+    expect(open.props.variant).toBe("primary");
   });
 
-  it("disables the launch link while the host suspends pairing", async () => {
-    await root?.unmount();
-    root = createTestRoot("Managed WhatsApp onboarding harness");
-    await root.render(
-      <ManagedWhatsAppOnboardingFlow
-        onBack={() => undefined}
-        onConnected={mocks.onConnected}
-        disabled
-        dependencies={dependencies}
-      />,
-    );
-    expect(nodeWithLabel(nodes(), "SEND MESSAGE").props.disabled).toBe(true);
+  it("makes no link and disables opening WhatsApp while the host suspends pairing", async () => {
+    mocks.create.mockClear();
+    await remount({ disabled: true });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(nodeWithLabel(nodes(), "OPEN WHATSAPP").props.disabled).toBe(true);
   });
 
-  it("notes the blocked countries this device's languages place it in, flagged and folded away", async () => {
-    const warning = () => {
+  it("folds the countries the number cannot reach behind their flags, whatever the device's language", async () => {
+    const note = () => {
       const text = collectText(nodes());
-      return text.includes("cannot connect") ? text : undefined;
+      return text.includes("can't connect") ? text : undefined;
     };
-    const remount = async (languages: string[], codes: string[]) => {
-      await root?.unmount();
-      vi.stubGlobal("navigator", { languages });
+    const withCodes = async (codes: string[]) => {
       mocks.unreachableCallingCodes = codes;
-      root = createTestRoot("Managed WhatsApp onboarding harness");
-      await root.render(
-        <ManagedWhatsAppOnboardingFlow
-          onBack={() => undefined}
-          onConnected={mocks.onConnected}
-          dependencies={dependencies}
-        />,
-      );
+      await remount();
     };
-    expect(warning()).toContain("🇧🇷 🇮🇩 Read this if your WhatsApp number is from Brazil or Indonesia");
-    expect(warning()).toContain("Brazil (+55) and Indonesia (+62)");
+    vi.stubGlobal("navigator", { languages: ["en-US", "es-ES"] });
+    await remount();
+    expect(note()).toContain("🇧🇷 🇮🇩 WhatsApp numbers from Brazil (+55) and Indonesia (+62) can't connect: Meta blocks them.");
+    const flags = nodes().find((node) => node.type === "summary" && node.props["aria-label"] === "Countries this WhatsApp number can't reach");
+    expect(collectText(flags?.props.children)).toBe("🇧🇷 🇮🇩");
     expect(nodes().some((node) => node.props.variant === "warning")).toBe(false);
 
-    await remount(["pt-BR", "id"], ["62"]);
-    expect(warning()).toContain("🇮🇩 Read this if your WhatsApp number is from Indonesia");
-    expect(warning()).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
-    expect(warning()).not.toContain("Brazil");
+    await withCodes(["62"]);
+    expect(note()).toContain("🇮🇩 WhatsApp numbers from Indonesia (+62) can't connect");
+    expect(note()).not.toContain("Brazil");
 
-    await remount(["en-GB", "pt-BR"], ["55", "62"]);
-    expect(warning()).toContain("🇧🇷 Read this if your WhatsApp number is from Brazil");
-    expect(warning()).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
-    expect(warning()).not.toContain("Indonesia");
-
-    await remount(["en-US", "es-ES", "not a tag"], ["55", "62"]);
-    expect(warning()).toBeUndefined();
+    await withCodes([]);
+    expect(note()).toBeUndefined();
   });
 
-  it("warns where the code is submitted that it replaces a link to another Ship", () => {
-    const relink = "Already connected to another Ship from your number? Submitting a fresh code will end that connection and replace it with this one.";
-    expect(collectText(nodes())).toContain(relink);
+  it("says that a number already talking to another Ship is asked there before it moves", () => {
+    expect(collectText(nodes())).toContain(
+      "Already talking to another Ship from this WhatsApp account? Ship asks you there before moving it here.",
+    );
   });
 
-  it("reveals the profile name and masked number before linking, then opens the account detail", async () => {
-    await act(() => {
-      nodeWithLabel(nodes(), "WHATSAPP CODE").props.onChange?.("abcd-efgh-jklm");
-    });
-    await click("CONNECT");
-
-    expect(mocks.inspect).toHaveBeenCalledWith({
-      adapter: "whatsapp",
-      code: "ABCD-EFGH-JKLM",
-    });
+  it("names the account by profile name and masked number once it connects, then opens its detail", async () => {
+    await mount({ links: [connected({ actorName: "Hank Human", actorHandle: "+34•••••••89" })] });
+    expect(mocks.currentStep).toBe(1);
     expect(nodeWithLabel(nodes(), "Hank Human").props.sub).toBe("WhatsApp number +34•••••••89");
     expect(collectText(nodes())).not.toContain("34611111189");
-
-    await click("YES, CONNECT THIS ACCOUNT");
-    expect(mocks.confirm).toHaveBeenCalledWith({
-      adapter: "whatsapp",
-      code: "ABCD-EFGH-JKLM",
+    const done = nodeWithLabel(nodes(), "VIEW WHATSAPP");
+    await act(async () => {
+      await done.props.onClick?.();
     });
-    await click("VIEW WHATSAPP");
     expect(mocks.onConnected).toHaveBeenCalledWith("whatsapp:managed");
+  });
+
+  it("names a username sender by username when WhatsApp keeps their number private", async () => {
+    await mount({
+      links: [connected({ actorId: "US.13491208655302741918", actorName: "Sheena Nelson", actorHandle: "@realsheenanelson" })],
+    });
+    expect(nodeWithLabel(nodes(), "Sheena Nelson").props.sub).toBe("WhatsApp username @realsheenanelson");
+    expect(collectText(nodes())).not.toContain("WhatsApp number");
+    expect(collectText(nodes())).not.toContain("US.13491208655302741918");
   });
 });

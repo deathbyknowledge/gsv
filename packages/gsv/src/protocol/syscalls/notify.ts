@@ -2,7 +2,6 @@
 export type NoticeKind =
   | "contact.request"
   | "contact.message"
-  | "contact.invite.accepted"
   | "mail.received"
   | "machine.added"
   | "adapter.connected"

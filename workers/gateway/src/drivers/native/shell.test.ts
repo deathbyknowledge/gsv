@@ -298,7 +298,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.7";
+        if (key === "config/server/version") return "0.7.9";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -374,7 +374,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.7",
+    serverVersion: "0.7.9",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -4684,7 +4684,7 @@ describe("native administration shell commands", () => {
     expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
     expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\t@flynn.example");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(help.stdout).toContain("contact invite create");
+    expect(help.stdout).toContain("contact invite\n");
     expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
   });
 
@@ -4721,53 +4721,6 @@ describe("native administration shell commands", () => {
     expect(JSON.parse(result.stdout).contact.localAlias).toBe("Alice Cooper");
     expect(setAlias).toHaveBeenCalledWith(contact.id, IDENTITY.uid, "Alice Cooper");
     expect(setTitle).toHaveBeenCalledWith(contact.conversationId, "Alice Cooper");
-  });
-
-  it("lets only the canonical Ship perform human contact pairing", async () => {
-    const result = await handleShellExec(
-      { input: "contact invite cancel invite:one" },
-      makeContext({ capabilities: ["shell.exec", "contact.invite.cancel"] }),
-    );
-
-    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
-    expect(result.stderr).toContain("requires a signed-in human or their Ship");
-
-    const cancelledAtMs = Date.now();
-    const cancelInvite = vi.fn(() => ({
-      inviteId: "invite:one",
-      ownerUid: IDENTITY.uid,
-      tokenHash: "secret-hash",
-      issuingShipId: "ship:local",
-      issuingOrigin: "https://local.example",
-      state: "cancelled" as const,
-      expiresAtMs: cancelledAtMs + 60_000,
-      cancelledAtMs,
-      createdAtMs: cancelledAtMs - 1_000,
-    }));
-    const ship = makeContext({
-      capabilities: ["shell.exec", "contact.invite.cancel"],
-      procs: {
-        get: vi.fn(() => makeProcess({
-          processId: "proc:ship",
-          isPersonalController: true,
-        })),
-      },
-      auth: {
-        isPersonalAgentUid: vi.fn(() => false),
-        getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
-      },
-      federation: { cancelInvite, invite: vi.fn(() => null) },
-      processId: "proc:ship",
-    });
-    const shipResult = await handleShellExec(
-      { input: "contact invite cancel invite:one" },
-      ship,
-    );
-    expect(shipResult).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(JSON.parse(shipResult.stdout)).toMatchObject({
-      invite: { inviteId: "invite:one", state: "cancelled" },
-    });
-    expect(cancelInvite).toHaveBeenCalledWith("invite:one", IDENTITY.uid, expect.any(Number));
   });
 
   it("reads Contact history from the canonical Ship", async () => {

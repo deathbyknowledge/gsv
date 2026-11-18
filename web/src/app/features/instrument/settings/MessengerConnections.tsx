@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
+import { useAppLocation } from "../../../services/navigation/appNavigation";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
@@ -11,7 +12,7 @@ import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { refreshMessengerConnections } from "../wire/messengerSync";
 import { MessengerPairing } from "./Telegram";
 import type { ManagedMessengerId } from "./messengers/ManagedTelegramOnboardingFlow";
-import { loadMessengerConnections, messengerConnectionStatus, type MessengerConnectionStatus } from "./messengerConnectionsService";
+import { loadMessengerConnections, messengerConnectionStatus, messengerLinkName, type MessengerConnectionStatus } from "./messengerConnectionsService";
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
@@ -51,6 +52,19 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       await refreshMessengerConnections(cache);
     },
   });
+  // Ship sends people here as ?section=messengers&messenger=whatsapp to connect one: open its setup once per visit.
+  const location = useAppLocation();
+  const loaded = connections.data !== undefined;
+  useEffect(() => {
+    if (!active || !loaded) return;
+    const requested = new URLSearchParams(window.location.search).get("messenger");
+    const messenger = MESSENGERS.find((entry) => entry.id === requested)?.id;
+    const adapter = connections.data?.adapters.find((entry) => entry.adapter === messenger);
+    if (messenger && messenger !== "slack" && messenger !== "discord" && adapter?.enabled && adapter.supportsPairing && adapter.canLink) {
+      setRemoving(null);
+      setPairing(messenger);
+    }
+  }, [active, loaded, location.revision]);
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
     <PageHeading id="settings-messengers-title" title={t("settings.messengers.title")} description={t("settings.messengers.intro")} />
@@ -94,8 +108,8 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             <div class="settings-server-heading">
               <span class="settings-messenger-status gsv-sublabel">
                 {status === "connected"
-                  ? t("settings.messengers.connectedTo", { id: link.actorId })
-                  : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: link.actorId })}`}
+                  ? t("settings.messengers.connectedTo", { id: messengerLinkName(link) })
+                  : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: messengerLinkName(link) })}`}
               </span>
             </div>
             {id === "slack" && <small>{t("settings.messengers.workspace", { id: link.accountId })}</small>}
@@ -113,7 +127,8 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           </li>;
         })}</ul>
         {!comingSoon && pairing === id && <fieldset disabled={!connected || !canPair || !available}>
-          <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
+          <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }}
+            links={connections.data.links} onRefreshLinks={() => { void connections.refetch(); }} />
         </fieldset>}
       </section>;
     })}

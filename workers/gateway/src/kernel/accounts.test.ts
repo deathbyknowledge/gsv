@@ -10,12 +10,7 @@ import {
   handleAccountList,
 } from "./agents";
 import { ensureAccountHomeLayout } from "./account-home";
-import {
-  PERSONAL_INTELLIGENCE_CONTEXT,
-  PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
-  RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
-  CREW_CONTEXT,
-} from "../prompts/personal-intelligence";
+import { RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT } from "../prompts/personal-intelligence";
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
@@ -259,7 +254,7 @@ describe("handleAccountCreate", () => {
     );
   });
 
-  it("provisions human-owned shared memory while seeding the personal agent context", async () => {
+  it("provisions human-owned shared memory and copies no role context into the personal agent home", async () => {
     const { ctxFor, passwd, ripgitApplyBodies, prepareWelcome } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
     await ensureAccountHomeLayout(ctx.env, principalOf(ctx)!.account);
@@ -273,7 +268,7 @@ describe("handleAccountCreate", () => {
     expect(bobOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/.dir" }),
     );
-    const personalContextOp = bobOps.find((op) => op.path === "context.d/10-personal.md");
+    const personalContextOp = bobOps.find((op) => op.path === "context.d/personal.md");
     expect(personalContextOp).toEqual(expect.objectContaining({ type: "put" }));
     expect(new TextDecoder().decode(new Uint8Array(personalContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_STANDING_CONTEXT);
@@ -292,12 +287,7 @@ describe("handleAccountCreate", () => {
     );
     expect(prepareWelcome).toHaveBeenCalledWith(1000);
     expect(ctx.responsibilities.create).not.toHaveBeenCalled();
-    const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
-    const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
-    expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
-      .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
-    expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
-      .toBe(PERSONAL_INTELLIGENCE_VOICE_CONTEXT);
+    expect(agentOps.filter((op) => op.type === "put" && op.path.endsWith(".md"))).toEqual([]);
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
     );
@@ -393,13 +383,10 @@ describe("handleAccountCreate", () => {
     expect(shadow.get("crew2")).toBe("!");
     expect(groups.find((group) => group.gid === aliceCrew.gid)?.members).toEqual(["alice"]);
     expect(groups.find((group) => group.name === "alice")?.members).toContain("crew2");
-    const crewOps = ripgitApplyBodies.filter((body) => body.owner === "crew2").flatMap((body) => body.ops);
-    const crewRole = crewOps.find((op) => op.path === "context.d/00-role.md");
-    expect(new TextDecoder().decode(new Uint8Array(crewRole?.contentBytes ?? []))).toBe(CREW_CONTEXT);
-    expect(crewOps).not.toContainEqual(expect.objectContaining({ path: "context.d/05-voice.md" }));
-    const delegation = ripgitApplyBodies.filter((body) => body.owner === "ship").flatMap((body) => body.ops)
-      .find((op) => op.path === "context.d/10-delegation.md");
-    expect(new TextDecoder().decode(new Uint8Array(delegation?.contentBytes ?? []))).toContain("Crew account: `crew2`");
+    // Both roles' context is served from the release, so neither home receives a copy.
+    const homeOps = ripgitApplyBodies.filter((body) => body.owner === "crew2" || body.owner === "ship")
+      .flatMap((body) => body.ops);
+    expect(homeOps.filter((op) => op.type === "put" && op.path.endsWith(".md"))).toEqual([]);
 
   });
 
@@ -417,6 +404,17 @@ describe("handleAccountCreate", () => {
     expect(state.passwd.filter((entry) => entry.gecos === "Crew")).toEqual([crew]);
     expect(state.ripgitApplyBodies.filter((body) => body.owner === "crew").flatMap((body) => body.ops))
       .not.toContainEqual(expect.objectContaining({ path: "context.d/00-role.md" }));
+  });
+
+  it("moves an owner's numbered personal context to personal.md instead of seeding a blank one", async () => {
+    const { ctxFor, ripgitApplyBodies, ripgitFiles } = createCtx();
+    ripgitFiles.set("alice:context.d/10-personal.md", "# Personal Context\n\nLikes tea.\n");
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
+    await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+
+    const ops = ripgitApplyBodies.filter((body) => body.owner === "alice").flatMap((body) => body.ops);
+    expect(ops).toContainEqual({ type: "move", from: "context.d/10-personal.md", to: "context.d/personal.md" });
+    expect(ops).not.toContainEqual(expect.objectContaining({ type: "put", path: "context.d/personal.md" }));
   });
 
   it("leaves existing personal agent context untouched during a hard cutover", async () => {
@@ -447,12 +445,7 @@ describe("handleAccountCreate", () => {
     expect(state.auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "Friday" });
     expect(state.passwd.find((u) => u.username === "friday")?.gecos).toBe("Friday");
     const ops = state.ripgitApplyBodies.filter((body) => body.owner === "friday").flatMap((body) => body.ops);
-    expect(ops).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),
-    ]));
-    expect(ops).not.toContainEqual(
-      expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
-    );
+    expect(ops.filter((op) => op.type === "put" && op.path.endsWith(".md"))).toEqual([]);
     expect(ops).toContainEqual({
       type: "delete",
       path: "context.d/10-commitments.md",

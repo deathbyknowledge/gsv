@@ -105,6 +105,31 @@
   margin-top: -6px;
 }
 
+/* A link's QR code beside the other ways to send it. A phone opens the link itself,
+   so the code shows only where a camera could scan it from this screen. */
+.gsv-cf-scan {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.gsv-cf-qr {
+  flex: none;
+  width: 132px;
+  height: 132px;
+  border-radius: 6px;
+  /* Cameras read dark modules on a light ground, in either theme. */
+  background: #fff;
+  color: #000;
+  /* Whole modules, without anti-aliased seams between them. */
+  shape-rendering: crispEdges;
+}
+@media (max-width: 520px), (pointer: coarse) {
+  .gsv-cf-qr,
+  .gsv-cf-scan-hint {
+    display: none;
+  }
+}
+
 /* Numbered steps shown together, down a rail: the Stepper's dots in a column
    joined by a line, each centred on its step's first line of text. */
 .gsv-cf-rail {
@@ -173,6 +198,13 @@
 .gsv-cf-aside > p {
   margin: 6px 0 0;
   overflow-wrap: anywhere;
+}
+/* Flags that open who the WhatsApp number cannot reach: no underline under an emoji. */
+.gsv-cf-reach {
+  margin: 0;
+}
+.gsv-cf-reach > summary {
+  text-decoration: none;
 }
 
 /* A field with its submit action beside it: the label spans the row, the

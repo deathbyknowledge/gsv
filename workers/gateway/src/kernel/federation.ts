@@ -941,7 +941,7 @@ export async function deliver(call: ShipCall, ctx: KernelContext): Promise<Deliv
     || (contact.state !== "active" && payload.kind !== "contact.revoked")
   ) {
     // The other Ship records a connection before this one does, so a delivery can arrive while this Ship is still accepting it.
-    if (ctx.federation.pairingPending(call.caller) || ctx.approaches.accepting(call.caller)) {
+    if (ctx.approaches.accepting(call.caller)) {
       throw new ShipXrpcError(503, "TemporarilyUnavailable", "This Ship is still accepting the connection", ACCEPTING_RETRY_MS);
     }
     throw new PublicFederationError(404, "Contact not found");

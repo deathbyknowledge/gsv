@@ -29,14 +29,9 @@ export function profileSubmission(state: ProfileState, edit: ProfileEdit | null,
   };
 }
 
-/** The draft as it is stored: named by the recorded handle, with only the two contact settings the editor offers. */
+/** The draft as it is stored: named by the recorded handle. */
 export function profileNamed(state: ProfileState, shown: ProfileFields): ProfileFields {
-  return {
-    ...shown,
-    ...(state.handle ? { displayName: state.handle } : undefined),
-    // The Kernel enforces "closed" exactly like "invitation"; save the option the editor shows.
-    ...(shown.contactPolicy === "closed" ? { contactPolicy: "invitation" as const } : undefined),
-  };
+  return { ...shown, ...(state.handle ? { displayName: state.handle } : undefined) };
 }
 
 /** Whether the saved profile has changes its live page doesn't show yet; a private profile has no live page. */
@@ -45,9 +40,9 @@ export function profileUnpublished(state: ProfileState): boolean {
 }
 
 /** Who can reach the owner through the live page now; unpublished changes do not count until published. */
-export function profileVisibility(state: ProfileState): "private" | "requests" | "invitation" {
+export function profileVisibility(state: ProfileState): "private" | "requests" | "closed" {
   if (!state.published) return "private";
-  return state.published.contactPolicy === "requests" ? "requests" : "invitation";
+  return state.published.contactPolicy === "requests" ? "requests" : "closed";
 }
 
 /** What a takedown covers, as the person knows it. */

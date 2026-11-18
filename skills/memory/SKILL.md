@@ -7,7 +7,7 @@ description: Retrieve and maintain the memory. Use when you need to remember som
 
 Memory belongs to the human, not to an individual agent. It has three layers; every agent working for the same user shares the first two, and only Ship reads the third:
 
-- The owner's `context.d/10-personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It appears under the editable `<user>` context root in the prompt; do not confuse it with the current agent's `~/context.d/`.
+- The owner's `context.d/personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It is the `user` layer of `personal.md` in the prompt; do not confuse it with the current agent's `~/context.d/`.
 - The `personal` wiki contains durable information that is searched and loaded when relevant.
 - The conversation keeps every message exchanged with the owner and Ship. Ship can search it; it is the record, not the memory, so write what will matter again to the wiki.
 
@@ -94,6 +94,6 @@ Use `man wiki` for exact wiki syntax and general wiki workflows.
 
 ## Maintain Standing Memory
 
-Edit the owner's `context.d/10-personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Keep the file small, preserve its purpose statement, and replace corrected facts.
+Edit the owner's `context.d/personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Keep the file small, preserve its purpose statement, and replace corrected facts.
 
 Unresolved work belongs in the `r12y` responsibility ledger. Do not duplicate it in standing context or the wiki.

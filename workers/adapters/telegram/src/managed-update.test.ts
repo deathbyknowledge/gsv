@@ -10,7 +10,7 @@ type MessageFixture = {
   date: number;
   text?: string;
   chat: { id: number; type: "private" | "group" };
-  from: { id: number; is_bot: boolean; first_name?: string; last_name?: string; username?: string };
+  from: { id: number; is_bot: boolean; first_name?: string; last_name?: string; username?: string; language_code?: string };
   contact?: { phone_number: string };
   voice?: { file_id: string; file_size: number; duration: number; mime_type: string };
 };
@@ -53,6 +53,17 @@ describe("managed Telegram update normalization", () => {
         unsupportedContent: false,
       },
     });
+  });
+
+  it("keeps the sender's app language when Telegram reports a well-formed tag", () => {
+    const from = { ...update().message.from };
+    const language = (code: string) => {
+      const result = normalizeManagedTelegramUpdate(update({ message: { ...update().message, from: { ...from, language_code: code } } }));
+      return result.kind === "accepted" ? result.inbound.language : null;
+    };
+    expect(language("pt-br")).toBe("pt-br");
+    expect(language("es")).toBe("es");
+    expect(language("not a tag")).toBeUndefined();
   });
 
   it("marks rich or empty messages unsupported without exposing provider shapes", () => {

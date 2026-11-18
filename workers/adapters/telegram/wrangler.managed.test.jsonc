@@ -10,7 +10,8 @@
     "TELEGRAM_BOT_TOKEN": "test-token",
     "TELEGRAM_BOT_USERNAME": "official_gsv_bot",
     "TELEGRAM_WEBHOOK_SECRET": "test_webhook_secret_123",
-    "TELEGRAM_ALLOWED_ACTOR_IDS": "12345"
+    "TELEGRAM_ALLOWED_ACTOR_IDS": "12345,67890",
+    "GSV_SIGNUP_URL": "https://signup.gsv.test/"
   },
   "durable_objects": {
     "bindings": [
