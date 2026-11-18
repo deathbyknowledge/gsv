@@ -13,7 +13,7 @@ never sends as the owner, and the two identities stay separate.
 
 Ask which addresses they want connected. People often have several, such as
 personal and work; never assume one. Record each address, and which one is for
-what, in the owner's `context.d/10-personal.md`, next to Ship's own address so
+what, in the owner's `context.d/personal.md`, next to Ship's own address so
 the two are never mixed up. Use these when inviting the owner to an event or
 writing to them by email.
 
@@ -29,7 +29,7 @@ Then ask what matters to them, with examples rather than a guess: bills and
 due dates, travel and bookings, deliveries, named people, deadlines, anything
 needing a reply. Ask whether Ship may unsubscribe from newsletters and
 marketing on its own, or should list them first. Write the agreed rule in
-`context.d/10-personal.md` in one or two lines, with examples in the personal
+`context.d/personal.md` in one or two lines, with examples in the personal
 wiki. When the owner corrects a call ("that one mattered"), update the rule.
 
 ## 3. Set Up Forwarding

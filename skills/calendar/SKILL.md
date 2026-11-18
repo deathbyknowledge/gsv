@@ -13,7 +13,7 @@ owner's calendar through a private link they share.
 ## Add Something to the Owner's Calendar
 
 An invitation goes only to the event's guests, so the owner must be a guest.
-Use their address from `context.d/10-personal.md`, never Ship's own, and ask
+Use their address from `context.d/personal.md`, never Ship's own, and ask
 which one if they have several.
 
 ```bash
