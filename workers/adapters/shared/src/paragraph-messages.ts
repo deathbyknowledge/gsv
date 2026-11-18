@@ -178,8 +178,14 @@ function markdownBlocks(markdown: string, joinHeadings = true): MarkdownBlocks {
     // Leading spaces belong to indented code; only surrounding blank lines go.
     const raw = token.raw.replace(/^\n+/, "").trimEnd();
     if (!raw) continue;
-    if (followsHeading) blocks[blocks.length - 1]!.text += `\n\n${raw}`;
-    else blocks.push({ text: raw, code: token.type === "code" });
+    const code = token.type === "code";
+    if (followsHeading) {
+      const heading = blocks[blocks.length - 1]!;
+      heading.text += `\n\n${raw}`;
+      heading.code = code;
+    } else {
+      blocks.push({ text: raw, code });
+    }
     followsHeading = joinHeadings && token.type === "heading";
   }
   return { blocks, definitions };

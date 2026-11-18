@@ -51,6 +51,9 @@ describe("splitMarkdownParagraphs", () => {
     expect(splitMarkdownParagraphs(`one\n\ntwo\n\n${code}\n\nthree\n\nfour`, "lead")).toEqual(["one", "two", code, "three\n\nfour"]);
     expect(splitMarkdownParagraphs(`one\n\n${code}`, "lead")).toEqual(["one", code]);
     expect(splitMarkdownParagraphs("one", "lead")).toEqual(["one"]);
+    // A heading joins the code it introduces, and the pair stays alone like any code block.
+    expect(splitMarkdownParagraphs(`one\n\ntwo\n\n# Setup\n\n${code}\n\nthree`, "lead"))
+      .toEqual(["one", "two", `# Setup\n\n${code}`, "three"]);
     // A link definition travels once with the group that uses it.
     expect(splitMarkdownParagraphs("one\n\nsee [a]\n\nand [a] again\n\n[a]: https://a.test", "lead"))
       .toEqual(["one", "see [a]\n\nand [a] again\n\n[a]: https://a.test"]);
