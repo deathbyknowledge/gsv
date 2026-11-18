@@ -1423,13 +1423,20 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const url = adapter === "whatsapp"
         ? `https://wa.me/31612345678?text=${encodeURIComponent(`Connect my Ship ${code.replace(/(.{4})(?=.)/g, "$1-")}`)}`
         : `https://t.me/ShipMockBot?start=${code}`;
-      // A few seconds later the person sends it, and the Kernel announces the new connection.
-      window.setTimeout(() => {
-        messengerLinks = messengerLinks.filter((link) => link.adapter !== adapter);
-        messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: adapter === "whatsapp" ? "31612345678" : "351913787780", uid: OWNER.uid, linkedByUid: OWNER.uid,
-          createdAt: Date.now(), linkedAt: Date.now(), actorName: "Esteve", actorHandle: adapter === "whatsapp" ? "+31•••••••78" : "@esteve" });
-        broadcast("adapter.status", { adapter, accountId: `mock-${adapter}` });
-      }, 6_000);
+      // Opening this link stands in for sending its message, without leaving for the real messenger:
+      // a moment later the Kernel announces the new connection.
+      const send = (event: MouseEvent) => {
+        if (!(event.target instanceof Element) || event.target.closest("a")?.getAttribute("href") !== url) return;
+        event.preventDefault();
+        document.removeEventListener("click", send, true);
+        window.setTimeout(() => {
+          messengerLinks = messengerLinks.filter((link) => link.adapter !== adapter);
+          messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: adapter === "whatsapp" ? "31612345678" : "351913787780", uid: OWNER.uid, linkedByUid: OWNER.uid,
+            createdAt: Date.now(), linkedAt: Date.now(), actorName: "Esteve", actorHandle: adapter === "whatsapp" ? "+31•••••••78" : "@esteve" });
+          broadcast("adapter.status", { adapter, accountId: `mock-${adapter}` });
+        }, 2_000);
+      };
+      document.addEventListener("click", send, true);
       return respond(id, { adapter, code: code.replace(/(.{4})(?=.)/g, "$1-"), url, createdAt, expiresAt: createdAt + 600_000 });
     }
     case "adapter.pair.inspect": {
