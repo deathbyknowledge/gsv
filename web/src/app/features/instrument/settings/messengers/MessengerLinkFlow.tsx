@@ -9,7 +9,7 @@ import type { ManagedMessengerId, ManagedTelegramDependencies } from "./ManagedT
 import { LinkQrCode } from "./LinkQrCode";
 import { MESSENGER_CAPABILITIES } from "./messengerDocs";
 import { useMessengerLink } from "./useMessengerLink";
-import { whatsAppAccountLabel, whatsAppNumberFromChatUrl, whatsAppReachForDevice, whatsAppReachNotice } from "./whatsapp";
+import { whatsAppAccountLabel, whatsAppNumberFromChatUrl, whatsAppReachNotice } from "./whatsapp";
 
 type PairingInfo = ReturnType<ManagedTelegramDependencies["useConsoleAdapterPairingInfo"]>;
 
@@ -66,7 +66,7 @@ export function MessengerLinkFlow({
   const { link, connected, waiting, expired, error: formError, mint, disconnectWrongAccount } = useMessengerLink({
     adapterId, ready: !disabled && configured, links, onRefreshLinks, create, disconnect,
   });
-  const unreachable = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
+  const unreachable = isWhatsApp ? info.data?.unreachableCallingCodes ?? [] : [];
 
   const destination = isWhatsApp
     ? whatsAppNumberFromChatUrl(link?.url ?? info.data?.installUrl) || t("settings.pairing.shipNumber")

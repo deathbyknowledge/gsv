@@ -145,32 +145,26 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(nodeWithLabel(nodes(), "OPEN WHATSAPP").props.disabled).toBe(true);
   });
 
-  it("notes the blocked countries this device's languages place it in, flagged and folded away", async () => {
-    const warning = () => {
+  it("notes the countries the number cannot reach in one quiet line, whatever the device's language", async () => {
+    const note = () => {
       const text = collectText(nodes());
-      return text.includes("cannot connect") ? text : undefined;
+      return text.includes("can't connect") ? text : undefined;
     };
-    const withDevice = async (languages: string[], codes: string[]) => {
-      vi.stubGlobal("navigator", { languages });
+    const withCodes = async (codes: string[]) => {
       mocks.unreachableCallingCodes = codes;
       await remount();
     };
-    expect(warning()).toContain("🇧🇷 🇮🇩 Read this if your WhatsApp number is from Brazil or Indonesia");
-    expect(warning()).toContain("Brazil (+55) and Indonesia (+62)");
+    vi.stubGlobal("navigator", { languages: ["en-US", "es-ES"] });
+    await remount();
+    expect(note()).toContain("🇧🇷 🇮🇩 WhatsApp numbers from Brazil (+55) and Indonesia (+62) can't connect: Meta blocks them.");
     expect(nodes().some((node) => node.props.variant === "warning")).toBe(false);
 
-    await withDevice(["pt-BR", "id"], ["62"]);
-    expect(warning()).toContain("🇮🇩 Read this if your WhatsApp number is from Indonesia");
-    expect(warning()).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
-    expect(warning()).not.toContain("Brazil");
+    await withCodes(["62"]);
+    expect(note()).toContain("🇮🇩 WhatsApp numbers from Indonesia (+62) can't connect");
+    expect(note()).not.toContain("Brazil");
 
-    await withDevice(["en-GB", "pt-BR"], ["55", "62"]);
-    expect(warning()).toContain("🇧🇷 Read this if your WhatsApp number is from Brazil");
-    expect(warning()).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
-    expect(warning()).not.toContain("Indonesia");
-
-    await withDevice(["en-US", "es-ES", "not a tag"], ["55", "62"]);
-    expect(warning()).toBeUndefined();
+    await withCodes([]);
+    expect(note()).toBeUndefined();
   });
 
   it("says that a number already talking to another Ship is asked there before it moves", () => {
