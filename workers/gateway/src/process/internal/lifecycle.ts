@@ -110,7 +110,7 @@ export const RUN_CONTROL_INSTRUCTION =
   "Messages for the user go through the Send tool. Assistant text is never sent to the user; anything the person should read goes through Send.";
 
 export const SEND_TOOL_DESCRIPTION =
-  "Send a message to the person this run is for, end the run, or both. Assistant text is never delivered; this is how the person hears from you. yield true ends the run after the message, or silently when there is no text.";
+  "Send a message to the person this run is for, end the run, or both. Assistant text is never delivered; this is how the person hears from you. yield true ends the run after the message, or silently when there is no text. Issue Send on its own, separately from other tool actions.";
 
 /** Appended to history when a turn ended in text alone; it names Send, and the tool set stays as it was. */
 export { YIELD_CORRECTION_MESSAGE } from "../../prompts/correction-events";

@@ -1,5 +1,4 @@
-import memoryContext from "./system/context.d/15-memory.md";
-import standingContext from "./user/context.d/10-personal.md";
+import standingContext from "./user/context.d/personal.md";
 
 // Used only to remove the exact generated context.d/00-boot.md during responsibility-ledger migration.
 export const RETIRED_BOOT_CONTEXT_TEMPLATE =
@@ -12,10 +11,6 @@ export const RETIRED_BOOT_CONTEXT_TEMPLATE =
 // Historical seeding note; this text is now retained only for exact-match cleanup.
 // Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
 export const RETIRED_AGENT_VOICE_CONTEXT = "# Voice\n\nLead with the result. Be concise and concrete, with enough evidence and limitations for the recipient to act. Use structure when it improves clarity; omit generic introductions and repetition.\n";
-
-// Historical seeding note; memory instructions now live in system context.
-// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for worker accounts.
-export const DEFAULT_MEMORY_CONTEXT_TEMPLATE = memoryContext;
 
 export const PERSONAL_STANDING_CONTEXT = standingContext;
 

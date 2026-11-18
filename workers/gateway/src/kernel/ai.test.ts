@@ -480,6 +480,12 @@ describe("handleAiConfig", () => {
           metadata: input.metadata ?? {},
         })),
       },
+      responsibilities: {
+        create: vi.fn(() => ({ created: true })),
+        getByDedupeKey: vi.fn(() => null),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => {}),
+      defer: vi.fn(),
       processId: options.processId,
       env,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -568,7 +574,6 @@ describe("handleAiConfig", () => {
     const ripgit = { fetch } as Fetcher;
     const ctx = makeAiConfigContext({
       "config/ai/skills/index_mode": "off",
-      "config/ai/context.d/15-memory.md": SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/15-memory.md"]!,
     }, { uid: 2000, ownerUid: 1000, processId: "existing-specialist", ripgit });
     const cachedConfig = await handleAiConfig({}, ctx);
     const [snapshot] = await Promise.all([handleAiContext({}, ctx), handleAiContext({}, ctx)]);
@@ -586,11 +591,138 @@ describe("handleAiConfig", () => {
       ripgit: new RipgitClient(ripgit),
       storage: { get: vi.fn(), list: vi.fn() },
     });
-    expect(rendered.sources.filter((source) => source.name === "15-memory.md")).toHaveLength(customized ? 3 : 1);
+    expect(rendered.sources.filter((source) => source.name === "15-memory.md")).toHaveLength(customized ? 2 : 0);
     for (const owner of ["friday", "sam"]) {
       expect(files.get(`${owner}/context.d/15-memory.md`)).toBe(customized ? memory : undefined);
       expect(files.get(`${owner}/context.d/00-role.md`)).toBe("Existing account instructions.");
     }
+  });
+
+  /** A Ship (uid 2000, home friday) owned by sam, whose homes hold `files` keyed by `<username>/<path>`. */
+  function shipWithHomes(files: Map<string, string>) {
+    const applied: RipgitApplyOp[] = [];
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const owner = url.pathname.split("/")[3]!;
+      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "existing" }, tags: {} });
+      if (url.pathname.endsWith("/read")) {
+        const path = `${owner}/${url.searchParams.get("path")}`;
+        const text = files.get(path);
+        if (text !== undefined) return new Response(text);
+        // A directory lists its direct children; a nested file shows as its tree.
+        const entries = new Map([...files.keys()].filter((key) => key.startsWith(`${path}/`))
+          .map((key) => key.slice(path.length + 1).split("/"))
+          .map(([name, ...rest]) => [name!, rest.length > 0 ? "tree" : "blob"] as const));
+        return entries.size === 0
+          ? new Response("missing", { status: 404 })
+          : Response.json([...entries].map(([name, type]) => ({ name, type, mode: "100644", hash: "test" })));
+      }
+      if (url.pathname.endsWith("/apply")) {
+        const body: { ops: RipgitApplyOp[] } = JSON.parse(String(init?.body));
+        for (const op of body.ops) {
+          applied.push(op);
+          if (op.type === "delete") files.delete(`${owner}/${op.path}`);
+          if (op.type === "move") {
+            files.set(`${owner}/${op.to}`, files.get(`${owner}/${op.from}`)!);
+            files.delete(`${owner}/${op.from}`);
+          }
+        }
+        return Response.json({ ok: true, head: "existing" });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    const shipDefaults = Object.fromEntries(Object.entries(SYSTEM_CONFIG_DEFAULTS)
+      .filter(([key]) => key.startsWith("config/ai/ship/context.d/")));
+    // SAFETY: this fixture implements the binding fetch used by RipgitClient.
+    const ripgit = { fetch } as Fetcher;
+    const ctx = makeAiConfigContext(
+      { "config/ai/skills/index_mode": "off", ...shipDefaults },
+      { uid: 2000, ownerUid: 1000, processId: "ship-process", ripgit },
+    );
+    vi.mocked(ctx.auth.isPersonalAgentUid).mockImplementation((uid: number) => uid === 2000);
+    return { ctx, applied, ripgit };
+  }
+
+  it("serves a Ship its shipped context, clears old copies from its home once, and keeps its own voice after the shipped one", async () => {
+    const files = new Map([
+      ["friday/context.d/10-delegation.md", "Crew account: `crew`\n"],
+      ["friday/context.d/05-voice.md", "# Voice\n\nAn edited old copy.\n"],
+      ["friday/context.d/20-projects.md", "Ship's own notes."],
+      ["friday/context.d/voice.md", "Always answer in Dutch."],
+      ["sam/context.d/personal.md", "Likes tea."],
+    ]);
+    const { ctx, applied, ripgit } = shipWithHomes(files);
+
+    const snapshot = await handleAiContext({}, ctx);
+    expect(snapshot.roleContext?.name).toBe("ship");
+    expect(applied).toEqual([
+      { type: "move", from: "context.d/05-voice.md", to: "context.d/retired/05-voice.md" },
+      { type: "delete", path: "context.d/10-delegation.md" },
+    ]);
+    // Only the edited copy needs the Ship's judgment; the matching one is gone.
+    expect(ctx.responsibilities.create).toHaveBeenCalledTimes(1);
+    expect(ctx.responsibilities.create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      assignee: { kind: "ship" },
+      state: "open",
+      dedupeKey: "shipped-context.retired:2000",
+      details: expect.objectContaining({
+        home: "/home/friday",
+        release: "/sys/config/ai/ship/context.d",
+        retired: ["/home/friday/context.d/retired/05-voice.md"],
+        instructions: expect.stringContaining("voice.md"),
+      }),
+    }));
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    applied.length = 0;
+    await handleAiContext({}, ctx);
+    expect(applied).toEqual([]);
+    expect(ctx.responsibilities.create).toHaveBeenCalledTimes(1);
+
+    const config = await handleAiConfig({}, ctx);
+    const rendered = await assembleSystemPromptSnapshot({
+      config: { ...config, systemContextFiles: snapshot.systemContextFiles, roleContext: snapshot.roleContext },
+      identity: principalOf(ctx)!.account,
+      ownerIdentity: config.owner!,
+      targets: [], mcpServers: [], skills: { mode: "off", entries: [] },
+      runtime: { date: "2026-11-13", timezone: "UTC" }, r12y: "",
+      ripgit: new RipgitClient(ripgit),
+      storage: { get: vi.fn(), list: vi.fn() },
+    });
+    expect(rendered.sources.filter((source) => source.contextRoot?.key !== "system").map((source) => `${source.contextRoot?.key}:${source.name}`))
+      .toEqual([
+        "base:behaviour.md", "base:voice.md",
+        "agent:20-projects.md", "agent:voice.md",
+        "user:personal.md",
+      ]);
+    expect(rendered.prompt).not.toContain("An edited old copy.");
+    // The Ship's own voice.md is the agent layer of voice.md, right after the shipped base.
+    expect(rendered.prompt).toMatch(/<voice\.md>\n<base>\n[\s\S]*\n<\/base>\n<agent>\nAlways answer in Dutch\.\n<\/agent>\n<\/voice\.md>/);
+  });
+
+  it("asks the Ship once to carry over copies an earlier cleanup already retired", async () => {
+    // The moves committed, but the responsibility was never opened.
+    const files = () => new Map([
+      ["friday/context.d/retired/05-voice.md", "# Voice\n\nAn edited old copy.\n"],
+      ["friday/context.d/retired/notes.md", "Not a retired copy."],
+    ]);
+    const first = shipWithHomes(files());
+    await handleAiContext({}, first.ctx);
+    expect(first.applied).toEqual([]);
+    expect(first.ctx.responsibilities.create).toHaveBeenCalledTimes(1);
+    expect(first.ctx.responsibilities.create).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: "shipped-context.retired:2000",
+      details: expect.objectContaining({ retired: ["/home/friday/context.d/retired/05-voice.md"] }),
+    }));
+
+    // Once opened, the responsibility is the receipt, even after it is resolved.
+    const later = shipWithHomes(files());
+    vi.mocked(later.ctx.responsibilities.getByDedupeKey).mockReturnValue(
+      // SAFETY: only the presence of a record matters here.
+      { id: "r12y-1" } as ReturnType<KernelContext["responsibilities"]["getByDedupeKey"]>,
+    );
+    await handleAiContext({}, later.ctx);
+    expect(later.ctx.responsibilities.create).not.toHaveBeenCalled();
   });
 
   it("retries account memory reconciliation after a failed read", async () => {

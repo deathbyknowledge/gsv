@@ -1,12 +1,12 @@
 import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
-import type { PromptAssemblyInput, PromptSection } from "../types";
+import type { ContextLayer, ContextLayerRoot, PromptAssemblyInput, PromptSection } from "../types";
 
 const TEXT_ENCODER = new TextEncoder();
 /** Context files read together; a directory larger than the budget stops after the batch that spends it. */
 const CONTEXT_READ_BATCH = 8;
 const TEXT_DECODER = new TextDecoder();
 
-type AccountContextRoot = "program" | "user";
+type AccountContextRoot = Extract<ContextLayer, "agent" | "user">;
 type AccountContextFile = {
   name: string;
   read: () => Promise<string | null>;
@@ -48,19 +48,25 @@ async function listAccountContextFiles(
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/** The owner the process works for, when it runs as a separate agent account. */
+export function distinctOwner(input: PromptAssemblyInput): PromptAssemblyInput["identity"] | null {
+  const owner = input.ownerIdentity;
+  return owner && owner.username !== input.identity.username ? owner : null;
+}
+
+export function accountContextLayer(
+  account: PromptAssemblyInput["identity"],
+  key: AccountContextRoot,
+): ContextLayerRoot {
+  return { key, access: "editable", location: `${account.home}/context.d` };
+}
+
 export async function collectAccountContext(
   input: PromptAssemblyInput,
   account: PromptAssemblyInput["identity"],
-  root: AccountContextRoot,
   warningLabel: string,
 ): Promise<PromptSection[]> {
   const sections: PromptSection[] = [];
-  const contextRoot = {
-    key: root,
-    label: root.toUpperCase(),
-    access: "editable" as const,
-    location: `${account.home}/context.d`,
-  };
   const contextFiles = await listAccountContextFiles(input, account);
   let usedBytes = 0;
   for (let start = 0; start < contextFiles.length; start += CONTEXT_READ_BATCH) {
@@ -84,7 +90,7 @@ export async function collectAccountContext(
         return sections;
       }
       usedBytes += bytes;
-      sections.push({ name, text, contextRoot });
+      sections.push({ name, text });
     }
   }
 

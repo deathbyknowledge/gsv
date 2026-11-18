@@ -59,6 +59,11 @@ const aiConfigResultSchema = z.object({
     name: z.string(),
     text: z.string(),
   })).optional(),
+  roleContext: z.object({
+    name: z.string(),
+    location: z.string(),
+    files: z.array(z.object({ name: z.string(), text: z.string() })),
+  }).optional(),
   system: z.object({ timezone: z.string(), language: z.string().optional() }).optional(),
   accountApprovalPolicy: z.string().nullable().optional(),
   capabilities: z.array(z.string()).default([]),

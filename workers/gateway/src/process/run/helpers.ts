@@ -65,6 +65,7 @@ export function contextSnapshotFromRun(
   if (config.systemContextFiles !== undefined) {
     snapshot.systemContextFiles = config.systemContextFiles;
   }
+  if (config.roleContext !== undefined) snapshot.roleContext = config.roleContext;
   return snapshot;
 }
 

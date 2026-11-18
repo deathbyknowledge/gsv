@@ -1,5 +1,5 @@
 import type { PromptContextProvider } from "../types";
-import { collectAccountContext } from "./account";
+import { accountContextLayer, collectAccountContext, distinctOwner } from "./account";
 
 /**
  * Layers the owning human's `~/context.d` into the prompt, so an agent account
@@ -10,13 +10,13 @@ import { collectAccountContext } from "./account";
 export function createOwnerContextProvider(): PromptContextProvider {
   return {
     name: "owner.context",
+    layer(input) {
+      const owner = distinctOwner(input);
+      return owner ? accountContextLayer(owner, "user") : null;
+    },
     async collect(input) {
-      const owner = input.ownerIdentity;
-      if (!owner || owner.username === input.identity.username) {
-        return [];
-      }
-
-      return collectAccountContext(input, owner, "user", "owner context.d");
+      const owner = distinctOwner(input);
+      return owner ? collectAccountContext(input, owner, "owner context.d") : [];
     },
   };
 }

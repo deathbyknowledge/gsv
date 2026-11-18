@@ -41,7 +41,7 @@ All requests use the same frame shape:
   "type": "req",
   "id": "call-id",
   "call": "fs.read",
-  "args": { "path": "/home/alice/context.d/00-role.md" }
+  "args": { "path": "/home/alice/context.d/personal.md" }
 }
 ```
 

@@ -144,21 +144,34 @@ Legacy per-field text-model keys and `model_profiles` are not read. Move each co
 config/ai/context.d/*.md
 ```
 
-Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section.
-
-Use numeric prefixes to make ordering explicit:
+Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section. The release ships one file:
 
 ```text
-config/ai/context.d/00-runtime.md
-config/ai/context.d/01-gsv.md
+config/ai/context.d/environment.md
 ```
 
-Context files are templates. `00-runtime.md` renders the Kernel's availability
+Setting that key replaces the release's environment for every process; adding
+another key adds a file beside it.
+
+Context files are templates. `environment.md` renders the Kernel's availability
 snapshot at the start of each context epoch: `{{current.date}}` and
 `{{current.timezone}}`, `{{targets}}`, `{{mcpServers}}`, and
 `{{mailbox.address}}`, the owner's managed mailbox or `none` when the
 installation has no mailbox. Later changes to those facts reach the agent as
 context events rather than a rewritten prompt.
+
+## Ship and Crew Context
+
+```text
+config/ai/ship/context.d/*.md
+config/ai/crew/context.d/*.md
+```
+
+The release's read-only standing context for the personal agent and its Crew
+account. Processes running as those accounts read it after system context,
+with the same ordering and templates; `{{crew.username}}` names the owner's
+Crew account. Setting a key replaces that file for every Ship or Crew on the
+installation. See [Context Files](./context-files.md#ship-and-crew-context).
 
 ## Tool Approval Policy
 
