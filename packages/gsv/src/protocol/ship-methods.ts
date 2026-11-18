@@ -8,14 +8,11 @@
  */
 
 export {
-  ACCEPT_INVITATION,
   ACCEPT_MESSAGE_REQUEST,
   DELIVER,
   GET_ATTACHMENT,
   SEND_MESSAGE_REQUEST,
   WITHDRAW_MESSAGE_REQUEST,
-  acceptInvitationInputSchema,
-  acceptInvitationOutputSchema,
   acceptMessageRequestInputSchema,
   acceptMessageRequestOutputSchema,
   deliverInputSchema,
@@ -25,8 +22,6 @@ export {
   sendMessageRequestOutputSchema,
   withdrawMessageRequestInputSchema,
   withdrawMessageRequestOutputSchema,
-  type AcceptInvitationInput,
-  type AcceptInvitationOutput,
   type AcceptMessageRequestInput,
   type AcceptMessageRequestOutput,
   type DeliverInput,

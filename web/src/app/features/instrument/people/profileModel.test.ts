@@ -40,8 +40,8 @@ describe("profile submission", () => {
     expect(profileSubmission(older, { revision: 2, fields: { ...older.draft, about: "Edited" } }).fields).toMatchObject({ displayName: "ada", about: "Edited" });
   });
 
-  it("stores a closed profile as invitation-only, which the Kernel enforces the same way", () => {
-    expect(profileSubmission(state(), { revision: 2, fields: { ...fields, contactPolicy: "closed" } }).fields).toMatchObject({ contactPolicy: "invitation" });
+  it("stores a profile closed to requests as the editor shows it", () => {
+    expect(profileSubmission(state(), { revision: 2, fields: { ...fields, contactPolicy: "closed" } }).fields).toMatchObject({ contactPolicy: "closed" });
   });
 
   it("keeps the stored name when no handle is recorded", () => {
@@ -60,9 +60,8 @@ describe("profile visibility", () => {
   it("describes what visitors can do on the live page, not unpublished changes", () => {
     expect(profileVisibility(state())).toBe("private");
     expect(profileVisibility(state({ published: live("requests") }))).toBe("requests");
-    expect(profileVisibility(state({ revision: 3, draft: { ...fields, contactPolicy: "invitation" }, published: live("requests") }))).toBe("requests");
-    expect(profileVisibility(state({ revision: 3, draft: fields, published: live("invitation") }))).toBe("invitation");
-    expect(profileVisibility(state({ published: live("closed") }))).toBe("invitation");
+    expect(profileVisibility(state({ revision: 3, draft: { ...fields, contactPolicy: "closed" }, published: live("requests") }))).toBe("requests");
+    expect(profileVisibility(state({ revision: 3, draft: fields, published: live("closed") }))).toBe("closed");
   });
 });
 

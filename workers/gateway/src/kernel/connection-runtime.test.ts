@@ -176,7 +176,6 @@ describe("ConnectionRuntime contact notifications", () => {
     ["sched.changed", "sched.list"],
     ["notify.rule.changed", "notify.rule.list"],
     ["event.source.changed", "event.source.list"],
-    ["contact.invite.changed", "contact.invite.list"],
     ["contact.request.changed", "contact.request.list"],
   ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {
     const socket = (uid = 1000, calls = [call], signals = [signal], kind: "human" | "machine" = "human", step: KernelConnectionState["step"] = "connected") => fakeSocket({

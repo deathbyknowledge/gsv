@@ -9,7 +9,8 @@ export type WelcomeState = {
   challenge: { id: string; email: string; browserSecret: string } | null;
   operationId: string | null;
   handle: string | null;
-  contactInvite?: string | null;
+  /** The `invite` value of the invitation link that brought the person here, until their Ship opens. */
+  invite?: string | null;
   /** The slugs the signup link carried: the website's placement and example, and the campaign tags; reported when the Ship is reserved. */
   attribution?: SignupAttribution | null;
 };
@@ -129,7 +130,7 @@ export class OwnerWelcome {
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
     const change: Partial<WelcomeState> = { flow: "open", challenge: null, operationId: null, handle: null };
-    if (this.state.contactInvite !== undefined) change.contactInvite = null;
+    if (this.state.invite !== undefined) change.invite = null;
     await this.save(change);
   }
 

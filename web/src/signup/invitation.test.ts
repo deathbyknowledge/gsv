@@ -1,31 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { OwnerWelcome, type WelcomeSnapshot } from "../app/services/session/ownerWelcome";
-import { captureContactInvitation } from "./invitation";
-import { encodeContactInvitation } from "@humansandmachines/gsv/protocol";
-import { signupDestination } from "./navigation";
+import { captureInvite } from "./invitation";
 
 const origin = "https://accounts.example.com";
-describe("signup contact handoff", () => {
-  it("restores the contact after browser restart while retaining the signup operation", async () => {
+describe("signup invitation handoff", () => {
+  it("restores the invitation after browser restart while retaining the signup operation", async () => {
     let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
     const storage = { save: async (_revision: string, value: WelcomeSnapshot["value"]) => snapshot = { revision: "saved", value } };
-    const contact = encodeContactInvitation({ version: 2, did: "did:plc:sponsoraaaaaaaaaaaaaaaaa", handle: "sponsor.example",
-      name: "Sponsor", token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
     const first = new OwnerWelcome(snapshot, storage, origin);
-    await captureContactInvitation(first, contact);
+    await captureInvite(first, "esteve");
     await first.save({ operationId: "signup-operation" });
     const reopened = new OwnerWelcome(snapshot, storage, origin);
-    const restored = await captureContactInvitation(reopened, null);
-    const destination = new URL(signupDestination("https://friend.example", `onboard_${"x".repeat(43)}`, { contact: restored }));
-    expect(new URLSearchParams(destination.hash.slice(1)).get("contact")).toBe(contact);
+    expect(await captureInvite(reopened, null)).toBe("esteve");
     expect(reopened.state.operationId).toBe("signup-operation");
+    // A link's own invitation replaces the one kept.
+    expect(await captureInvite(reopened, "ada")).toBe("ada");
+    expect(reopened.state.invite).toBe("ada");
   });
-  it("keeps browser contact state out of an ordinary Desktop welcome record", async () => {
+  it("keeps browser invitation state out of an ordinary Desktop welcome record", async () => {
     const client = new OwnerWelcome({ revision: "initial", value: null }, {
       save: async (_revision, value) => ({ revision: "saved", value }),
     }, origin);
     await client.save({ flow: "create", operationId: "signup-operation" });
     await client.completeCreation();
-    expect(client.state).not.toHaveProperty("contactInvite");
+    expect(client.state).not.toHaveProperty("invite");
   });
 });

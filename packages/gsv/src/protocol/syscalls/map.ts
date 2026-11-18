@@ -319,14 +319,6 @@ import type {
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
-  ContactInviteAcceptArgs,
-  ContactInviteAcceptResult,
-  ContactInviteCancelArgs,
-  ContactInviteCancelResult,
-  ContactInviteCreateArgs,
-  ContactInviteCreateResult,
-  ContactInviteListArgs,
-  ContactInviteListResult,
   ContactDeliveryListArgs,
   ContactDeliveryListResult,
   ContactDeliveryRetryArgs,
@@ -432,10 +424,6 @@ export type SyscallDomains = {
   "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
   "approach.report": { args: ApproachReportArgs; result: ApproachResult };
 
-  "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
-  "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };
-  "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
-  "contact.invite.cancel": { args: ContactInviteCancelArgs; result: ContactInviteCancelResult };
   "contact.list": { args: ContactListArgs; result: ContactListResult };
   "contact.notice.dismiss": { args: ContactNoticeDismissArgs; result: ContactNoticeDismissResult };
   "contact.preferences.update": { args: ContactPreferencesUpdateArgs; result: ContactPreferencesUpdateResult };

@@ -14,7 +14,7 @@ import type { KernelContext } from "./context";
 import { requireContactCaller } from "./federation/authority";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 
-const CONTACT_KINDS = ["contact.request", "contact.message", "contact.invite.accepted"] as const satisfies readonly NoticeKind[];
+const CONTACT_KINDS = ["contact.request", "contact.message"] as const satisfies readonly NoticeKind[];
 const SOURCE_KINDS = ["mail.received", "machine.added", "adapter.connected", "adapter.auth_required"] as const satisfies readonly NoticeKind[];
 const NOTICE_KINDS = [...CONTACT_KINDS, ...SOURCE_KINDS] as const satisfies readonly NoticeKind[];
 

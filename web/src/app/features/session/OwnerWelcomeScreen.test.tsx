@@ -61,7 +61,7 @@ describe("owner welcome", () => {
   });
 
   it.each([false, true])("offers signup only to a friend without an existing Space (existing: %s)", async (existing) => {
-    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null, contactInvite: "friend-invitation" });
+    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null, invite: "alice" });
     const fetcher = vi.fn(async (_url: string) => session([], existing ? [{ handle: "friend", canonicalOrigin: "https://friend.example.com", state: "active" }] : []));
     const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
     const root = createTestRoot("Friend joins or connects");
@@ -116,7 +116,7 @@ describe("owner welcome", () => {
   });
 
   it.each([false, true])("shows the invitation before signup and preserves it when switching accounts (friend: %s)", async (friend) => {
-    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null, contactInvite: friend ? "friend-invitation" : null });
+    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null, invite: friend ? "alice" : null });
     const fetcher = vi.fn(async (url: string) => {
       if (url.endsWith("/logout")) return Response.json({ ok: true });
       if (url.endsWith("/session")) return session([], friend ? [{ handle: "friend", canonicalOrigin: "https://friend.example.com", state: "active" }] : []);
@@ -149,7 +149,7 @@ describe("owner welcome", () => {
       }
       await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Sign out")?.props.onClick?.(); });
       await vi.waitFor(() => expect(client.state.sessionSecret).toBeNull());
-      expect(client.state.contactInvite ?? null).toBe(friend ? "friend-invitation" : null);
+      expect(client.state.invite ?? null).toBe(friend ? "alice" : null);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       // Signed out, a friend signs in first; anyone else claims a handle and enters their email together.
       await vi.waitFor(() => expect(fieldOf(tree, "Email")).toBeDefined());

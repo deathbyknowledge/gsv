@@ -36,7 +36,7 @@ const PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.test", legacyDomains
 const ROOT = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
 /** The WhatsApp identity the person has linked to their account. */
 const MESSENGER = { adapter: "whatsapp", accountId: "primary", actorId: "wa:+123" };
-const NO_PUBLIC_PROFILE = "A private invitation does not require a public profile";
+const NO_PUBLIC_PROFILE = "No public profile is available at this address";
 // Each picture's CID as the repository names it (CIDv1, raw, SHA-256), computed with @atcute/cid.
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 const PNG_CID = "bafkreibbrlmfuiz676bjmgfgqznlnajcfnzuyywtlizlh2v5lq35rfc7qy";
@@ -70,9 +70,9 @@ describe("publishing the profile record", () => {
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
       expect(ownerDisplayName(OWNER.uid, ctx)).toBe(DRAFT.displayName);
       // Later edits stay private until they are published.
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Private revision", contactPolicy: "invitation" } }, ctx);
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Private revision", contactPolicy: "closed" } }, ctx);
       expect(handleProfileGet(ctx).profile).toMatchObject({
-        revision: 2, draft: { about: "Private revision", contactPolicy: "invitation" }, published: { revision: 1, contactPolicy: "requests" },
+        revision: 2, draft: { about: "Private revision", contactPolicy: "closed" }, published: { revision: 1, contactPolicy: "requests" },
       });
       expect(await publicProfileProjection(ctx)).toEqual({ url: PROFILE_URL, handle: "local", cid: "bafyrecord1", record });
     });
@@ -701,7 +701,7 @@ describe("the owner's profile at sign-in", () => {
     });
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
       await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
       await ensurePublishedProfile(OWNER.uid, ctx);
@@ -752,7 +752,7 @@ describe("the owner's profile at sign-in", () => {
         blueskyPut({ displayName: "Signed name", description: "Signed about" }),
       ]);
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Private draft" }, published: { revision: 2, contactPolicy: "invitation" } });
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Private draft" }, published: { revision: 2, contactPolicy: "closed" } });
       expect(ctx.profiles.pendingPublication(OWNER.uid)).toBeNull();
       await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
@@ -837,8 +837,9 @@ describe("reading another Ship's profile", () => {
       record = { ...record, contactPolicy: "everyone" };
       expect((await handleProfileResolve({ address: "@alice" }, ctx)).profile.contactPolicy).toBe("closed");
       const { about: _about, ...unwritten } = record;
+      // Earlier Ships wrote "invitation" for a profile that took only invited people.
       record = { ...unwritten, contactPolicy: "invitation" };
-      expect((await handleProfileResolve({ address: "@alice" }, ctx)).profile).toMatchObject({ about: "", contactPolicy: "invitation" });
+      expect((await handleProfileResolve({ address: "@alice" }, ctx)).profile).toMatchObject({ about: "", contactPolicy: "closed" });
     });
   });
 

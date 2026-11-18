@@ -180,147 +180,6 @@ describe("FederationStore", () => {
     });
   });
 
-  it("lists invitation metadata and records explicit cancellation", async () => {
-    await withStore((store) => {
-      const pending = store.createInvite({
-        ownerUid: 1000,
-        tokenHash: "pending-token",
-        expiresAtMs: 20_000,
-        now: 1_000,
-      });
-      store.createInvite({
-        ownerUid: 2000,
-        tokenHash: "other-owner-token",
-        expiresAtMs: 20_000,
-        now: 2_000,
-      });
-
-      expect(store.listInvites(1000, false, 3_000)).toEqual([pending]);
-      const cancelled = store.cancelInvite(pending.inviteId, 1000, 4_000);
-      expect(cancelled).toMatchObject({ inviteId: pending.inviteId, cancelledAtMs: 4_000 });
-      expect(store.listInvites(1000, false, 5_000)).toEqual([]);
-      expect(store.listInvites(1000, true, 5_000)).toEqual([cancelled]);
-      expect(() => store.cancelInvite(pending.inviteId, 2000, 6_000))
-        .toThrow(`Contact invite not found: ${pending.inviteId}`);
-
-      const consumable = store.createInvite({
-        ownerUid: 1000,
-        tokenHash: "consumable-token",
-        expiresAtMs: 20_000,
-        now: 1_000,
-      });
-      expect(store.acceptInvite({
-        tokenHash: consumable.tokenHash,
-        remoteDid: REMOTE_DID,
-        contactId: "contact:accepted",
-        generation: "generation:accepted",
-        threadId: "thread:accepted",
-        now: 2_000,
-      })).toBe(true);
-      expect(store.acceptInvite({
-        tokenHash: consumable.tokenHash,
-        remoteDid: "did:plc:otheraaaaaaaaaaaaaaaaaaa",
-        contactId: "contact:other",
-        generation: "generation:other",
-        threadId: "thread:other",
-        now: 3_000,
-      })).toBe(false);
-      expect(store.invite(consumable.inviteId)).toMatchObject({
-        state: "accepted",
-        acceptedContactId: "contact:accepted",
-        acceptedRemoteDid: REMOTE_DID,
-        acceptedGeneration: "generation:accepted",
-        acceptedThreadId: "thread:accepted",
-      });
-    });
-  });
-
-  it("persists one current pairing attempt before it can commit a contact", async () => {
-    await withStore((store) => {
-      const firstInput = {
-        shipHandlesMessages: true,
-        tokenHash: "pairing:first",
-        ownerUid: 1000,
-        expiresAtMs: 20_000,
-        remoteDid: REMOTE_DID,
-        now: 1_000,
-      };
-      expect(store.beginPairingAttempt(firstInput)).toMatchObject({
-        shipHandlesMessages: true,
-        state: "pending",
-        tokenHash: firstInput.tokenHash,
-        remoteDid: REMOTE_DID,
-      });
-      expect(() => store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: false })).toThrow("different handling choice");
-      expect(store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: undefined }).shipHandlesMessages).toBe(true);
-      expect(() => store.beginPairingAttempt({
-        ...firstInput,
-        remoteDid: "did:plc:changedaaaaaaaaaaaaaaaaa",
-      })).toThrow("identity changed");
-      expect(store.beginPairingAttempt({
-        ...firstInput,
-        tokenHash: "pairing:second",
-        now: 2_000,
-      })).toMatchObject({ state: "pending", tokenHash: "pairing:second" });
-      expect(store.pairingAttempt(firstInput.tokenHash)).toMatchObject({
-        state: "terminal",
-        terminalReason: "superseded",
-      });
-      expect(() => store.commitPairingAttempt({
-        tokenHash: firstInput.tokenHash,
-        contactId: "contact:first",
-        generation: "generation:first",
-        threadId: "thread:first",
-      })).toThrow("terminal");
-
-      const committed = store.commitPairingAttempt({
-        tokenHash: "pairing:second",
-        contactId: "contact:second",
-        generation: "generation:second",
-        threadId: "thread:second",
-        now: 3_000,
-      });
-      expect(committed).toMatchObject({
-        state: "committed",
-        contactId: "contact:second",
-        generation: "generation:second",
-      });
-      expect(store.commitPairingAttempt({
-        tokenHash: "pairing:second",
-        contactId: "contact:second",
-        generation: "generation:second",
-        threadId: "thread:second",
-        now: 4_000,
-      })).toEqual(committed);
-      expect(() => store.commitPairingAttempt({
-        tokenHash: "pairing:second",
-        contactId: "contact:second",
-        generation: "generation:changed",
-        threadId: "thread:second",
-      })).toThrow("changed");
-      store.beginPairingAttempt({
-        ...firstInput,
-        tokenHash: "pairing:rejected",
-        now: 5_000,
-      });
-      expect(store.terminatePairingAttempt(
-        "pairing:rejected",
-        "remote-rejected:410",
-        6_000,
-      )).toMatchObject({
-        state: "terminal",
-        terminalReason: "remote-rejected:410",
-        updatedAtMs: 6_000,
-      });
-      expect(() => store.commitPairingAttempt({
-        tokenHash: "pairing:rejected",
-        contactId: "contact:rejected",
-        generation: "generation:rejected",
-        threadId: "thread:rejected",
-      })).toThrow("terminal");
-    });
-  });
-
   it("revokes contact grants and active requests", async () => {
     await withStore((store) => {
       const contact = activateContact(store);
@@ -760,12 +619,6 @@ describe("FederationStore", () => {
         now: 1_000,
       }).record;
       store.markDeliverySucceeded(settled.deliveryId, settled.contactGeneration, 2_000);
-      store.createInvite({
-        ownerUid: 1000,
-        tokenHash: "expired-token",
-        expiresAtMs: 2_000,
-        now: 1_000,
-      });
 
       expect(store.recoverableOutbox(10).map((record) => record.deliveryId))
         .toEqual([pending.deliveryId, preparing.deliveryId]);
@@ -804,7 +657,6 @@ describe("FederationStore", () => {
       expect(store.outbox(pending.deliveryId)?.state).toBe("pending");
       expect(store.outbox(preparing.deliveryId)?.state).toBe("pending");
       expect(store.outbox(settled.deliveryId)).toBeNull();
-      expect(store.inviteByTokenHash("expired-token")).toBeNull();
     });
   });
 });

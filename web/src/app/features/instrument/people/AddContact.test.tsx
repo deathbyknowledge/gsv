@@ -23,7 +23,7 @@ const onChange = vi.fn();
 const onOpen = vi.fn();
 
 function Harness({ draft, busy = false }: { draft: ApproachDraft; busy?: boolean }) {
-  tree = AddContact({ account, draft, busy, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn(), onHaveInvitation: vi.fn() });
+  tree = AddContact({ account, draft, busy, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn() });
   return null;
 }
 

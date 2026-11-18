@@ -24,7 +24,6 @@ import {
 } from "./federation";
 import * as personalController from "./personal-controller";
 import { contactHandlingChoice } from "./federation/authority";
-import { handleContactInviteAccept, handleContactInviteCancel, handleContactInviteCreate } from "./federation/invitations";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -45,16 +44,13 @@ describe("federation outbound boundary", () => {
     const limited = focusedContext({});
     const ship = focusedContext({ processId: "proc:ship", peer: testPeer({ account: OWNER, calls: ["*"] }),
       procs: focusedFixture({ get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }) }) });
-    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
-    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
+    expect(() => contactHandlingChoice(true, limited)).toThrow("contact.preferences.update");
     expect(contactHandlingChoice(true, ship)).toBe(true);
     expect(contactHandlingChoice(false, ship)).toBe(false);
-    await expect(handleContactInviteCreate({}, ship)).rejects.toThrow("Ask the owner");
-    await expect(handleContactInviteAccept({ code: "unused" }, ship)).rejects.toThrow("Ask the owner");
+    expect(() => contactHandlingChoice(undefined, ship)).toThrow("Ask the owner");
     expect(() => contactHandlingChoice(true, { ...ship, peer: limited.peer })).toThrow("contact.preferences.update");
     const crew = { ...ship, procs: focusedFixture<KernelContext["procs"]>({ get: () => ({ isPersonalController: false, ownerUid: OWNER.uid }) }) };
-    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, crew)).rejects.toThrow("signed-in human or their Ship");
-    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, crew)).rejects.toThrow("signed-in human or their Ship");
+    expect(() => contactHandlingChoice(true, crew)).toThrow("signed-in human or their Ship");
   });
 
   it.each([
@@ -119,25 +115,6 @@ describe("federation outbound boundary", () => {
     setAlias.mockImplementation(() => { throw new Error("write failed"); });
     expect(() => handleContactAliasSet({ contactId: contact.id, alias: "New name" }, ctx)).toThrow("write failed");
     expect(broadcastToUserUid).toHaveBeenCalledOnce();
-  });
-
-  it("notifies invitation cancellation once, after the saved transition", () => {
-    let state: "issued" | "cancelled" = "issued";
-    const broadcastToUserUid = vi.fn();
-    const ctx = focusedContext({
-      federation: focusedFixture({
-        invite: () => ({ state }),
-        cancelInvite: () => {
-          state = "cancelled";
-          return { inviteId: "invite:test", state, createdAtMs: 0, cancelledAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };
-        },
-      }),
-      broadcastToUserUid,
-    });
-    broadcastToUserUid.mockImplementation(() => expect(state).toBe("cancelled"));
-    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
-    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
-    expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.invite.changed");
   });
 
   it("reports a terminal idempotent delivery as failed", async () => {

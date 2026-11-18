@@ -2,7 +2,7 @@ import { z } from "zod/mini";
 import { PROFILE_AVATAR_MIME_TYPES } from "../generated/ship-lexicons";
 
 /** What visitors may do: send a message request, ask for an invitation, or nothing. */
-export type ProfileContactPolicy = "requests" | "invitation" | "closed";
+export type ProfileContactPolicy = "requests" | "closed";
 
 export type ProfileFields = {
   displayName: string;
@@ -73,7 +73,7 @@ export type ProfileAvatarReadResult = ProfileAvatar;
 export const profileFieldsSchema = z.strictObject({
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   about: z.string().check(z.maxLength(2_048)),
-  contactPolicy: z.enum(["requests", "invitation", "closed"]),
+  contactPolicy: z.enum(["requests", "closed"]),
 }) satisfies z.ZodMiniType<ProfileFields>;
 
 /** Where a Ship keeps its public profile: one record in its repository. */
@@ -91,5 +91,5 @@ export { shipProfileRecordSchema } from "../generated/ship-lexicons";
 
 /** What a record's contact policy lets visitors do; a value this Ship doesn't know reads as closed. */
 export function profileContactPolicy(value: string): ProfileContactPolicy {
-  return value === "requests" || value === "invitation" ? value : "closed";
+  return value === "requests" ? value : "closed";
 }

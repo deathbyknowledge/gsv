@@ -54,8 +54,6 @@ describe("contacts from before DIDs", () => {
       expect(contact?.revokedAtMs).toBeGreaterThan(2);
       expect(sql.exec("SELECT resource_id FROM federation_resource_grants").toArray()).toEqual([]);
       expect(store.outbox("delivery:out")).toBeNull();
-      // Codes issued before DIDs lapse.
-      expect(store.invite("invite:old")).toBeNull();
       expect(storageBeforeDids(sql)).toEqual([]);
     });
   });

@@ -43,7 +43,6 @@ describe("contact policy authority", () => {
         idempotencyKey: "key:queued", fingerprint: "hash:queued", payload,
       });
       store.receive({ contactId: contact.id, contactGeneration: contact.generation, deliveryId: "delivery:pending", payload, payloadHash: "hash:pending" });
-      store.beginPairingAttempt({ tokenHash: "token:pending", ownerUid: OWNER.uid, remoteDid: did, expiresAtMs: Date.now() + 60_000 });
       const grant = store.createGrant({
         contactId: contact.id, contactGeneration: contact.generation, sourceUid: OWNER.uid,
         source: { type: "resource", ref: { type: "file", target: "gsv", path: "/file.txt", revision: "revision:one", size: 4, contentType: "text/plain" } },
@@ -62,7 +61,6 @@ describe("contact policy authority", () => {
       expect(store.outbox("delivery:queued")?.state).toBe("terminal");
       expect(store.inbox(contact.id, contact.generation, "delivery:pending")?.state).toBe("rejected");
       expect(store.grant(grant.id)).toBeNull();
-      expect(store.pairingAttempt("token:pending")).toMatchObject({ state: "terminal", terminalReason: "actor-blocked" });
       await handleContactBlockSet({ did, blocked: false }, ctx);
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: false });
       expect(store.outbox("delivery:queued")?.state).toBe("terminal");

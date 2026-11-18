@@ -50,10 +50,10 @@ If creation is interrupted, retry with the same handle to resume that activation
 While activation completes, **Opening Ship** cycles through three, two, one and
 no dots. With reduced motion enabled, the three dots stay still.
 
-A friend's invitation link opens an invitation modal on the signup page. Continue
-and verify your email; existing users choose their Ship, while new users choose a
-handle and finish activation. The invitation stays with you through activation; accept it
-in People after choosing who handles incoming messages.
+A friend's invitation link opens signup with their name on it. Verify your email
+and choose a handle; when your Ship opens, People has a message request to them
+ready to send. If you already have a Ship, choose **Already have a Ship?** and sign
+in to send the same request from there. They accept it in their People.
 
 If activation is interrupted or its link expires, opening the unfinished Ship shows
 **Continue activation**. Sign in with the same email and select **Continue** beside its
@@ -171,7 +171,7 @@ separate from Chat's typed text and attachments. These preferences stay on that 
 **voice** panel keeps the recording controls and a link to those settings.
 
 Open **People** to try making plans or working together with someone on Ship.
-**connect** creates a shareable invitation; accepting it opens your conversation.
+**Invite** shows your invitation link, which anyone can use to send you a message request; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
 A dot beside **people** marks waiting activity, and Chat shows unread conversations
 and message requests above the prompt, including after a reload. See

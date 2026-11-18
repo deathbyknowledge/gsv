@@ -52,13 +52,11 @@ const RECEIVED = cases({ state: "received" }, [
 ]);
 
 export const SHIP_WIRE_FIXTURES = {
-  acceptInvitationInputSchema: cases({ token: "token-1", name: "Alice" }, [
-    ["a token and a name", {}, accept],
-    ["an empty token", { token: "" }, refuse],
-    ["a token of 128 characters", { token: x(128) }, accept],
-    ["a token of 129 characters", { token: x(129) }, refuse],
-    ["a token of 64 two-byte letters", { token: ACCENT.repeat(64) }, accept],
-    ["a token of 65 two-byte letters, 130 bytes", { token: ACCENT.repeat(65) }, refuse],
+  acceptMessageRequestInputSchema: cases({ requestId: "request-1", name: "Alice" }, [
+    ["a request and a name", {}, accept],
+    ["an empty request", { requestId: "" }, refuse],
+    ["a request of 128 characters", { requestId: x(128) }, accept],
+    ["a request of 129 characters", { requestId: x(129) }, refuse],
     ["an empty name", { name: "" }, refuse],
     ["a name of 256 characters", { name: x(256) }, accept],
     ["a name of 257 characters", { name: x(257) }, refuse],
@@ -71,28 +69,6 @@ export const SHIP_WIRE_FIXTURES = {
     ["a name of 129 letters with combining accents", { name: COMBINED.repeat(129) }, refuse],
     ["a name that isn't text", { name: 1 }, refuse],
     ["no name", { name: undefined }, refuse],
-    ["a field the method doesn't declare", { extra: true }, drop],
-  ]),
-  acceptInvitationOutputSchema: cases({ name: "Bob", generation: "generation-1", threadId: "thread-1" }, [
-    ["a name, generation and thread", {}, accept],
-    ["an empty generation", { generation: "" }, refuse],
-    ["a generation of 128 characters", { generation: x(128) }, accept],
-    ["a generation of 129 characters", { generation: x(129) }, refuse],
-    ["a generation of 65 two-byte letters, 130 bytes", { generation: ACCENT.repeat(65) }, refuse],
-    ["a thread of 129 characters", { threadId: x(129) }, refuse],
-    ["a name of 128 emoji", { name: EMOJI.repeat(128) }, accept],
-    ["a name of 257 characters", { name: x(257) }, refuse],
-    ["no thread", { threadId: undefined }, refuse],
-    ["a field the method doesn't declare", { extra: true }, drop],
-  ]),
-  acceptMessageRequestInputSchema: cases({ requestId: "request-1", name: "Alice" }, [
-    ["a request and a name", {}, accept],
-    ["an empty request", { requestId: "" }, refuse],
-    ["a request of 128 characters", { requestId: x(128) }, accept],
-    ["a request of 129 characters", { requestId: x(129) }, refuse],
-    ["a name of 256 characters", { name: x(256) }, accept],
-    ["a name of 257 characters", { name: x(257) }, refuse],
-    ["a name of 129 emoji", { name: EMOJI.repeat(129) }, refuse],
     ["a field the method doesn't declare", { extra: true }, drop],
   ]),
   acceptMessageRequestOutputSchema: cases({ generation: "generation-1", threadId: "thread-1" }, [

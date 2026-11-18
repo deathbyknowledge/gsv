@@ -44,7 +44,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
     </div>
     {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>{t("people.compose.openExisting")}</button>
-      : profile.contactPolicy !== "requests" ? <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>
+      : profile.contactPolicy !== "requests" ? <p class="people-note">{t("people.compose.closed")}</p>
       : <form class="people-form" onSubmit={(event) => {
         event.preventDefault();
         if (!canSend || !valid || busy) return;

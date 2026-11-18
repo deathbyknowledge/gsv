@@ -6,13 +6,20 @@ describe("browser signup handoff", () => {
     expect(signupHomepage("https://accounts.example.com")).toBe("https://example.com/");
     expect(signupHomepage("http://localhost:1507")).toBeUndefined();
   });
-  it("carries a friend's invitation alongside setup authorization without query credentials", () => {
-    const destination = new URL(signupDestination("https://new.gsv.space", `onboard_${"x".repeat(43)}`, { contact: "contact-invitation" }));
+  it("carries the inviter's profile alongside setup authorization without query credentials", () => {
+    const profile = "https://esteve.ship.space/profile";
+    const destination = new URL(signupDestination("https://new.ship.space", `onboard_${"x".repeat(43)}`, { invite: profile }));
     const fragment = new URLSearchParams(destination.hash.slice(1));
     expect(destination.pathname).toBe("/onboarding");
     expect(destination.search).toBe("?signup=1");
-    expect(fragment.get("contact")).toBe("contact-invitation");
+    expect(fragment.get("invite")).toBe(profile);
     expect(fragment.get("onboarding")).toBe(`onboard_${"x".repeat(43)}`);
+  });
+  it("opens a request to the inviter on an existing Ship, as their profile page does", () => {
+    const destination = new URL(signupDestination("https://ada.ship.space", null, { invite: "https://esteve.ship.space/profile" }));
+    expect(destination.pathname).toBe("/people");
+    expect(destination.searchParams.get("compose")).toBe("https://esteve.ship.space/profile");
+    expect(destination.hash).toBe("");
   });
   it("carries setup authority only in the existing onboarding fragment", () => {
     const token = `onboard_${"x".repeat(43)}`;

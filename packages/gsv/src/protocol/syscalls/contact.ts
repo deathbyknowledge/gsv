@@ -70,59 +70,6 @@ export type ContactSummary = {
   blocked?: boolean;
 };
 
-export type ContactInviteCreateArgs = {
-  expiresInSeconds?: number;
-  /** Owner's choice for the new contact. Ship must supply it; older human clients may omit it. */
-  shipHandlesMessages?: boolean;
-};
-
-export type ContactInviteCreateResult = {
-  inviteId: string;
-  code: string;
-  /** Shareable link; older gateways return only the equivalent code. */
-  url?: string;
-  expiresAtMs: number;
-};
-
-export type ContactInviteAcceptArgs = {
-  code: string;
-  /** Owner's choice, retained for retries of this acceptance. Ship must supply it. */
-  shipHandlesMessages?: boolean;
-};
-
-export type ContactInviteAcceptResult = {
-  contact: ContactSummary;
-};
-
-export type ContactInviteState = "pending" | "accepted" | "expired" | "cancelled";
-
-export type ContactInviteSummary = {
-  inviteId: string;
-  state: ContactInviteState;
-  expiresAtMs: number;
-  createdAtMs: number;
-  cancelledAtMs?: number;
-  acceptedAtMs?: number;
-  contactId?: string;
-  remoteDid?: string;
-};
-
-export type ContactInviteListArgs = {
-  includeTerminal?: boolean;
-};
-
-export type ContactInviteListResult = {
-  invites: ContactInviteSummary[];
-};
-
-export type ContactInviteCancelArgs = {
-  inviteId: string;
-};
-
-export type ContactInviteCancelResult = {
-  invite: ContactInviteSummary;
-};
-
 export type ContactListArgs = {
   includeRevoked?: boolean;
 };

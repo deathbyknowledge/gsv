@@ -124,7 +124,7 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
         : profile.contactPolicy === "requests" ? maySendRequest
           ? <button class="people-action is-accent" disabled={busy} onClick={() => onCompose(profile)}>{t("people.search.sendRequest")}</button>
           : <p class="people-note">{t("people.compose.noSend")}</p>
-        : <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>}
+        : <p class="people-note">{t("people.compose.closed")}</p>}
     </div>}
     {wantsProfile && lookup.missing && <p class="people-note people-search-note">{t("people.search.noProfile", { handle: query.trim().replace(/^@?/, "@") })}</p>}
     {wantsProfile && lookup.error && !lookup.missing && <p class="people-error people-search-note" role="alert">{lookup.error.message}</p>}
