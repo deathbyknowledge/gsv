@@ -47,7 +47,7 @@ it("tells a revoked sender how to connect and replaces the route only after a ne
   expect((await SELF.fetch(update(501, "__identity_revoked__"))).status).toBe(200);
   await vi.waitFor(async () => {
     const messages = (await telegramMessages()).slice(before).filter((message) => message.body.text);
-    expect(messages.map((message) => message.body.text)).toEqual([expect.stringContaining("Already have a Ship? Ask it how to connect.")]);
+    expect(messages.map((message) => message.body.text)).toEqual([expect.stringContaining("Already have a Ship? Just tell it “connect my Telegram”")]);
   }, { timeout: 3_000 });
   await runInDurableObject(peer, async (_instance, state) => {
     expect(await state.storage.get("managed_telegram_peer:v1:state")).toMatchObject({ activeRoute: previousRoute });

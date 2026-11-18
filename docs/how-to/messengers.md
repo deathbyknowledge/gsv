@@ -84,7 +84,7 @@ it can't see, and it asks rather than guesses.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the bot without a
-connection gets a reminder to ask your Ship how to connect, and, when the
+connection is told to ask your Ship to connect Telegram, which sends you its link, and, when the
 operator offers signup, a link to create a Ship.
 
 If your Telegram account talks to another Ship, the bot asks whether to **Move
@@ -179,7 +179,7 @@ Platform. You message that number from your own WhatsApp account.
 
 The code connects only to the Ship that made it, for the person signed in there.
 If the link expires, choose **Make a new link**. Messaging the Ship number
-without a connection gets a reminder to ask your Ship how to connect (with a
+without a connection is told to ask your Ship to connect WhatsApp, which sends you its link (with a
 link to create a Ship when the operator offers signup), and a number
 that talks to another Ship is asked there whether to **Move it** or **Keep it**.
 
