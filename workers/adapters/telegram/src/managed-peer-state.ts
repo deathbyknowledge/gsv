@@ -18,6 +18,8 @@ export type ManagedTelegramPeerState = {
   surfaceId: string;
   actorName?: string;
   actorHandle?: string;
+  /** The language of the sender's Telegram app at their latest message, for replies sent without one. */
+  language?: string;
   activeRoute?: ManagedTelegramPeerRoute;
   pairing?: ManagedTelegramPairingState;
   /** A link from another Ship that this linked sender sent, waiting for them to move or keep. */
@@ -56,6 +58,7 @@ export function bindManagedTelegramPeerIdentity(
     surfaceId: inbound.surfaceId,
     actorName: inbound.actorName ?? state?.actorName,
     actorHandle: inbound.actorHandle ?? state?.actorHandle,
+    language: inbound.language ?? state?.language,
     activeRoute: state?.activeRoute,
     pairing: state?.pairing,
     linkMove: state?.linkMove,

@@ -8,11 +8,12 @@ import { z } from "zod";
 const MAX_TEXT_LENGTH = 16_384;
 const MAX_DISPLAY_NAME_LENGTH = 160;
 const MAX_HANDLE_LENGTH = 64;
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$/;
 
 const telegramManagedMessageSchema = z.object({
   message_id: z.number(), date: z.number(),
   chat: z.object({ id: z.number(), type: z.string() }).passthrough(),
-  from: z.object({ id: z.number(), is_bot: z.boolean(), first_name: z.string().optional(), last_name: z.string().optional(), username: z.string().optional() }).passthrough(),
+  from: z.object({ id: z.number(), is_bot: z.boolean(), first_name: z.string().optional(), last_name: z.string().optional(), username: z.string().optional(), language_code: z.string().optional() }).passthrough(),
   reply_to_message: z.object({ message_id: z.number() }).passthrough().optional(),
 }).passthrough();
 const telegramManagedCallbackSchema = z.object({
@@ -51,6 +52,8 @@ export type ManagedTelegramInbound = {
   surfaceId: string;
   actorName?: string;
   actorHandle?: string;
+  /** The IETF language tag of the sender's Telegram app, when Telegram reports it. */
+  language?: string;
   text: string;
   media?: TelegramInboundMediaSource[];
   replyToId?: string;
@@ -128,6 +131,7 @@ export function normalizeManagedTelegramUpdate<T>(
   const timestamp = nonNegativeTimestamp(message.date);
   const actorName = displayName(from.first_name, from.last_name);
   const actorHandle = handle(from.username);
+  const language = from.language_code && LANGUAGE_TAG.test(from.language_code) ? from.language_code : undefined;
 
   return {
     kind: "accepted",
@@ -139,6 +143,7 @@ export function normalizeManagedTelegramUpdate<T>(
       surfaceId,
       actorName,
       actorHandle,
+      language,
       text: text || "",
       media: content.media.length > 0 ? content.media : undefined,
       replyToId: replyToId ?? undefined,

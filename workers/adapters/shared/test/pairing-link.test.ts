@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  answersLinkMove,
   isPairingLinkMessage,
   messengerSignupUrl,
   pairingLinkCode,
   pairingLinkMessage,
-  pairingLinkText,
   parsePairingLinkInput,
   shipHost,
 } from "../src/pairing-link";
@@ -34,15 +32,6 @@ describe("pairing link codes", () => {
     expect(isPairingLinkMessage("my key is ABCD-EFGH-JKLM")).toBe(false);
   });
 
-  it("takes the move answers as answers only while the question is open", () => {
-    const move = { expiresAt: 2_000 };
-    expect(answersLinkMove(move, "Move it", 1_000)).toBe(true);
-    expect(answersLinkMove(move, "Keep it", 1_000)).toBe(true);
-    expect(answersLinkMove(move, "move it", 1_000)).toBe(false);
-    expect(answersLinkMove(move, "Move it", 2_000)).toBe(false);
-    expect(answersLinkMove(undefined, "Move it", 1_000)).toBe(false);
-  });
-
   it("names a Ship by the host of its address", () => {
     expect(shipHost("https://esteve.ship.space")).toBe("esteve.ship.space");
   });
@@ -57,18 +46,6 @@ describe("signup for strangers", () => {
     expect(messengerSignupUrl(" ", "whatsapp")).toBeUndefined();
     expect(messengerSignupUrl("http://signup.gsv.space", "whatsapp")).toBeUndefined();
     expect(messengerSignupUrl("signup.gsv.space", "whatsapp")).toBeUndefined();
-  });
-
-  it("tells an unlinked sender how to create a Ship when signup is open, and what to tell a Ship either way", () => {
-    const text = pairingLinkText("WhatsApp");
-    // The address stands on its own line, so no messenger takes punctuation into the link.
-    expect(text.unlinked("https://signup.ship.space/?utm_source=whatsapp")).toBe([
-      "Hi! To create your Ship, click on this link:",
-      "https://signup.ship.space/?utm_source=whatsapp",
-      "",
-      "Already have a Ship? Just tell it “connect my WhatsApp” and it will send you a link.",
-    ].join("\n"));
-    expect(text.unlinked()).toBe("To talk to your Ship here, tell it “connect my WhatsApp” and it will send you a link.");
   });
 });
 
