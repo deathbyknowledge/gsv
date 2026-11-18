@@ -105,6 +105,9 @@ import {
 } from "./whatsapp-api";
 import {
   renderWhatsAppText,
+  WHATSAPP_PARTITION,
+  whatsAppPartition,
+  whatsAppPartitionVersion,
   whatsAppPromptMessages,
   whatsAppTextMessages,
 } from "./whatsapp-formatting";
@@ -1139,7 +1142,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: false, error: "WhatsApp delivery ledger unavailable", retryable: true };
     }
     if (!claim.claimed) return claim.result;
-    const legacyGrouping = claim.progress.sent > 0 && (claim.progress.formatVersion ?? 0) === 0;
+    // A delivery that already sent part of itself resumes with the partition it began with.
+    const partition = claim.progress.sent > 0 ? whatsAppPartition(claim.progress.formatVersion) : WHATSAPP_PARTITION;
+    const legacyGrouping = partition === "legacy";
+    const grouping = legacyGrouping || options.splitParagraphs !== false ? partition : null;
 
     const fail: FailDelivery = async (kind, detail, cause) => {
       const error = detail ?? `WhatsApp delivery failed (${kind})`;
@@ -1204,26 +1210,26 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         addPart((index) => send(buildWhatsAppInteractivePayload(to, { ...controls, text: last }), index));
         anchor = parts.length - 1;
       } else if (linkButton) {
-        const bodies = whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping);
+        const bodies = whatsAppTextMessages(text, grouping);
         const last = bodies.at(-1) ?? text;
         const fits = [...last].length <= WHATSAPP_INTERACTIVE_BODY_LIMIT;
         for (const body of fits ? bodies.slice(0, -1) : bodies) addText(body);
         addPart((index) => send(buildWhatsAppLinkPayload(to, fits ? last : linkButton.label, linkButton), index));
       } else if (choices) {
-        const bodies = whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping);
+        const bodies = whatsAppTextMessages(text, grouping);
         // The control rides on the paragraph that asks, which must fit an interactive body.
         const asked = splitTextAtLimit(bodies.at(-1) ?? text, WHATSAPP_INTERACTIVE_BODY_LIMIT);
         for (const body of [...bodies.slice(0, -1), ...asked.slice(0, -1)]) addText(body);
         addPart((index) => send(buildWhatsAppChoicesPayload(to, asked.at(-1) ?? text, choices), index));
       } else if (media.length === 0) {
-        for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
+        for (const body of whatsAppTextMessages(text, grouping)) addText(body);
       } else {
         const rendered = renderWhatsAppText(text);
         const captionOnFirst = Boolean(rendered)
           && whatsAppMediaSupportsCaption(media[0]!.type)
           && whatsAppCaptionFits(rendered);
         if (rendered && !captionOnFirst) {
-          for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
+          for (const body of whatsAppTextMessages(text, grouping)) addText(body);
         }
         const upload = (bytes: Uint8Array, mimeType: string, filename: string) =>
           uploadWhatsAppMedia(token, phoneNumberId, bytes, mimeType, filename, fetcher);
@@ -1253,7 +1259,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
           sent: index + 1,
           messageId: anchorMessageId,
           messageIds,
-          formatVersion: legacyGrouping ? 0 : 1,
+          formatVersion: whatsAppPartitionVersion(partition),
         });
       }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId, messageIds);

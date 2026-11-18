@@ -41,8 +41,19 @@ describe("splitMarkdownParagraphs", () => {
   it("retains the first staging partition only when resuming its receipt", () => {
     const short = "x".repeat(200);
     const markdown = `${short}\n\n${short}\n\n# Heading\n\n${short}`;
-    expect(splitMarkdownParagraphs(markdown, true)).toEqual([`${short}\n\n${short}`, `# Heading\n\n${short}`]);
+    expect(splitMarkdownParagraphs(markdown, "legacy")).toEqual([`${short}\n\n${short}`, `# Heading\n\n${short}`]);
     expect(splitMarkdownParagraphs(markdown)).toEqual([short, short, `# Heading\n\n${short}`]);
+  });
+
+  it("can send a lead paragraph, then the rest together, with each code block alone", () => {
+    const code = "```\nABCD-EFGH-JKLM\n```";
+    expect(splitMarkdownParagraphs("one\n\ntwo\n\nthree\n\nfour", "lead")).toEqual(["one", "two\n\nthree\n\nfour"]);
+    expect(splitMarkdownParagraphs(`one\n\ntwo\n\n${code}\n\nthree\n\nfour`, "lead")).toEqual(["one", "two", code, "three\n\nfour"]);
+    expect(splitMarkdownParagraphs(`one\n\n${code}`, "lead")).toEqual(["one", code]);
+    expect(splitMarkdownParagraphs("one", "lead")).toEqual(["one"]);
+    // A link definition travels once with the group that uses it.
+    expect(splitMarkdownParagraphs("one\n\nsee [a]\n\nand [a] again\n\n[a]: https://a.test", "lead"))
+      .toEqual(["one", "see [a]\n\nand [a] again\n\n[a]: https://a.test"]);
   });
 
   it("keeps fenced code blocks, loose lists, tables and block quotes whole", () => {

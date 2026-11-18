@@ -27,31 +27,44 @@ type LinkDefinition = {
   raw: string;
 };
 
+type MarkdownBlock = {
+  text: string;
+  /** A fenced or indented code block, which a person copies whole. */
+  code: boolean;
+};
+
 type MarkdownBlocks = {
-  blocks: string[];
+  blocks: MarkdownBlock[];
   definitions: LinkDefinition[];
 };
 
 /**
- * Splits Markdown at blank lines into messages. Fenced code blocks, lists,
- * tables and block quotes stay whole even when they contain blank lines.
- * Headings stay with the block they introduce. A reference-style link
- * definition travels with every message that uses it, since each message is
- * rendered on its own later.
+ * How blocks become messages. `each`: every block is its own message. `lead`: the first block
+ * alone, then the rest together, with each code block alone so it copies whole; for platforms
+ * that bill every message. `legacy`: short blocks merged up to 320 code points, only to resume
+ * a delivery partitioned that way before an update.
  */
-export function splitMarkdownParagraphs(markdown: string, legacyGrouping = false): string[] {
-  const { blocks, definitions } = markdownBlocks(markdown, !legacyGrouping);
-  // Resume partially delivered staging messages with exactly their original partition.
-  if (legacyGrouping) {
-    const grouped: string[] = [];
-    for (const block of blocks) {
-      const previous = grouped.at(-1);
-      if (previous !== undefined && codePointLength(previous) < 320) grouped[grouped.length - 1] += `\n\n${block}`;
-      else grouped.push(block);
-    }
-    return grouped.map((block) => withDefinitions(block, definitions));
+export type ParagraphGrouping = "each" | "lead" | "legacy";
+
+/**
+ * Splits Markdown at blank lines into messages, grouped as `grouping` says.
+ * Fenced code blocks, lists, tables and block quotes stay whole even when they
+ * contain blank lines. Headings stay with the block they introduce. A
+ * reference-style link definition travels with every message that uses it,
+ * since each message is rendered on its own later.
+ */
+export function splitMarkdownParagraphs(markdown: string, grouping: ParagraphGrouping = "each"): string[] {
+  const { blocks, definitions } = markdownBlocks(markdown, grouping !== "legacy");
+  const grouped: MarkdownBlock[] = [];
+  for (const [index, block] of blocks.entries()) {
+    const previous = grouped.at(-1);
+    const joins = previous !== undefined && (grouping === "legacy"
+      ? codePointLength(previous.text) < 320
+      : grouping === "lead" && index > 1 && !previous.code && !block.code);
+    if (joins) previous.text += `\n\n${block.text}`;
+    else grouped.push({ ...block });
   }
-  return blocks.map((block) => withDefinitions(block, definitions));
+  return grouped.map((block) => withDefinitions(block.text, definitions));
 }
 
 /**
@@ -101,7 +114,7 @@ export function fitMarkdownToLimit(
   // Definitions are split away first so a cut never lands inside one, then
   // handed back to each piece that references them.
   const { blocks, definitions } = markdownBlocks(markdown);
-  return fitPieces(blocks.join("\n\n"), definitions, render, limit, limit);
+  return fitPieces(blocks.map((block) => block.text).join("\n\n"), definitions, render, limit, limit);
 }
 
 export function codePointLength(text: string): number {
@@ -149,11 +162,11 @@ function markdownBlocks(markdown: string, joinHeadings = true): MarkdownBlocks {
     tokens = lexer(trimmed);
   } catch {
     return {
-      blocks: trimmed.split(/\n[ \t]*\n+/).map((block) => block.trim()).filter(Boolean),
+      blocks: trimmed.split(/\n[ \t]*\n+/).map((block) => block.trim()).filter(Boolean).map((text) => ({ text, code: false })),
       definitions: [],
     };
   }
-  const blocks: string[] = [];
+  const blocks: MarkdownBlock[] = [];
   const definitions: LinkDefinition[] = [];
   let followsHeading = false;
   for (const token of tokens) {
@@ -165,8 +178,8 @@ function markdownBlocks(markdown: string, joinHeadings = true): MarkdownBlocks {
     // Leading spaces belong to indented code; only surrounding blank lines go.
     const raw = token.raw.replace(/^\n+/, "").trimEnd();
     if (!raw) continue;
-    if (followsHeading) blocks[blocks.length - 1] += `\n\n${raw}`;
-    else blocks.push(raw);
+    if (followsHeading) blocks[blocks.length - 1]!.text += `\n\n${raw}`;
+    else blocks.push({ text: raw, code: token.type === "code" });
     followsHeading = joinHeadings && token.type === "heading";
   }
   return { blocks, definitions };

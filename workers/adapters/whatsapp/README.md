@@ -45,10 +45,13 @@ eligibility. The adapter does not enforce or assume a geographic exception.
 
 ## Outbound
 
-- A reply goes out as paragraph messages: the Markdown is split at blank lines
-  by the shared splitter in `workers/adapters/shared/src/paragraph-messages.ts`,
-  headings stay with the following block, and fenced code blocks, lists, tables
-  and quotations stay whole. Short prose paragraphs are separate messages too.
+- Meta bills every message, so a reply goes out as a lead and the rest: the
+  Markdown is split at blank lines by the shared splitter in
+  `workers/adapters/shared/src/paragraph-messages.ts` (`lead` grouping), the
+  first block is one message and the following blocks share a second, with each
+  code block on its own so it copies whole. Headings stay with the following
+  block, and lists, tables and quotations stay whole. A delivery records its
+  partition, so a retry after an update resumes the messages it began with.
   Each message
   is rendered with WhatsApp's own markers and kept within Meta's 4096 character
   limit by splitting the Markdown further and rendering again. Only the first

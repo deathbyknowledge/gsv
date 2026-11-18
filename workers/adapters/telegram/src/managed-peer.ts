@@ -1016,7 +1016,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
  * rich, HTML and plain fallbacks all fit.
  */
 function telegramTextChunks(markdown: string, splitParagraphs = true, legacyGrouping = false): string[] {
-  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping) : [markdown];
+  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping ? "legacy" : "each") : [markdown];
   const chunks = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
       .map((fitted) => fitted.markdown));

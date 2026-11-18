@@ -4,6 +4,7 @@ import {
   fitMarkdownToLimit,
   splitMarkdownParagraphs,
   splitTextAtLimit,
+  type ParagraphGrouping,
 } from "../../shared/src/paragraph-messages";
 
 /** Meta's limit for one free-form text message body. */
@@ -26,11 +27,29 @@ export function renderWhatsAppText(markdown: string): string {
 }
 
 /**
+ * Each delivery records its partition by index, so a retry after an update resumes the
+ * messages it began with. WhatsApp bills every message, so new deliveries send a lead
+ * paragraph and then the rest.
+ */
+const WHATSAPP_PARTITIONS: readonly ParagraphGrouping[] = ["legacy", "each", "lead"];
+export const WHATSAPP_PARTITION: ParagraphGrouping = "lead";
+
+/** The partition a delivery recorded; a version this code does not know reads as the current one. */
+export function whatsAppPartition(formatVersion: number | undefined): ParagraphGrouping {
+  return WHATSAPP_PARTITIONS[formatVersion ?? 0] ?? WHATSAPP_PARTITION;
+}
+
+export function whatsAppPartitionVersion(partition: ParagraphGrouping): number {
+  return WHATSAPP_PARTITIONS.indexOf(partition);
+}
+
+/**
  * Ship's Markdown as the ordered WhatsApp messages it becomes: paragraph
  * groups rendered with WhatsApp's markers, each within the text limit.
+ * Without a grouping the text stays one message unless the limit splits it.
  */
-export function whatsAppTextMessages(markdown: string, splitParagraphs = true, legacyGrouping = false): string[] {
-  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping) : [markdown];
+export function whatsAppTextMessages(markdown: string, grouping: ParagraphGrouping | null = WHATSAPP_PARTITION): string[] {
+  const paragraphs = grouping ? splitMarkdownParagraphs(markdown, grouping) : [markdown];
   const messages = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, renderWhatsAppText, WHATSAPP_TEXT_LIMIT)
       .map((fitted) => fitted.rendered));
@@ -44,7 +63,7 @@ export function whatsAppTextMessages(markdown: string, splitParagraphs = true, l
  * within `limit` code points; the caller attaches the buttons to the last one.
  */
 export function whatsAppPromptMessages(prompt: string, limit: number, legacyGrouping = false): string[] {
-  const paragraphs = legacyGrouping ? splitMarkdownParagraphs(prompt, true) : [prompt];
+  const paragraphs = legacyGrouping ? splitMarkdownParagraphs(prompt, "legacy") : [prompt];
   return paragraphs.flatMap((paragraph) => fitMarkdownToLimit(paragraph, (plain) => plain, limit).map((fitted) => fitted.rendered));
 }
 
