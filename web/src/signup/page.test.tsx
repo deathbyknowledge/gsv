@@ -105,6 +105,23 @@ describe("signup entrypoint recovery", () => {
 });
 
 describe("signup attribution", () => {
+  it("carries saved campaign attribution to new account setup, but not existing-account login", async () => {
+    window.location.href = `${origin}/owner/signup/?utm_content=photo&email=private`;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: "op-1", handle: "new", attribution: { utmSource: "meta", utmCampaign: "launch" } } });
+    const props = await screen();
+    await props.onConnect("https://new.ship.space", `onboard_${"a".repeat(43)}`);
+    const created = new URL(assign.mock.lastCall![0]);
+    expect(created.searchParams.get("utm_source")).toBe("meta");
+    expect(created.searchParams.get("utm_campaign")).toBe("launch");
+    expect(created.searchParams.get("utm_content")).toBe("photo");
+    expect(created.searchParams.has("email")).toBe(false);
+    expect(created.searchParams.get("signup")).toBe("1");
+    expect(created.hash).toContain("onboard_");
+    await props.onConnect("https://existing.ship.space");
+    expect(new URL(assign.mock.lastCall![0]).search).toBe("");
+  });
+
   it("keeps the website's placement and the campaign tags for the reservation and takes them off the URL", async () => {
     window.location.href = `${origin}/?utm_source=Facebook&utm_campaign=launch-nov&utm_content=photo#from=hero&example=plan-a-trip`;
     const props = await screen();

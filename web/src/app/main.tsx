@@ -10,6 +10,10 @@ import { render } from "preact";
 import { App } from "./App";
 import { applyLanguagePreference } from "./i18n/locale";
 
+import { startAcquisition } from "./services/acquisition";
+
+startAcquisition();
+
 const app = document.querySelector<HTMLElement>("#app");
 
 if (!app) {

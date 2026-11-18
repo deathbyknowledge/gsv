@@ -1,3 +1,4 @@
+import { attributedDestination } from "../app/services/acquisition";
 import { Fragment, type VNode } from "preact";
 import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
@@ -61,7 +62,12 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const messenger = signupMessenger(client?.state.attribution?.utmSource);
     const destination = onboardingToken ? signupDestination(origin, onboardingToken, { contact: contactInvitation, messenger })
       : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
-    await leave(destination);
+    // The signup state keeps campaign labels after the visible URL is cleaned.
+    const attribution = client?.state.attribution;
+    const source = new URL(window.location.href);
+    if (attribution?.utmSource) source.searchParams.set("utm_source", attribution.utmSource);
+    if (attribution?.utmCampaign) source.searchParams.set("utm_campaign", attribution.utmCampaign);
+    await leave(onboardingToken ? attributedDestination(destination, source.href) : destination);
   };
   // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
   const Frame = contactInvitation ? SignupDialog : Fragment;
