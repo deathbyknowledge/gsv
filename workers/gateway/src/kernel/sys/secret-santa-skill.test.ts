@@ -54,6 +54,7 @@ class Hat {
   sent: Sent[] = [];
   refuse = new Set<string>();
   states = new Map<string, string>();
+  writeFails = false;
   private readonly source = hatScript();
 
   async run(settings: Settings): Promise<JsonValue> {
@@ -75,6 +76,7 @@ class Hat {
     if (call === "shell.exec") return this.shell(String(args.input));
     if (call === "fs.read") return this.file === null ? { ok: false, error: "not found" } : { ok: true, path: String(args.path), content: this.file };
     if (call === "fs.write") {
+      if (this.writeFails) return { ok: false, error: "disk full" };
       this.file = String(args.content);
       return { ok: true };
     }
@@ -239,6 +241,32 @@ describe.sequential("secret-santa hat script", () => {
       pairs: loop.map((giver, i) => ({ giver, recipient: loop[(i + 1) % loop.length] })),
     });
     await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
+  });
+
+  it("finds a loop when exclusions leave only a few, and says when none exists", async () => {
+    const ring: Person[] = Array.from({ length: 10 }, (_, i) => ({ name: `P${i}`, contact: i === 0 ? "owner" : `c:p${i}` }));
+    const exclude: string[][] = [];
+    for (let i = 0; i < ring.length; i++) {
+      for (let j = i + 1; j < ring.length; j++) {
+        if (j !== i + 1 && !(i === 0 && j === ring.length - 1)) exclude.push([ring[i].contact, ring[j].contact]);
+      }
+    }
+    const hat = new Hat();
+    await hat.run({ people: ring, exclude });
+    const pairs = hat.game.pairs ?? [];
+    expectOneLoop(pairs, ring);
+    for (const { giver, recipient } of pairs) {
+      expect(exclude.some(([a, b]) => [a, b].includes(giver.contact) && [a, b].includes(recipient.contact))).toBe(false);
+    }
+
+    await expect(new Hat().run({ people: PEOPLE.slice(0, 3), exclude: [["owner", "c:bob"]] })).rejects.toThrow("No draw fits");
+  });
+
+  it("sends nothing when the draw cannot be saved", async () => {
+    const hat = new Hat();
+    hat.writeFails = true;
+    await expect(hat.run({ people: PEOPLE, exclude: [] })).rejects.toThrow("Cannot save");
+    expect(hat.sent).toHaveLength(0);
   });
 
   it("stops when the file cannot be read instead of starting over", async () => {

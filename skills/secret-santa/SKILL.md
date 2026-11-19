@@ -57,7 +57,7 @@ r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_I
 - **By email.** `contact invite` prints the organiser's link; it also creates a Ship for someone without one. Write the link and a short note about the event to a file, then `mail send --to ADDRESS --subject SUBJECT --body PATH`.
 - **They ask to join.** A colleague's Ship sends a request or a message saying they are in. Requests are accepted only by the organiser in People: tell them who is waiting, never accept for them.
 - Everyone the organiser invites goes in `invited`.
-- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner), and send them one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place, and say that wishes and questions come to you:
+- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner), and send them one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place; on the in-person type, also the address gifts go to (`deliverTo`). Say that wishes and questions come to you:
 
 ```bash
 message send --to CONTACT_ID --message TEXT --responsibility ID --also
@@ -74,13 +74,13 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 
 Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving and resending. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
 
-- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one.
+- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one.
 - **`resend`**: when `failed` names someone, or a giver says nothing arrived. It sends again only the matches that were never accepted or that failed for good, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`leave`**: removes `contact`'s address and wishes. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
 
-Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, and that only the giver knows; say the address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
+Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
 ```js
 const action = "draw"; // draw | resend | address | wish | ask | leave
@@ -99,7 +99,10 @@ const path = `~/${file}`;
 const read = await fs.read({ target: "gsv", path });
 if (!read.ok || read.truncated) throw new Error(`Cannot read ${file}`);
 const game = JSON.parse(read.content);
-const save = () => fs.write({ target: "gsv", path, content: JSON.stringify(game) });
+const save = async () => {
+  const written = await fs.write({ target: "gsv", path, content: JSON.stringify(game) });
+  if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
+};
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 // Returns the delivery id `message send` prints, or null when it was not accepted.
 const send = async (to, message, key) => {
@@ -149,18 +152,41 @@ if (action === "draw") {
     } while (a[0] >= 2 ** 32 - (2 ** 32 % n));
     return a[0] % n;
   };
-  game.exclude = exclude;
-  let pairs;
-  let tries = 0;
-  do {
-    if (++tries > 1000) throw new Error("No draw fits these exclusions");
-    const order = [...people];
+  const shuffled = (list) => {
+    const order = [...list];
     for (let i = order.length - 1; i > 0; i--) {
       const j = rand(i + 1);
       [order[i], order[j]] = [order[j], order[i]];
     }
-    pairs = order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
-  } while (pairs.some((p) => banned(p.giver, p.recipient)));
+    return order;
+  };
+  const loop = (order) => order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
+  game.exclude = exclude;
+  // Reshuffling keeps every allowed loop equally likely. When exclusions leave few loops, a
+  // randomised search finds one instead, or shows that none exists.
+  let pairs = null;
+  for (let tries = 0; !pairs && tries < 1000; tries++) {
+    const candidate = loop(shuffled(people));
+    if (!candidate.some((p) => banned(p.giver, p.recipient))) pairs = candidate;
+  }
+  if (!pairs) {
+    const [first, ...rest] = shuffled(people);
+    const path = [first];
+    let steps = 0;
+    const extend = (left) => {
+      if (++steps > 200000) throw new Error("No draw found for these exclusions: ask the organiser to drop one");
+      if (!left.length) return !banned(path[path.length - 1], first);
+      for (const next of shuffled(left)) {
+        if (banned(path[path.length - 1], next)) continue;
+        path.push(next);
+        if (extend(left.filter((p) => p !== next))) return true;
+        path.pop();
+      }
+      return false;
+    };
+    if (!extend(rest)) throw new Error("No draw fits these exclusions");
+    pairs = loop(path);
+  }
   Object.assign(game, { round: game.round + 1, pairs, sent: {} });
   for (const pair of pairs) prepare(pair, redraw);
   await save();
