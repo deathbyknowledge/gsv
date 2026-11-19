@@ -4,32 +4,61 @@
 
 ### What is Ship?
 
-Ship is a personal AI computer, or for technical readers, a distributed OS with AI in the kernel. It runs across the devices you already own and treats them as one machine, with the "brain" living on Cloudflare's edge rather than on any single box. It isn't a chatbot and isn't a single-box agent. It's a computer you talk to that can act on your laptop, your server, and your phone as one system.
+Ship is an open-source personal AI assistant for the things you keep meaning to
+do. You tell it what needs doing in your browser, on WhatsApp or on Telegram. It
+researches options, uses the tools and accounts you connect, checks with you
+before anything important, and follows up until the job is done.
 
-### How is this different from a single-box agent?
+### How are Ship and GSV related?
 
-Most self-hosted assistants run as one agent on one host you pick and keep running: a laptop, a VPS, a container. That's one brain in one place. Ship is distributed, so it's one mind across every device you own, not stuck on any single one. The brain runs on the edge and remains reachable even when your machines are asleep; durable state survives hibernation and cold starts. Where the brain runs is the core difference.
+Ship is the product: the personal AI assistant you talk to. GSV is the
+open-source stack underneath it, and what these docs describe: a distributed
+operating environment where agents are durable processes that act across the
+devices you connect, with the control plane on Cloudflare's edge rather than on
+any single box. The hosted Ship at [ship.space](https://ship.space) runs on GSV,
+and anyone can deploy GSV to run their own Ship.
+
+GSV keeps its name in technical identifiers: the `deathbyknowledge/gsv`
+repository, the `gsv` CLI command, the `gsv` target and `.gsv` folders. Earlier
+releases also used GSV as the product name. Your conversations, files, settings
+and connected machines do not need to move.
+
+An operator may add a new public domain while keeping an existing address as an
+alias to the same installation. Use the address your operator provides; a new
+browser origin may require signing in again. Existing federation identities and
+contacts are preserved.
+
+### How is Ship different from other self-hosted AI agents?
+
+Most self-hosted assistants run as one agent on one host you pick and keep running: a laptop, a VPS, a container. That's one brain in one place. Ship runs on GSV, which is distributed, so it's one mind across every device you own, not stuck on any single one. The brain runs on the edge and remains reachable even when your machines are asleep; durable state survives hibernation and cold starts. Where the brain runs is the core difference.
 
 See [Architecture Overview](/architecture/) for a deeper look at how the pieces fit together.
 
 ### Who is this for right now?
 
-Today, Ship is for people who run more than one machine and want an AI that spans all of them: the privacy-conscious, multi-machine, self-hosting crowd. The longer-term goal is a personal AI computer anyone can use with no setup skills, but that's the direction, not where we are at launch. If you're comfortable connecting a Cloudflare account and a couple of devices, you're in the right place today.
+Anyone who wants help with everyday tasks can create a Ship at
+[ship.space](https://ship.space) with no setup and no API key. Self-hosting suits
+people who want their Ship's state in their own Cloudflare account and are
+comfortable deploying Workers and connecting a couple of devices.
 
 ## Cost and requirements
 
 ### What does it cost?
 
-Hosted Ships use their operator's pricing. Self-hosting uses your own
-Cloudflare account and model-provider billing. The public operator composition
+Hosted Ship at [ship.space](https://ship.space) is free during early access.
+Purchases and third-party services are paid separately. Other operators set
+their own pricing. Self-hosting uses your own Cloudflare account and
+model-provider billing. The public operator composition
 includes CodeMode's Worker Loader and requires
 [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/).
 Usage beyond the plan's allowances and model inference are billed separately.
 
 ### Do I need a paid Cloudflare plan?
 
-Yes, for the current public composition with CodeMode. It does not silently
-omit the Worker Loader on Free accounts. Containers are not required.
+For self-hosting, yes: the current public composition with CodeMode requires
+Workers Paid. It does not silently omit the Worker Loader on Free accounts.
+Containers are not required. Using hosted Ship at ship.space does not require
+your own Cloudflare account.
 
 ### What do I need to run it?
 
@@ -42,8 +71,8 @@ Connect machines when you want Ship to work on them.
 
 ### Is it really open source?
 
-Yes. The Ship runtime, Accounts, inference execution and deployment components
-are MIT-licensed and public at [github.com/deathbyknowledge/gsv](https://github.com/deathbyknowledge/gsv).
+Yes. Ship is built on GSV, whose runtime, Accounts, inference execution and
+deployment components are MIT-licensed and public at [github.com/deathbyknowledge/gsv](https://github.com/deathbyknowledge/gsv).
 Operators may keep commercial services private; those services are not required
 to run your own deployment.
 
@@ -128,14 +157,3 @@ It's named for the General Systems Vehicles in Iain M. Banks' Culture novels, va
 - [Get Started](/get-started/)
 - [Deploy / Update / Remove](/how-to/deploy)
 - [Architecture Overview](/architecture/)
-
-## Is Ship different from GSV?
-
-Ship is the product name. GSV is still the underlying runtime and appears in
-technical identifiers, the `gsv` target, `.gsv` folders and the `gsv` CLI command.
-Your conversations, files, settings and connected machines do not need to move.
-
-An operator may add a new public domain while keeping an existing address as an
-alias to the same installation. Use the address your operator provides; a new
-browser origin may require signing in again. Existing federation identities and
-contacts are preserved.

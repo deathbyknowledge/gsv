@@ -2,9 +2,9 @@
 layout: home
 
 hero:
-  name: Ship in beta
-  text: by Humans & Machines, Inc.
-  tagline: Personal AI computer / distributed OS across all your devices. Open-source, runs on your own Cloudflare account. Not one box.
+  name: Ship
+  text: Open-source personal AI assistant
+  tagline: By Humans & Machines, Inc. and built on GSV, the open-source stack these docs cover. Use hosted Ship at ship.space, or run your own in your Cloudflare account.
   actions:
     - theme: brand
       text: Why Ship?
