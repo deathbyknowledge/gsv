@@ -56,6 +56,7 @@ class Hat {
   refuse = new Set<string>();
   states = new Map<string, string>();
   writeFails = false;
+  failing = new Set<string>();
   private readonly source = hatScript();
 
   async run(settings: Settings): Promise<JsonValue> {
@@ -99,7 +100,8 @@ class Hat {
     if (this.refuse.has(to)) return { status: "completed", exitCode: 1, output: "refused" };
     const sent = { to, message: option(command, "message") ?? "", key: option(command, "delivery-id"), id: `delivery:${this.sent.length + 1}` };
     this.sent.push(sent);
-    return { status: "completed", exitCode: 0, output: `accepted=true\ndelivery_id=${sent.id}\ndelivery_state=queued\n` };
+    const state = this.failing.has(to) ? "failed" : "queued";
+    return { status: "completed", exitCode: 0, output: `accepted=true\ndelivery_id=${sent.id}\ndelivery_state=${state}\n` };
   }
 }
 
@@ -160,13 +162,49 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ people: PEOPLE, exclude: [] });
     hat.states.set(hat.sent[0].id, "queued");
     const before = hat.sent.length;
-    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("still on their way");
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("on their way");
     expect(hat.sent).toHaveLength(before);
     expect(hat.game.round).toBe(1);
 
     hat.states.set(hat.sent[0].id, "delivered");
     await hat.run({ people: PEOPLE, exclude: [], redraw: true });
     expect(hat.game.round).toBe(2);
+  });
+
+  it("counts a match accepted but already failed as failed", async () => {
+    const hat = new Hat();
+    hat.failing.add("c:bob");
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: ["Bob"] }));
+  });
+
+  it("refuses a redraw until unconfirmed matches are resent", async () => {
+    const hat = new Hat();
+    hat.refuse.add("c:bob");
+    await hat.run({ people: PEOPLE, exclude: [] });
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("unconfirmed");
+    hat.refuse.clear();
+    await hat.run({ action: "resend" });
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true });
+    expect(hat.game.round).toBe(2);
+  });
+
+  it("waits for the giver's match to arrive before a relink", async () => {
+    const hat = new Hat();
+    await hat.run({ action: "address", contact: "c:dev", value: "Rua W 4, Braga" });
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const giver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === "c:dev")?.giver.contact ?? "";
+    const match = hat.sent.find((s) => s.to === giver);
+    if (match) hat.states.set(match.id, "queued");
+    const before = hat.sent.length;
+
+    if (match) {
+      await expect(hat.run({ action: "leave", contact: "c:dev" })).rejects.toThrow("on its way");
+      expect(hat.game.addresses["c:dev"]).toBeUndefined();
+      expect(hat.sent).toHaveLength(before);
+      hat.states.set(match.id, "delivered");
+    }
+    await hat.run({ action: "leave", contact: "c:dev" });
+    expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== "c:dev"));
   });
 
   it("redraws under a new round with new delivery ids", async () => {

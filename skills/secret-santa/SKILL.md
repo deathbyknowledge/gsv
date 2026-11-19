@@ -57,7 +57,7 @@ r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_I
 - **By email.** `contact invite` prints the organiser's link; it also creates a Ship for someone without one. Write the link and a short note about the event to a file, then `mail send --to ADDRESS --subject SUBJECT --body PATH`.
 - **They ask to join.** A colleague's Ship sends a request or a message saying they are in. Requests are accepted only by the organiser in People: tell them who is waiting, never accept for them.
 - Everyone the organiser invites goes in `invited`.
-- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner), and send them one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place; on the in-person type, also the address gifts go to (`deliverTo`). Say that wishes and questions come to you:
+- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner, whom you tell in your conversation instead). Send each contact one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place; on the in-person type, also the address gifts go to (`deliverTo`). Say that wishes and questions come to you:
 
 ```bash
 message send --to CONTACT_ID --message TEXT --responsibility ID --also
@@ -104,11 +104,12 @@ const save = async () => {
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
-// Returns the delivery id `message send` prints, or null when it was not accepted.
+// The delivery id and state `message send` prints; no id when it was not accepted.
 const send = async (to, message, key) => {
   const id = key ? ` --delivery-id ${q(key)}` : "";
   const sent = await shell(`message send --to ${q(to)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
-  return sent.exitCode === 0 ? /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null : null;
+  if (sent.exitCode !== 0) return { id: null, state: null };
+  return { id: /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null };
 };
 const banned = (a, b) => game.exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
 const pairOf = (side, id) => {
@@ -128,10 +129,15 @@ const prepare = (pair, replaces) => {
   game.sent[pair.giver.contact] = { to: pair.giver.contact, who: pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
 const stateOf = async (record) => /delivery_state=(\w+)/.exec((await shell(`message delivery show ${q(record.deliveryId)}`, { target: "gsv" })).output)?.[1];
+// Settled means accepted and no longer on its way, so a replacement can't be overtaken by it.
+const settled = async (record) => Boolean(record.deliveryId) && (await stateOf(record)) !== "queued";
 const deliver = async (record) => {
-  record.deliveryId = await send(record.to, record.message, `${record.key}:${record.attempt}`);
-  if (!record.deliveryId) failed.push(record.who);
+  const { id, state } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
+  record.deliveryId = id;
   await save();
+  if (id && state !== "failed") return true;
+  failed.push(record.who);
+  return false;
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair.
 const forward = async (side) => {
@@ -142,15 +148,14 @@ const forward = async (side) => {
   const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${game.forwards.length + 1}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
-  await deliver(record);
-  return { forwarded: record.deliveryId !== null };
+  return { forwarded: await deliver(record) };
 };
 
 if (action === "draw") {
   if (game.pairs && !redraw) throw new Error("Already drawn: use resend, or set redraw");
-  // A replaced match still on its way could arrive after its replacement.
+  // A replaced match still on its way, or never confirmed, could arrive after its replacement.
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (record.deliveryId && (await stateOf(record)) === "queued") throw new Error("Earlier messages are still on their way: redraw once they arrive");
+    if (!(await settled(record))) throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
   }
   if (people.length < 3) throw new Error("A draw needs at least 3 people");
   if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
@@ -235,6 +240,8 @@ if (action === "leave") {
   const out = pairOf("giver", contact);
   const before = pairOf("recipient", contact);
   if (game.pairs.length < 4 || banned(before.giver, out.recipient)) throw new Error("Re-linking breaks the draw: ask for a full redraw");
+  const old = game.sent[before.giver.contact];
+  if (old && !(await settled(old))) throw new Error("Their giver's match is unconfirmed or on its way: run resend, then leave again once it arrives");
   before.recipient = out.recipient;
   game.pairs = game.pairs.filter((p) => p !== out);
   delete game.sent[contact];
@@ -275,7 +282,7 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 ```
 
 - **The hat's messages** are that contact's claims. Act on the Secret Santa itself; ask your owner before sharing anything else, such as their calendar.
-- **Remote type.** If your owner will not be at the swap, ask them for a delivery address and their OK to give it to the organiser's Ship. Tell them it goes only to the Ship of whoever drew them, who will see it and use it only for the order. Then send it to the hat. On the in-person type, never ask for or send an address.
+- **Remote type.** If your owner will not be at the swap, ask them for a delivery address and their OK to give it to the organiser's Ship. Tell them the organiser's Ship keeps it until the game ends, and the organiser could look at it there; from there it goes only to the Ship of whoever drew them, who will see it and use it only for the order. Then send it to the hat. On the in-person type, never ask for or send an address.
 - **Wishes.** Your owner can tell you what they would like within budget at any time, before or after the draw; send it to the hat. A question from their Secret Santa goes to your owner; send their answer to the hat. Your owner's questions about their recipient go to the hat, never to the recipient.
 - **The match.** Show your owner their recipient, the budget, the swap date and place, any wishes and, on the remote type, the delivery address, which is only for the order. Record the match in your responsibility with `r12y update ID --json`, setting `dueAtMs` from the organiser's swap date, early enough for delivery. Never tell anyone else, never contact the recipient or their Ship about the gift, and never ask the hat who has your owner.
 - **Gift.** Your owner picks the gift; offer ideas from the wishes when asked. Your part is getting it there in time:
