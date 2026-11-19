@@ -1,7 +1,8 @@
 import type { ComponentProps, VNode } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { collectNodes } from "../app/testing/testHarness";
-import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
+import { OwnerWelcome, type WelcomeSnapshot, type WelcomeState } from "../app/services/session/ownerWelcome";
 
 import { loadSignupPage } from "./page";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
@@ -188,5 +189,56 @@ describe("signup attribution", () => {
     window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
     const props = await screen();
     expect((await props.load()).state.attribution).toBeUndefined();
+  });
+});
+
+describe("signup inviter", () => {
+  const preparedSpace = () => new Response(JSON.stringify({ origin: "https://newbie.example.com", handle: "newbie",
+    onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 }), { status: 200 });
+  const spacesBodySchema = z.object({
+    operationId: z.string(), handle: z.string(),
+    attribution: z.object({ placement: z.string(), example: z.string(), utmSource: z.string(), utmCampaign: z.string() }).partial().optional(),
+    inviter: z.string().optional(),
+  }).strict();
+  function spacesBody(fetcher: ReturnType<typeof vi.fn>): z.infer<typeof spacesBodySchema> {
+    const call = fetcher.mock.calls.find(([url]) => String(url).endsWith("/owner/api/spaces"));
+    if (!call) throw new Error("Expected a space preparation request");
+    // SAFETY: OwnerWelcome posts a JSON string body.
+    return spacesBodySchema.parse(JSON.parse((call[1] as { body: string }).body));
+  }
+
+  it("names the Ship the invitation link named when a friend creates a Ship", async () => {
+    const fetcher = vi.fn(async () => preparedSpace());
+    vi.stubGlobal("fetch", fetcher);
+    const client = await (await screen()).load();
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie", inviter: "sponsor.example" });
+  });
+
+  it("sends a bare handle as the link carried it, for Accounts to read as a Ship hosted there", async () => {
+    window.location.href = `${origin}/owner/signup/?invite=Esteve`;
+    const fetcher = vi.fn(async () => preparedSpace());
+    vi.stubGlobal("fetch", fetcher);
+    const client = await (await screen()).load();
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie", inviter: "Esteve" });
+  });
+
+  it("sends both the link's origin and the inviting Ship", async () => {
+    window.location.href = `${invitation}&utm_source=facebook#from=hero&example=plan-a-trip`;
+    const fetcher = vi.fn(async () => preparedSpace());
+    vi.stubGlobal("fetch", fetcher);
+    const client = await (await screen()).load();
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie",
+      attribution: { placement: "hero", example: "plan-a-trip", utmSource: "facebook" }, inviter: "sponsor.example" });
+  });
+
+  it("names nobody when no invitation brought the person here", async () => {
+    const fetcher = vi.fn(async () => preparedSpace());
+    const client = new OwnerWelcome({ revision: "saved", value: { origin, flow: "create", sessionSecret: null, challenge: null,
+      operationId: null, handle: null, invite: null } }, storage, origin, fetcher);
+    await client.prepare("newbie");
+    expect(spacesBody(fetcher)).toEqual({ operationId: expect.any(String), handle: "newbie" });
   });
 });

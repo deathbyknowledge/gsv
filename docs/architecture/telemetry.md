@@ -225,9 +225,16 @@ explicit country rather than geolocating their own export request.
   an operator created or reset never passes through it. The properties are a
   closed placement class (`hero`, `final-call`, `example` or `other`) and, for
   example cards, a closed example id, plus the campaign's `utm_source` and
-  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `website` when
-  the link carried a placement, `campaign` when it carried only a campaign tag,
-  otherwise `direct`. The signup page reads the placement slugs from the signup
+  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `invite` when the
+  signup followed another Ship's invitation link and Accounts resolved the Ship
+  it named, `website` when the link carried a placement, `campaign` when it carried only
+  a campaign tag, otherwise `direct`. The same request reports
+  `contact.invite.signup`, with no properties, under the inviting Ship's own
+  pseudonym, so invitations that became Ships count for the inviter there.
+  Neither record names the other Ship: the two series share no key, and
+  Accounts keeps no record of who invited whom. Both leave the same request,
+  so a reader of the raw stream could pair them by time; the breakdowns need no
+  pairing, and the operator's own deployment is the only reader. The signup page reads the placement slugs from the signup
   link's fragment and the campaign tags from its query, keeps them in its own
   signup state until the space request and takes them off the URL; a reload
   keeps them, and only a link carrying its own replaces them. A messenger's

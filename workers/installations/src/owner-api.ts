@@ -16,6 +16,13 @@ const handle = z.string().trim().toLowerCase().max(63);
 // Slugs the signup link carried: bounded in shape here, classified into the closed allowlist before they are reported.
 const attributionSlug = z.string().regex(/^[a-z0-9-]{1,32}$/).optional();
 const signupAttributionSchema = z.strictObject({ placement: attributionSlug, example: attributionSlug, utmSource: attributionSlug, utmCampaign: attributionSlug });
+// The Ship an invitation link named, as its `invite` value: a handle on this deployment or another Ship's host name. It is
+// an optional claim from the link, so a value outside that shape is dropped here rather than failing the signup; Accounts
+// then resolves it, and an unknown Ship is dropped too.
+const inviteTarget = z.string().max(253).transform((value) => {
+  const target = value.trim().toLowerCase();
+  return /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(target) ? target : undefined;
+});
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
@@ -68,10 +75,11 @@ export class InstallationOwnerApi {
       if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Ship." }, 410);
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
         const input = z.strictObject({
-          operationId: z.string().min(1).max(128), handle, attribution: signupAttributionSchema.optional(), productEmails: productEmailChoice.optional(),
+          operationId: z.string().min(1).max(128), handle, attribution: signupAttributionSchema.optional(), inviter: inviteTarget.optional(),
+          productEmails: productEmailChoice.optional(),
         }).parse(await readJsonObject(request));
         const attribution = input.attribution ? signupAttributionFromSlugs(input.attribution) : undefined;
-        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, attribution, input.productEmails,
+        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, attribution, input.inviter, input.productEmails,
           request.headers.get("cf-connecting-ip") ?? undefined));
       }
       return json({ error: "Not found" }, 404);

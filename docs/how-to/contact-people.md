@@ -77,6 +77,10 @@ operator, and gets the same request. You accept or decline it under People like
 any other request. Deployments without a signup site share your profile address,
 `https://YOUR-SPACE/profile`, instead; its form sends you the same request.
 
+On a managed deployment, a Ship created through your invitation link is counted for
+your Ship in the operator's metrics, without naming the new Ship; what the two of
+you say stays between your Ships.
+
 Ship can share the link when asked: `contact invite` in Shell prints it, and says
 when your profile isn't taking requests. The built-in `contacts` skill covers
 inviting people, messaging and coordinating work; load it with `skills show contacts`.
