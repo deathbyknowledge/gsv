@@ -8,6 +8,7 @@ import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSour
 import { usePublishedFile } from "../../../services/chat/hooks/useChatProcesses";
 import {
   hilDetailLabel,
+  hilMessageLine,
   hilPublication,
   hilRequestLine,
   hilRequestSentence,
@@ -46,6 +47,7 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
   const t = useT();
   const line = hilRequestLine(request);
   const publication = hilPublication(request);
+  const message = hilMessageLine(request);
   const heading = <>{label ?? t("shell.approval.label")} · {place}</>;
   const exactDetails = <pre class="approval-exact">{JSON.stringify({ syscall: request.syscall, target: request.target, args: request.args }, null, 2)}</pre>;
   return (
@@ -57,6 +59,7 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
         <InfoTip text={t("shell.approval.waiting")} label={t("shell.approval.about")} />
       </div>
       <p class="ask">{hilRequestSentence(request, place)}</p>
+      {message ? <p class="approval-message">{message}</p> : null}
       {publication ? <div class="approval-publish">
         <p>{rich(t("shell.approval.publishAs"), {
           handle: <Hint text={publication.address}><span class="approval-handle" tabIndex={0}>{`@${publication.handle}`}</span></Hint>,

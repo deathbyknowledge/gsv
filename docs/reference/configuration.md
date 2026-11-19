@@ -218,7 +218,7 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
-| any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write` |
+| any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write`, `event.source.update` |
 
 `sched.add` and `sched.update` are checked only when a schedule runs a command;
 message reminders never ask. An agent installing a crontab, by `crontab FILE` or
@@ -226,12 +226,14 @@ by writing its file, is checked as one `sched.add` that shows the file's jobs.
 Removing a crontab does not ask. A scheduled command that fires later has no
 agent run to ask through, so it runs without asking again; approving one is
 approving what it will do each time. `approach.create` is the Ship sending a first
-message request to someone who is not a contact yet. `atproto.write` is the
+message request to someone who is not a contact yet. `event.source.update` asks
+only when the Ship itself lets a source's events wake it. `atproto.write` is the
 Ship publishing records to the [open network](/architecture/open-network);
 uploading a file does not ask, because nothing serves it until an approved write
 publishes a record that references it. Every decision comes from the rules:
-mail, MCP tools, scheduled commands, message requests and network writes ask
-because the default rules say so, and a rule can change that like any other.
+mail, MCP tools, scheduled commands, message requests, network writes and event
+sources that wake the Ship ask because the default rules say so, and a rule can
+change that like any other.
 
 Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
 

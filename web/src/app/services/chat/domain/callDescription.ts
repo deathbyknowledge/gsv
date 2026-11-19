@@ -74,6 +74,16 @@ export function describeCall(request: DescribedCall, place?: string): string {
     case "codemode.run": return t("chat.call.code");
     case "atproto.write": return t("chat.call.publish");
     case "sched.add": return t("chat.call.schedule");
+    case "sched.update": return t("chat.call.routineUpdate");
+    case "approach.create": {
+      const recipient = callArgumentText(request, "recipient");
+      return recipient ? t("chat.call.messageRequestTo", { recipient: `@${recipient}` }) : t("chat.call.messageRequest");
+    }
+    case "event.source.update": {
+      const source = callArgumentText(request, "name") ?? "";
+      const wake = z.object({ ship: z.literal("wake") }).safeParse(request.args).success;
+      return t(wake ? "chat.call.eventSourceWake" : "chat.call.eventSourceChange", { source });
+    }
     case "mail.send": {
       const recipients = callArgumentList(request, "to");
       const copies = callArgumentList(request, "cc");

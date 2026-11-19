@@ -397,6 +397,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | `/think`, then `/reply` or `/stream` | Hold a tool open, then finish with a plain or streamed reply. |
 | `/approve` / `/approve-old` | The same shell approval with or without a purpose. |
 | `/approve-mail` / `/approve-file` | Email and file approvals. |
+| `/approve-request` / `/approve-request-old` | A message request to someone new, with or without a purpose. |
 
 Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
 

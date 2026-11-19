@@ -96,6 +96,10 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
   const cronJobs = request.syscall === "sched.add" ? argText(request, "jobs") : null;
   if (cronJobs) return { lead: "none", text: `${argText(request, "path") ?? ""}\n${cronJobs}`.trimStart() };
   switch (request.syscall) {
+    // The sentence and the card say these in full; their arguments are ids, kept in the full request.
+    case "approach.create":
+    case "sched.update":
+    case "event.source.update": return null;
     case "atproto.write": {
       const publication = hilPublication(request);
       return publication ? { lead: "none", text: publication.changes.map((change) => change.record).join(" · ") } : null;
@@ -144,6 +148,20 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
       return { lead: "place", text: [name, ...args].join(" ") };
     }
   }
+}
+
+/**
+ * A message request's words, shown on the card: someone who is not a contact yet reads them.
+ * When the model's purpose leads instead of the sentence naming the recipient, the line names them.
+ */
+export function hilMessageLine(request: ProcHilRequest): string | null {
+  if (request.syscall !== "approach.create") return null;
+  const text = argText(request, "text");
+  if (!text) return null;
+  const recipient = argText(request, "recipient");
+  return recipient && normalizeCallPurpose(request.purpose)
+    ? t("chat.hil.messageTo", { recipient: `@${recipient}`, text })
+    : t("chat.hil.message", { text });
 }
 
 /** A file a published record references, as the Ship uploaded it. */

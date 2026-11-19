@@ -17,15 +17,19 @@ When the owner says "add @handle" or names a person on your service, check
 message short and write it as the owner's Ship, for example saying whose Ship is
 connecting; use the owner's words if they gave any.
 Sending asks the owner for approval unless their approval policy allows
-`approach.create`. The other person decides whether to accept; report the request as sent, not as connected. Profiles are public by
+`approach.create`, and that approval names the recipient and shows the message.
+It is the owner's one confirmation: do not ask them to confirm the message
+first as well, unless they asked to see it. The other person decides whether to accept; report the request as sent, not as connected. Profiles are public by
 default, so this usually works. If it fails because the profile is unavailable
 or not receiving requests, ask the person to add the owner instead, with the
 invitation link below.
 
 Use the owner's handling choice when connecting:
 `--handling manual` leaves new messages for the owner; `--handling ship` lets
-Ship handle them. Ask if the owner has not already chosen. Each person decides
-for their own side.
+Ship handle them. If the owner has not already chosen, ask only that before
+sending, in plain words about the other person's replies, such as "Who should
+answer Jessica, you or me?", so the choice cannot read as the owner sending the
+request themselves. Each person decides for their own side.
 
 ## Invite Someone by Link
 

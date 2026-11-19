@@ -115,6 +115,13 @@ function summarizeAdapterHilRequest(request: ProcHilRequest): string {
     // Whatever the model wrote, a publish names the address the Kernel publishes under.
     const publisher = request.syscall === "atproto.write" ? publishingAs(request.args) : null;
     if (publisher) return `${asSentence(purpose)}\nPublishes to the open network as ${publisher}.`;
+    // A message request reaches someone else, so who it reaches and its words stand beside the model's sentence.
+    if (request.syscall === "approach.create") {
+      const recipient = messageRecipient(request.args);
+      const words = adapterHilRequestDetail(request);
+      const line = recipient && words ? `To ${recipient}: ${words}` : words;
+      return line ? `${asSentence(purpose)}\n${line}` : asSentence(purpose);
+    }
     // Nothing asks again when these run, so the jobs themselves stand beside the model's sentence.
     const jobs = request.syscall === "sched.add" ? adapterHilRequestDetail(request) : null;
     return jobs ? `${asSentence(purpose)}\n${jobs}` : asSentence(purpose);
@@ -135,7 +142,20 @@ function describeAdapterHilRequest(request: ProcHilRequest): string {
     case "fs.edit": return `edit a file ${place}`;
     case "fs.delete": return `delete a file ${place}`;
     case "net.fetch": return `fetch a web address ${place}`;
-    case "sched.add": return "schedule work to run later";
+    case "sched.add": return "add a routine";
+    case "sched.update": return "update a routine";
+    case "approach.create": {
+      const recipient = messageRecipient(request.args);
+      return recipient ? `send a message request to ${recipient}` : "send a message request";
+    }
+    case "event.source.update": {
+      const source = safePlainDetail(request.args.name, 80) ?? "a source";
+      return request.args.ship === "wake" ? `let events from ${source} wake Ship` : `change how Ship handles events from ${source}`;
+    }
+    case "sys.mcp.call": {
+      const tool = safePlainDetail(request.args.name, 80);
+      return tool ? `use ${tool} from a connected app` : "use a connected app";
+    }
     case "mail.send": {
       const recipient = safeQuotedDetail(request.args.to);
       const subject = safeQuotedDetail(request.args.subject);
@@ -150,7 +170,8 @@ function describeAdapterHilRequest(request: ProcHilRequest): string {
       const publisher = publishingAs(request.args);
       return publisher ? `publish to the open network as ${publisher}` : "publish to the open network";
     }
-    default: return `use ${safePlainDetail(request.toolName, 80) ?? "a tool"} ${place}`;
+    // A syscall name means nothing to the person; an owner's own rule can still ask about one without wording here.
+    default: return `take an action ${place}`;
   }
 }
 
@@ -162,6 +183,7 @@ function adapterHilRequestDetail(request: ProcHilRequest): string | null {
     case "fs.edit":
     case "fs.delete": return safeQuotedDetail(request.args.path, 512);
     case "net.fetch": return safeQuotedDetail(request.args.url, 512);
+    case "approach.create": return safeQuotedDetail(request.args.text, 1_200);
     case "sched.add": {
       // The file names the account its jobs run as.
       const jobs = safeQuotedDetail(request.args.jobs, 1_200);
@@ -186,6 +208,12 @@ function publishingAs(args: ProcHilRequest["args"]): string | null {
   const handle = safePlainDetail(publication.data.handle, 80);
   const address = safePlainDetail(publication.data.address, 253);
   return handle && address ? `@${handle} (${address})` : null;
+}
+
+/** Who a message request reaches: the Kernel adds the recipient's handle to the request it asks about. */
+function messageRecipient(args: ProcHilRequest["args"]): string | null {
+  const handle = safePlainDetail(args.recipient, 253);
+  return handle ? `@${handle}` : null;
 }
 
 function asSentence(text: string): string {

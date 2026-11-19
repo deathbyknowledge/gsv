@@ -131,7 +131,7 @@ describe("renderAdapterSend", () => {
     expect(createAdapterHilPresentation(context, request).action)
       .toBe(`Tidy up the morning routine.\n${shown}`);
     expect(createAdapterHilPresentation(context, { ...request, purpose: undefined }).action)
-      .toBe(`Schedule work to run later.\n${shown}`);
+      .toBe(`Add a routine.\n${shown}`);
     expect(createAdapterHilPresentation(context, { ...request, args: { name: "digest" } }).action)
       .toBe("Tidy up the morning routine.");
   });
@@ -230,6 +230,61 @@ describe("renderAdapterSend", () => {
     const malformed = { ...withoutPurpose, args: { handle: "alice" } };
     expect(createAdapterHilPresentation({ ...context, hil: malformed }, malformed).action)
       .toBe("Publish to the open network.");
+  });
+
+  it("names who a message request reaches and what it says, whatever the model wrote", () => {
+    // The Kernel asks with the request's own arguments plus the recipient's handle.
+    const request = {
+      pid: "proc-1",
+      requestId: "request-approach",
+      runId: "run-1",
+      callId: "call-approach",
+      toolName: "approach.create",
+      syscall: "approach.create",
+      target: "gsv",
+      args: {
+        recipient: "jessica.ship.space",
+        did: "did:plc:jessica",
+        profileCid: "bafyprofile",
+        displayName: "Juliette",
+        text: "Salut Jessica, c'est le Ship de Juliette.",
+        idempotencyKey: "connect:key",
+        shipHandlesMessages: false,
+      },
+      createdAt: 1,
+    } as const;
+    const context = {
+      deliveryId: "run-1:hil:request-approach",
+      accountId: "account-1",
+      actorId: "actor-1",
+      surface: { kind: "dm" as const, id: "surface-1" },
+      processId: "proc-1",
+      runId: "run-1",
+      processMode: "ship" as const,
+      hil: request,
+    };
+
+    expect(createAdapterHilPresentation(context, request).action).toBe(
+      "Send a message request to @jessica.ship.space.\n\"Salut Jessica, c'est le Ship de Juliette.\"",
+    );
+    const purposed = { ...request, purpose: "envoyer l'invitation à Jessica" };
+    expect(createAdapterHilPresentation({ ...context, hil: purposed }, purposed).action).toBe(
+      "Envoyer l'invitation à Jessica.\nTo @jessica.ship.space: \"Salut Jessica, c'est le Ship de Juliette.\"",
+    );
+  });
+
+  it("says what each call that asks by default does, and never shows a tool's internal name", () => {
+    const ask = (syscall: string, args: Record<string, string>) => {
+      const request = { pid: "proc-1", requestId: "request-x", runId: "run-1", callId: "call-x", toolName: syscall, syscall, target: "gsv", args, createdAt: 1 };
+      return createAdapterHilPresentation({
+        deliveryId: "run-1:hil:request-x", accountId: "account-1", actorId: "actor-1", surface: { kind: "dm", id: "surface-1" },
+        processId: "proc-1", runId: "run-1", processMode: "ship", hil: request,
+      }, request).action;
+    };
+    expect(ask("sched.update", { id: "routine-1" })).toBe("Update a routine.");
+    expect(ask("event.source.update", { name: "github", ship: "wake" })).toBe("Let events from github wake Ship.");
+    expect(ask("sys.mcp.call", { serverId: "mcp-1234", name: "create_issue" })).toBe("Use create_issue from a connected app.");
+    expect(ask("contact.preferences.update", {})).toBe("Take an action in Ship's home.");
   });
 
   it("sanitizes and bounds hostile email approval details", () => {

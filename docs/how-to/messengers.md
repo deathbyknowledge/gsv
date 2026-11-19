@@ -19,7 +19,9 @@ When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
 `@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
-crontab likewise shows the file and its jobs.
+crontab likewise shows the file and its jobs, and a message request shows who
+it goes to and the message itself. The messenger describes the action in words;
+it never shows an internal tool name.
 
 A request raised while Ship is already running a command waits up to 9 minutes
 for your answer. If you answer a request that has ended, whether it timed out,
