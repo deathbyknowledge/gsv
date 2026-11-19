@@ -1,10 +1,8 @@
 import { useEffect, useRef } from "preact/hooks";
-import { createStarSphere, projectStarSphere, STAR_HEIGHT, STAR_WIDTH, visibleStars } from "./starSphere";
-import type { SkyStar } from "./starSphere";
+import { createStarSphere, projectStarSphere, STAR_HEIGHT, visibleStars } from "./starSphere";
+import type { ProjectedStar, SkyStar } from "./starSphere";
 
 const DEFAULT_DENSITY = 0.022;
-
-type PaintedStar = { star: SkyStar; cell: HTMLSpanElement; text: Text; glyph: string };
 
 function starGlyph(star: SkyStar, elapsed: number): string {
   const twinkle = 0.5 + 0.5 * Math.sin(elapsed * star.rate * 0.5 + star.phase);
@@ -22,10 +20,11 @@ const STYLE = `
   -webkit-user-select: none;
   user-select: none;
 }
-.gsv-glyph-stars pre {
+.gsv-glyph-stars canvas {
   position: absolute;
-  width: 0;
-  height: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
   color: #5d5798;
   font-family: var(--gsv-font-mono, ui-monospace, monospace);
@@ -40,11 +39,6 @@ const STYLE = `
   white-space: pre;
   -webkit-font-smoothing: none;
 }
-.gsv-glyph-stars pre span {
-  position: absolute;
-  width: ${STAR_WIDTH}px;
-  height: ${STAR_HEIGHT}px;
-}
 `;
 
 export type GlyphStarsProps = {
@@ -55,66 +49,57 @@ export type GlyphStarsProps = {
 
 export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: GlyphStarsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const preRef = useRef<HTMLPreElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const root = rootRef.current;
-    const pre = preRef.current;
-    if (!root || !pre) {
+    const canvas = canvasRef.current;
+    if (!root || !canvas) {
       return;
     }
+    const context = canvas.getContext("2d");
+    if (!context) return;
 
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const projected = projectStarSphere(createStarSphere(density));
     let width = -1;
     let height = -1;
+    let pixelRatio = 0;
     let raf = 0;
     let timer = 0;
     let lastFrame = 0;
     let elapsed = 0;
     let visible = true;
     const frameMs = 1000 / 8;
-    const painted = new Map<number, PaintedStar>();
-    let animated: PaintedStar[] = [];
+    let animated: ProjectedStar[] = [];
+    let disposed = false;
 
     const draw = (elapsed: number) => {
-      for (const cell of animated) {
-        const glyph = starGlyph(cell.star, elapsed);
-        if (glyph === cell.glyph) continue;
-        cell.text.data = glyph;
-        cell.glyph = glyph;
+      const style = getComputedStyle(canvas);
+      context.clearRect(0, 0, width, height);
+      context.font = `${STAR_HEIGHT}px ${style.fontFamily}`;
+      context.fillStyle = style.color;
+      context.textBaseline = "top";
+      for (const { star, x, y } of animated) {
+        const glyph = starGlyph(star, elapsed);
+        if (glyph !== " ") context.fillText(glyph, Math.floor(width / 2) + x, Math.floor(height / 2) + y);
       }
     };
+    const repaint = () => { if (!disposed) draw(motion?.matches ? 0 : elapsed); };
 
     const resize = () => {
       const nextWidth = root.clientWidth;
       const nextHeight = root.clientHeight;
-      if (nextWidth === width && nextHeight === height) return;
+      const nextRatio = window.devicePixelRatio || 1;
+      if (nextWidth === width && nextHeight === height && nextRatio === pixelRatio) return;
       width = nextWidth;
       height = nextHeight;
-      pre.style.left = `${Math.floor(width / 2)}px`;
-      pre.style.top = `${Math.floor(height / 2)}px`;
-      const next = visibleStars(projected, width, height);
-      const ids = new Set(next.map(({ star }) => star.id));
-      for (const [id, paintedStar] of painted) {
-        if (ids.has(id)) continue;
-        paintedStar.cell.remove();
-        painted.delete(id);
-      }
-      const fragment = document.createDocumentFragment();
-      for (const { star, x, y } of next) {
-        if (painted.has(star.id)) continue;
-        const cell = document.createElement("span");
-        cell.style.left = `${x}px`;
-        cell.style.top = `${y}px`;
-        const glyph = starGlyph(star, motion?.matches ? 0 : elapsed);
-        const text = document.createTextNode(glyph);
-        cell.append(text);
-        fragment.append(cell);
-        painted.set(star.id, { star, cell, text, glyph });
-      }
-      pre.append(fragment);
-      animated = Array.from(painted.values());
+      pixelRatio = nextRatio;
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      animated = visibleStars(projected, width, height);
+      repaint();
     };
 
     const loop = (now: number) => {
@@ -138,34 +123,43 @@ export function GlyphStars({ density = DEFAULT_DENSITY, class: className }: Glyp
       followMotion();
     }) : null;
     intersection?.observe(root);
+    // Repaint a static or paused sky when an ancestor switches its theme.
+    const theme = new MutationObserver(repaint);
+    for (let ancestor: HTMLElement | null = root; ancestor; ancestor = ancestor.parentElement) {
+      theme.observe(ancestor, { attributes: true, attributeFilter: ["class", "data-theme", "data-ascii-palette", "style"] });
+    }
+    document.fonts?.ready.then(repaint);
     resize();
-    draw(0);
 
     motion?.addEventListener("change", followMotion);
     document.addEventListener("visibilitychange", followMotion);
     window.addEventListener("focus", followMotion);
     window.addEventListener("blur", followMotion);
+    window.addEventListener("resize", resize);
     followMotion();
 
     return () => {
+      disposed = true;
       observer?.disconnect();
       intersection?.disconnect();
+      theme.disconnect();
       motion?.removeEventListener("change", followMotion);
       document.removeEventListener("visibilitychange", followMotion);
       window.removeEventListener("focus", followMotion);
       window.removeEventListener("blur", followMotion);
+      window.removeEventListener("resize", resize);
       window.clearTimeout(timer);
       if (raf) {
         window.cancelAnimationFrame(raf);
       }
-      pre.replaceChildren();
+      context.clearRect(0, 0, width, height);
     };
   }, [density]);
 
   return (
     <div ref={rootRef} class={className ? `gsv-glyph-stars ${className}` : "gsv-glyph-stars"} aria-hidden="true">
       <style>{STYLE}</style>
-      <pre ref={preRef} />
+      <canvas ref={canvasRef} aria-hidden="true" />
     </div>
   );
 }

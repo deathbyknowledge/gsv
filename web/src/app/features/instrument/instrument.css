@@ -70,7 +70,7 @@
   display: block;
 }
 /* the star field's grid assumes the pixel face's 5px advance, whatever the instrument's own mono is */
-.instrument-field .gsv-glyph-stars pre {
+.instrument-field .gsv-glyph-stars canvas {
   font-family: "Departure Mono", monospace;
 }
 /* Black scanlines already darken through alpha; a backdrop blend adds no visual effect. */
@@ -501,7 +501,7 @@
   --inspector-bg: rgba(255, 255, 255, 0.72);
 }
 .instrument.is-light .instrument-vignette { display: none; }
-.instrument.is-light .instrument-field .gsv-glyph-stars pre { color: var(--star); }
+.instrument.is-light .instrument-field .gsv-glyph-stars canvas { color: var(--star); }
 .instrument.is-light .wordmark.is-glitch { text-shadow: none; }
 .instrument.is-light .ibtn.is-primary { background: var(--accent); border-color: var(--accent-bright); box-shadow: none; }
 .instrument.is-light .ibtn.is-primary:hover { background: var(--accent-bright); box-shadow: none; }
