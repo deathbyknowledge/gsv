@@ -1,13 +1,13 @@
 # Ship: your personal AI assistant
 
-<img src="web/public/brand/gsv-ship.png" alt="Ship's ASCII ship" width="240" height="240" />
+<img src="https://github.com/user-attachments/assets/a11324bc-c7c4-46fe-8c4c-8d72579f21ae" alt="Ship's ASCII ship" />
 
 > ***Less on your mind.***
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hy9ExJJFvn)
-[![X](https://img.shields.io/badge/X-@gsvspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
+[![X](https://img.shields.io/badge/X-@shipdotspace-000?logo=x&logoColor=white)](https://x.com/shipdotspace)
 [![Docs](https://img.shields.io/badge/docs-read-111)](docs/index.md)
 
 ## What is Ship?
@@ -49,7 +49,7 @@ Create an account at [ship.space](https://ship.space) and start talking. You do 
 
 ### Is Ship free to use?
 
-Hosted Ship at [ship.space](https://ship.space) is currently free. Ship's source code is also free to use, modify, and distribute under the [MIT License](LICENSE). If you choose to self-host, you pay for your own Cloudflare infrastructure and model usage; see [self-hosting](#self-hosting) for requirements.
+Ship at [ship.space](https://ship.space) is currently free. Ship's source code is also free to use, modify, and distribute under the [MIT License](LICENSE). If you choose to self-host, you pay for your own Cloudflare infrastructure and model usage; see [self-hosting](#self-hosting) for requirements.
 
 ### How much control do I have over what Ship does?
 
