@@ -1,6 +1,6 @@
 # Ship: your personal AI assistant
 
-<img src="https://github.com/user-attachments/assets/a11324bc-c7c4-46fe-8c4c-8d72579f21ae" alt="Ship's ASCII ship" />
+<img src="https://github.com/user-attachments/assets/a11324bc-c7c4-46fe-8c4c-8d72579f21ae" alt="Ship's ASCII ship" width="50%" />
 
 > ***Less on your mind.***
 
