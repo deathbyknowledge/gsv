@@ -4,8 +4,8 @@
 
 ### What is Ship?
 
-Ship is an open-source personal AI assistant for the things you keep meaning to
-do. You tell it what needs doing in your browser, on WhatsApp or on Telegram. It
+Ship is an open-source personal AI assistant, built in Europe, for the things
+you keep meaning to do. You tell it what needs doing in your browser, on WhatsApp or on Telegram. It
 researches options, uses the tools and accounts you connect, checks with you
 before anything important, and follows up until the job is done.
 
