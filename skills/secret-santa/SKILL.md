@@ -78,7 +78,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits while one of those messages is still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -109,8 +109,8 @@ const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 const send = async (to, message, key) => {
   const id = key ? ` --delivery-id ${q(key)}` : "";
   const sent = await shell(`message send --to ${q(to)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
-  if (sent.exitCode !== 0) return { id: null, state: null };
-  return { id: /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null };
+  if (sent.exitCode !== 0) return { id: null, state: null, error: String(sent.output).trim().slice(0, 200) };
+  return { id: /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null, error: null };
 };
 const banned = (a, b) => game.exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
 const pairOf = (side, id) => {
@@ -132,12 +132,15 @@ const prepare = (pair, replaces) => {
 const stateOf = async (record) => /delivery_state=(\w+)/.exec((await shell(`message delivery show ${q(record.deliveryId)}`, { target: "gsv" })).output)?.[1];
 // Settled means accepted and no longer on its way, so a replacement can't be overtaken by it.
 const settled = async (record) => Boolean(record.deliveryId) && (await stateOf(record)) !== "queued";
+// A failure keeps its reason in the file; the report shows it only for a match, since a
+// forward's reason could name who it was for.
 const deliver = async (record) => {
-  const { id, state } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
+  const { id, state, error } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
   record.deliveryId = id;
+  record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
   await save();
-  if (id && state !== "failed") return true;
-  failed.push(record.who);
+  if (!record.lastError) return true;
+  failed.push(record.who === "a forwarded message" ? { who: record.who } : { who: record.who, error: record.lastError });
   return false;
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair.
@@ -232,11 +235,13 @@ if (action === "ask") {
   return forward(to);
 }
 if (action === "leave") {
-  // Their data and any message to or about them go first, even if the relink is refused,
-  // once nothing about them is still on its way.
+  // Nothing changes while a message to, about or replaced for them is unconfirmed or on its way.
+  // Then their data and those messages go, even if the relink is refused.
   const affected = game.forwards.filter((f) => f.to === contact || f.about === contact);
-  for (const record of affected) {
-    if (record.deliveryId && (await stateOf(record)) === "queued") throw new Error("A message to or about them is on its way: leave again once it arrives");
+  const giverOfLeaver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver.contact;
+  const matches = [game.sent[contact], giverOfLeaver && game.sent[giverOfLeaver]].filter(Boolean);
+  for (const record of [...affected, ...matches]) {
+    if (!(await settled(record))) throw new Error("A message to or about them is unconfirmed or on its way: run resend, then leave again once it arrives");
   }
   delete game.addresses[contact];
   delete game.wishes[contact];
@@ -246,8 +251,6 @@ if (action === "leave") {
   const out = pairOf("giver", contact);
   const before = pairOf("recipient", contact);
   if (game.pairs.length < 4 || banned(before.giver, out.recipient)) throw new Error("Re-linking breaks the draw: ask for a full redraw");
-  const old = game.sent[before.giver.contact];
-  if (old && !(await settled(old))) throw new Error("Their giver's match is unconfirmed or on its way: run resend, then leave again once it arrives");
   before.recipient = out.recipient;
   game.pairs = game.pairs.filter((p) => p !== out);
   delete game.sent[contact];
@@ -261,7 +264,7 @@ throw new Error(`Unknown action: ${action}`);
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- `failed` names a giver whose match did not go out; a forward that did not go out shows as "a forwarded message", never by who it was for. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
+- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
 - Update details with the people and exclusions, never with pairs.
 
 ### 4. Wishes and questions

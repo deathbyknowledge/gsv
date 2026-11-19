@@ -174,7 +174,7 @@ describe.sequential("secret-santa hat script", () => {
   it("counts a match accepted but already failed as failed", async () => {
     const hat = new Hat();
     hat.failing.add("c:bob");
-    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: ["Bob"] }));
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "delivery failed" }] }));
   });
 
   it("refuses a redraw until unconfirmed matches are resent", async () => {
@@ -199,7 +199,7 @@ describe.sequential("secret-santa hat script", () => {
 
     if (match) {
       await expect(hat.run({ action: "leave", contact: "c:dev" })).rejects.toThrow("on its way");
-      expect(hat.game.addresses["c:dev"]).toBeUndefined();
+      expect(hat.game.addresses["c:dev"]).toBe("Rua W 4, Braga");
       expect(hat.sent).toHaveLength(before);
       hat.states.set(match.id, "delivered");
     }
@@ -219,7 +219,7 @@ describe.sequential("secret-santa hat script", () => {
   it("resends only matches never accepted or failed, with the same text", async () => {
     const hat = new Hat();
     hat.refuse.add("c:bob");
-    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: ["Bob"] }));
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "refused" }] }));
     expect(Object.keys(hat.game.sent)).toHaveLength(PEOPLE.length - 1);
 
     const [delivered, lost, queued] = hat.sent;
@@ -295,10 +295,11 @@ describe.sequential("secret-santa hat script", () => {
     const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
     const giver = pair?.giver.contact ?? "";
     const leaver = pair?.recipient.contact ?? "";
-    hat.refuse.add(giver);
+    hat.failing.add(giver);
     await hat.run({ action: "address", contact: leaver, value: "Rua Y 2, Porto", text: "Their address is Rua Y 2, Porto." });
     expect(hat.game.forwards).toHaveLength(1);
-    hat.refuse.clear();
+    hat.failing.clear();
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "failed");
 
     await hat.run({ action: "leave", contact: leaver });
     const before = hat.sent.length;
@@ -329,6 +330,28 @@ describe.sequential("secret-santa hat script", () => {
     const newKey = hat.game.forwards[hat.game.forwards.length - 1].key;
     expect(keys).not.toContain(newKey);
     expect(newKey).toMatch(/:forward:3$/);
+  });
+
+  it("waits for a leaver's own match and unconfirmed forwards about them", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const leaver = pair?.giver.contact ?? "";
+    const own = hat.sent.find((s) => s.to === leaver);
+    if (own) hat.states.set(own.id, "queued");
+    await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("on its way");
+    if (own) hat.states.set(own.id, "delivered");
+
+    const giverOfLeaver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === leaver)?.giver.contact ?? "";
+    if (giverOfLeaver !== "owner") {
+      hat.refuse.add(giverOfLeaver);
+      await hat.run({ action: "wish", contact: leaver, value: "Tea", text: "Your recipient would like tea." });
+      hat.refuse.clear();
+      await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("unconfirmed");
+      await hat.run({ action: "resend" });
+    }
+    await hat.run({ action: "leave", contact: leaver });
+    expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== leaver));
   });
 
   it("deletes a leaver's data even when the relink is refused", async () => {
