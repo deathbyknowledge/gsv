@@ -8,9 +8,16 @@ import { readSystemSkillPath } from "./builtin-skills";
 // with stand-ins for shell and fs, so the draw, privacy and resend promises stay true.
 
 type Person = { name: string; contact: string };
-type Sent = { to: string; message: string; key: string | null };
+type Sent = { to: string; message: string; key: string | null; id: string };
 type Pair = { giver: Person; recipient: Person };
-type Game = { round: number; pairs?: Pair[]; wishes: Record<string, string[]>; addresses: Record<string, string> };
+type Game = {
+  round: number;
+  exclude: string[][];
+  pairs?: Pair[];
+  wishes: Record<string, string[]>;
+  addresses: Record<string, string>;
+  sent: Record<string, { deliveryId: string | null }>;
+};
 type Settings = {
   action?: string;
   people?: Person[];
@@ -43,7 +50,7 @@ function option(command: string, name: string): string | null {
 }
 
 class Hat {
-  file: string | null = JSON.stringify({ round: 0, wishes: {}, addresses: {}, sent: {} });
+  file: string | null = JSON.stringify({ round: 0, exclude: [], wishes: {}, addresses: {}, sent: {} });
   sent: Sent[] = [];
   refuse = new Set<string>();
   states = new Map<string, string>();
@@ -75,17 +82,21 @@ class Hat {
   }
 
   private shell(command: string) {
+    // Like the real command: only `delivery:` ids, and the states queued, delivered and failed.
     if (command.startsWith("message delivery show ")) {
-      const state = this.states.get(unquote(command.slice("message delivery show ".length)));
+      const id = unquote(command.slice("message delivery show ".length));
+      if (!id.startsWith("delivery:")) return { status: "completed", exitCode: 1, output: "Contact delivery id is invalid" };
+      const state = this.states.get(id);
       return state
-        ? { status: "completed", exitCode: 0, output: `delivery_state=${state}\n` }
-        : { status: "completed", exitCode: 1, output: "delivery not found" };
+        ? { status: "completed", exitCode: 0, output: `delivery_id=${id}\ndelivery_state=${state}\n` }
+        : { status: "completed", exitCode: 1, output: `delivery not found: ${id}` };
     }
     if (!command.startsWith("message send ")) throw new Error(`unexpected command: ${command}`);
-    const sent = { to: option(command, "to") ?? "", message: option(command, "message") ?? "", key: option(command, "delivery-id") };
-    if (this.refuse.has(sent.to)) return { status: "completed", exitCode: 1, output: "refused" };
+    const to = option(command, "to") ?? "";
+    if (this.refuse.has(to)) return { status: "completed", exitCode: 1, output: "refused" };
+    const sent = { to, message: option(command, "message") ?? "", key: option(command, "delivery-id"), id: `delivery:${this.sent.length + 1}` };
     this.sent.push(sent);
-    return { status: "completed", exitCode: 0, output: "accepted=true\n" };
+    return { status: "completed", exitCode: 0, output: `accepted=true\ndelivery_id=${sent.id}\ndelivery_state=queued\n` };
   }
 }
 
@@ -150,23 +161,27 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(first.length).every((s) => s.message.startsWith("New match") && !first.includes(s.key))).toBe(true);
   });
 
-  it("resends only matches never accepted or failed for good, with the same text", async () => {
+  it("resends only matches never accepted or failed, with the same text", async () => {
     const hat = new Hat();
     hat.refuse.add("c:bob");
     expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: ["Bob"] }));
+    expect(Object.keys(hat.game.sent)).toHaveLength(PEOPLE.length - 1);
 
-    const delivered = hat.sent[0];
-    const lost = hat.sent[1];
-    hat.states.set(delivered.key ?? "", "delivered");
-    hat.states.set(lost.key ?? "", "terminal");
+    const [delivered, lost, queued] = hat.sent;
+    hat.states.set(delivered.id, "delivered");
+    hat.states.set(lost.id, "failed");
+    hat.states.set(queued.id, "queued");
     hat.refuse.clear();
     const before = hat.sent.length;
     const report = await hat.run({ action: "resend" });
 
     const resent = hat.sent.slice(before);
     expect(resent.map((s) => s.to).sort()).toEqual(["c:bob", lost.to].sort());
-    expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2") });
-    expect(report).toEqual({ delivered: 1, onTheWay: 0, unknown: PEOPLE.length - 4, resent: 2, failed: [] });
+    expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2"), id: expect.any(String) });
+    expect(report).toEqual({
+      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, failed: [],
+      yours: expect.objectContaining({ replaces: false }),
+    });
   });
 
   it("forwards wishes and questions after the draw without returning the pair", async () => {
@@ -198,6 +213,32 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before)).toHaveLength(1);
     expect(hat.sent[before].message.startsWith("New match")).toBe(true);
     await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("is not in the draw");
+  });
+
+  it("saves the relink when your own owner gave to the leaver", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const leaver = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
+    const before = hat.sent.length;
+
+    const result = await hat.run({ action: "leave", contact: leaver });
+
+    expect(result).toEqual(expect.objectContaining({ yours: expect.objectContaining({ replaces: true }) }));
+    expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== leaver));
+    expect(hat.sent).toHaveLength(before);
+    const newRecipient = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
+    expect(await hat.run({ action: "wish", contact: newRecipient, value: "Tea", text: "Your recipient would like tea." })).toEqual({ forYourOwner: true });
+  });
+
+  it("refuses a relink that would pair people kept apart", async () => {
+    const hat = new Hat();
+    const [ana, bob, carla, dev] = PEOPLE;
+    const loop = [ana, bob, carla, dev];
+    hat.file = JSON.stringify({
+      round: 1, exclude: [["owner", "c:carla"]], wishes: {}, addresses: {}, sent: {},
+      pairs: loop.map((giver, i) => ({ giver, recipient: loop[(i + 1) % loop.length] })),
+    });
+    await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
   });
 
   it("stops when the file cannot be read instead of starting over", async () => {

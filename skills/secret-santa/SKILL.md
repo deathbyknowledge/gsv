@@ -45,7 +45,7 @@ The type changes delivery:
 Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && echo '{"round":0,"wishes":{},"addresses":{},"sent":{}}' > "$HOME/secret-santa/SLUG.json"
+mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{}}' > "$HOME/secret-santa/SLUG.json"
 r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[{"name":"NAME","contact":"owner"}],"exclude":[]}'
 ```
 
@@ -101,32 +101,32 @@ if (!read.ok || read.truncated) throw new Error(`Cannot read ${file}`);
 const game = JSON.parse(read.content);
 const save = () => fs.write({ target: "gsv", path, content: JSON.stringify(game) });
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
-const send = async (giver, message, key) => {
+// Returns the delivery id `message send` prints, or null when it was not accepted.
+const send = async (to, message, key) => {
   const id = key ? ` --delivery-id ${q(key)}` : "";
-  const sent = await shell(`message send --to ${q(giver)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
-  return sent.exitCode === 0;
+  const sent = await shell(`message send --to ${q(to)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
+  return sent.exitCode === 0 ? /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null : null;
 };
-const banned = (a, b) => exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
+const banned = (a, b) => game.exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
 const pairOf = (side, id) => {
   const pair = game.pairs.find((p) => p[side].contact === id);
   if (!pair) throw new Error(`${id} is not in the draw`);
   return pair;
 };
+const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces });
 const failed = [];
 let yours = null;
 
-// Saves the match text before sending, so a resend repeats exactly the same message.
-const sendMatch = async ({ giver, recipient }, replaces) => {
-  const match = { name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces };
-  if (giver.contact === "owner") { yours = match; return; }
-  const sent = { key: `santa:${file}:${game.round}:${giver.contact}:${recipient.contact}`, message: note(match), attempt: 1, accepted: false };
-  game.sent[giver.contact] = sent;
-  await save();
-  await deliver(giver, sent);
+// Records each match's exact text before anything is sent, so a resend repeats the same message.
+const prepare = (pair, replaces) => {
+  if (pair.giver.contact === "owner") { yours = matchOf(pair, replaces); return; }
+  const key = `santa:${file}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
+  game.sent[pair.giver.contact] = { key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
-const deliver = async (giver, sent) => {
-  if (!(await send(giver.contact, sent.message, `${sent.key}:${sent.attempt}`))) { failed.push(giver.name); return; }
-  sent.accepted = true;
+const deliver = async (giver) => {
+  const sent = game.sent[giver.contact];
+  sent.deliveryId = await send(giver.contact, sent.message, `${sent.key}:${sent.attempt}`);
+  if (!sent.deliveryId) failed.push(giver.name);
   await save();
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair.
@@ -135,7 +135,7 @@ const forward = async (side) => {
   if (!text) throw new Error("Write text to forward");
   const other = pairOf(side === "giver" ? "recipient" : "giver", contact)[side];
   if (other.contact === "owner") return { forYourOwner: true };
-  return { forwarded: await send(other.contact, text) };
+  return { forwarded: (await send(other.contact, text)) !== null };
 };
 
 if (action === "draw") {
@@ -149,6 +149,7 @@ if (action === "draw") {
     } while (a[0] >= 2 ** 32 - (2 ** 32 % n));
     return a[0] % n;
   };
+  game.exclude = exclude;
   let pairs;
   let tries = 0;
   do {
@@ -161,20 +162,22 @@ if (action === "draw") {
     pairs = order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
   } while (pairs.some((p) => banned(p.giver, p.recipient)));
   Object.assign(game, { round: game.round + 1, pairs, sent: {} });
-  for (const pair of pairs) await sendMatch(pair, redraw);
+  for (const pair of pairs) prepare(pair, redraw);
+  await save();
+  for (const { giver } of pairs) if (game.sent[giver.contact]) await deliver(giver);
   return { people: pairs.length, failed, yours };
 }
 if (action === "resend") {
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed };
-  for (const { giver } of game.pairs) {
-    const sent = game.sent[giver.contact];
-    if (!sent) continue;
-    if (!sent.accepted) { report.resent++; await deliver(giver, sent); continue; }
-    const shown = await shell(`message delivery show ${q(`${sent.key}:${sent.attempt}`)}`, { target: "gsv" });
+  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours };
+  for (const pair of game.pairs) {
+    const sent = game.sent[pair.giver.contact];
+    if (!sent) { report.yours = matchOf(pair, false); continue; }
+    if (!sent.deliveryId) { report.resent++; await deliver(pair.giver); continue; }
+    const shown = await shell(`message delivery show ${q(sent.deliveryId)}`, { target: "gsv" });
     const state = /delivery_state=(\w+)/.exec(shown.output)?.[1];
-    if (state === "terminal") { sent.attempt++; sent.accepted = false; report.resent++; await deliver(giver, sent); }
+    if (state === "failed") { sent.attempt++; report.resent++; await deliver(pair.giver); }
     else if (state === "delivered") report.delivered++;
-    else if (state) report.onTheWay++;
+    else if (state === "queued") report.onTheWay++;
     else report.unknown++;
   }
   return report;
@@ -199,15 +202,17 @@ if (action === "leave") {
   before.recipient = out.recipient;
   game.pairs = game.pairs.filter((p) => p !== out);
   delete game.sent[contact];
-  await sendMatch(before, true);
+  prepare(before, true);
+  await save();
+  if (game.sent[before.giver.contact]) await deliver(before.giver);
   return { people: game.pairs.length, failed, yours };
 }
 throw new Error(`Unknown action: ${action}`);
 ```
 
-- `yours` is set only when your owner plays and their match changed: tell them their match, the wishes and, on the remote type, the address for the order, and nothing else.
-- `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it.
-- `unknown` in a resend means the delivery record is gone, after about a week; check with that Ship rather than sending again.
+- `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
+- `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
+- In a resend, `onTheWay` matches are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
 - Update details with the people and exclusions, never with pairs.
 
 ### 4. Wishes and questions
