@@ -45,6 +45,8 @@ const whatsAppMessageSchema = z.object({
     id: z.string().optional(),
     group_id: z.string().optional(),
   }).passthrough().optional(),
+  /** What a message of type `unsupported` was, one the Cloud API withheld instead of delivering. */
+  unsupported: z.object({ type: z.string().optional() }).passthrough().optional(),
 }).passthrough();
 const whatsAppContactSchema = z.object({
   wa_id: z.string().optional(),
@@ -75,6 +77,10 @@ const whatsAppWebhookSchema = z.object({
 const SILENT_MESSAGE_TYPES = new Set(["request_welcome", "reaction", "system"]);
 /** Media message types relayed as attachments. */
 const MEDIA_MESSAGE_TYPES = new Set(["image", "video", "audio", "document", "sticker"]);
+/** What WhatsApp withholds that needs no answer: a change to an earlier message, a pin or a reaction. */
+const SILENT_WITHHELD_TYPES = new Set(["edit", "keep_in_chat", "pin", "reaction"]);
+/** What WhatsApp withholds that was a photo or video, as one of an album's can be. */
+const MEDIA_WITHHELD_TYPES = new Set(["gif", "image", "media_placeholder"]);
 
 /**
  * Who sent a peer event. The actor and surface are the person's address; when that address is
@@ -97,6 +103,11 @@ export type ManagedWhatsAppInbound = WhatsAppSender & {
   replyToId?: string;
   timestamp?: number;
   unsupportedContent: boolean;
+  /**
+   * Set when WhatsApp withheld the message instead of delivering it: a photo or video, or another
+   * message. The reply then asks for it again rather than listing what Ship can receive.
+   */
+  withheld?: "media" | "message";
 };
 
 /** A reply button pressed on an approval prompt this adapter sent. */
@@ -259,6 +270,12 @@ function normalizeMessage(
   const timestamp = timestampMilliseconds(message.timestamp);
   const profile = senderProfile(ids, contacts);
 
+  if (message.type === "unsupported") {
+    const what = message.unsupported?.type ?? "";
+    if (SILENT_WITHHELD_TYPES.has(what)) return null;
+    return unsupported(message.id, token, sender, profile, timestamp, MEDIA_WITHHELD_TYPES.has(what) ? "media" : "message");
+  }
+
   const choice = tappedChoice(message);
   if (message.type === "interactive" && choice === null) {
     const reply = message.interactive;
@@ -332,19 +349,19 @@ function unsupported(
   sender: WhatsAppSender,
   profile: SenderProfile,
   timestamp: number | undefined,
+  withheld?: ManagedWhatsAppInbound["withheld"],
 ): ManagedWhatsAppPeerEvent {
-  return {
-    kind: "message",
-    inbound: {
-      deliveryId: `message:${token}`,
-      messageId: messageId.trim(),
-      ...sender,
-      ...profile,
-      text: "",
-      timestamp,
-      unsupportedContent: true,
-    },
+  const inbound: ManagedWhatsAppInbound = {
+    deliveryId: `message:${token}`,
+    messageId: messageId.trim(),
+    ...sender,
+    ...profile,
+    text: "",
+    timestamp,
+    unsupportedContent: true,
   };
+  if (withheld) inbound.withheld = withheld;
+  return { kind: "message", inbound };
 }
 
 function locationText(

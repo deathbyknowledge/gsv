@@ -593,7 +593,10 @@ reports about the sender, since a sender without a Ship has no language
 preference: the Telegram app's language, or the WhatsApp number's calling code
 (or the country of a WhatsApp user ID). The shared
 `workers/adapters/shared/src/platform-replies.ts` owns the texts and accepts
-the move answers in any of them. Disconnect and credential revocation fence the old link immediately;
+the move answers in any of them. When WhatsApp withholds a message instead of
+delivering it (Cloud API type `unsupported`, as it can one photo of an album),
+the reply asks for that photo, video or message again rather than listing what
+Ship receives; a withheld edit, pin or reaction gets no reply. Disconnect and credential revocation fence the old link immediately;
 unfinished exact-generation remote cleanup remains durable retry state.
 
 A private message on the exact retained route of a password-revoked identity

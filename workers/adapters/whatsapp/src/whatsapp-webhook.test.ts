@@ -267,6 +267,31 @@ describe("WhatsApp webhook normalization", () => {
     expect(result.events.every((event) => event.kind === "message" && event.inbound.unsupportedContent && event.inbound.text === "")).toBe(true);
   });
 
+  it("tells what WhatsApp withheld: a photo of an album, a message it does not pass on, or nothing to answer", () => {
+    // Meta's shape for a message the Cloud API does not deliver; `unsupported.type` names what it was.
+    const errors = [{ code: 131051, title: "Message type unknown" }];
+    const withheld = (id: string, type: string) => ({ from: "34611111189", id, type: "unsupported", errors, unsupported: { type } });
+    const result = normalizeWhatsAppWebhook(notification([
+      withheld("wamid.album", "media_placeholder"),
+      withheld("wamid.photo", "image"),
+      withheld("wamid.gif", "gif"),
+      withheld("wamid.poll", "poll_creation"),
+      { from: "34611111189", id: "wamid.unnamed", type: "unsupported", errors },
+      withheld("wamid.edit", "edit"),
+      withheld("wamid.pin", "pin"),
+      withheld("wamid.reaction", "reaction"),
+      withheld("wamid.kept", "keep_in_chat"),
+    ]), PHONE_NUMBER_ID);
+    if (result.kind !== "accepted") throw new Error("expected accepted events");
+    expect(result.events.map((event) => event.kind === "message" ? [event.inbound.messageId, event.inbound.unsupportedContent, event.inbound.withheld] : event.kind)).toEqual([
+      ["wamid.album", true, "media"],
+      ["wamid.photo", true, "media"],
+      ["wamid.gif", true, "media"],
+      ["wamid.poll", true, "message"],
+      ["wamid.unnamed", true, "message"],
+    ]);
+  });
+
   it("ignores statuses, other numbers on the account, other fields and group traffic", () => {
     expect(normalizeWhatsAppWebhook(notification([], {
       statuses: [{ id: "wamid.sent", status: "delivered", timestamp: "1700000000", recipient_id: "34611111189" }],

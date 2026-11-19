@@ -26,6 +26,12 @@ export type PlatformReplies = {
   connected: (origin: string) => string;
   unsupported: string;
   mediaUnavailable: string;
+  /**
+   * What the messenger withheld instead of delivering, as WhatsApp can one photo of an album: asked
+   * for again, without listing what Ship receives, since the person may just have sent exactly that.
+   */
+  mediaWithheld: string;
+  messageWithheld: string;
 };
 
 /** Countries whose people get Spanish or Portuguese replies, by ISO 3166 code and calling code. */
@@ -76,6 +82,8 @@ const ENGLISH = (messenger: ReplyMessenger): PlatformReplies => {
     connected: (origin) => `Connected to ${origin}`,
     unsupported: `Ship could not receive that message type. Please send ${UNSUPPORTED_KINDS.en[messenger]}.`,
     mediaUnavailable: "Ship could not receive that attachment. Please send a smaller file or try again.",
+    mediaWithheld: `One of your photos or videos didn’t come through from ${messenger}. Please send it again.`,
+    messageWithheld: `${messenger} didn’t pass that message on to Ship. Please try sending it another way.`,
   };
 };
 
@@ -96,6 +104,8 @@ const SPANISH = (messenger: ReplyMessenger): PlatformReplies => {
     connected: (origin) => `Conectado a ${origin}`,
     unsupported: `Ship no puede recibir este tipo de mensaje. Envía ${UNSUPPORTED_KINDS.es[messenger]}.`,
     mediaUnavailable: "Ship no ha podido recibir ese archivo. Envía uno más pequeño o inténtalo de nuevo.",
+    mediaWithheld: `Una de las fotos o vídeos que has enviado no ha llegado desde ${messenger}. Vuelve a enviarla.`,
+    messageWithheld: `${messenger} no le ha pasado ese mensaje a Ship. Prueba a enviarlo de otra forma.`,
   };
 };
 
@@ -116,6 +126,8 @@ const PORTUGUESE = (messenger: ReplyMessenger): PlatformReplies => {
     connected: (origin) => `Conectado a ${origin}`,
     unsupported: `O Ship não consegue receber este tipo de mensagem. Envie ${UNSUPPORTED_KINDS.pt[messenger]}.`,
     mediaUnavailable: "O Ship não conseguiu receber esse anexo. Envie um anexo menor ou tente de novo.",
+    mediaWithheld: `Uma das fotos ou vídeos que enviou não chegou pelo ${messenger}. Envie de novo.`,
+    messageWithheld: `O ${messenger} não passou essa mensagem ao Ship. Tente enviá-la de outra forma.`,
   };
 };
 

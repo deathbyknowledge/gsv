@@ -167,6 +167,7 @@ type MessageContent =
   | { type: "audio"; audio: { id: string; mime_type: string; voice: boolean } }
   | { type: "image"; image: { id: string; mime_type: string } }
   | { type: "contacts"; contacts: { name: { formatted_name: string } }[] }
+  | { type: "unsupported"; errors: { code: number; title: string }[]; unsupported: { type: string } }
   | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } }
   | { type: "button"; context: { from: string; id: string }; button: { payload: string; text: string } };
 
@@ -966,6 +967,22 @@ describe("managed WhatsApp clean-instance flow", () => {
     }
     await expect(sending).resolves.toMatchObject({ ok: true });
     expect((await sentMessages()).filter((record) => record.body.text?.body === "Notification in flight")).toHaveLength(0);
+  });
+
+  it("asks a linked person to resend an album photo WhatsApp withheld, and answers nothing for an edit", async () => {
+    await linkedPeer("open");
+    const withheld = (type: string) => ({ type: "unsupported" as const, errors: [{ code: 131051, title: "Message type unknown" }], unsupported: { type } });
+    expect((await SELF.fetch(await notification("wamid.in.edit", withheld("edit")))).status).toBe(200);
+    expect((await SELF.fetch(await notification("wamid.in.album", withheld("media_placeholder")))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await sentMessages()).toContainEqual(expect.objectContaining({
+        body: expect.objectContaining({
+          text: expect.objectContaining({ body: "Una de las fotos o vídeos que has enviado no ha llegado desde WhatsApp. Vuelve a enviarla." }),
+          context: { message_id: "wamid.in.album" },
+        }),
+      }));
+    });
+    expect((await sentMessages()).some((record) => record.body.context?.message_id === "wamid.in.edit")).toBe(false);
   });
 
   it("delivers once even if a reply reopens the window while Meta rejects the earlier send", async () => {

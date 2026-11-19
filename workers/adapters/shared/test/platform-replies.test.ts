@@ -64,6 +64,15 @@ describe("platform replies", () => {
     expect(platformReplies("Telegram", "es").unsupported).toContain("archivo adjunto compatible");
   });
 
+  it("asks again for what WhatsApp withheld without listing types the person may just have sent", () => {
+    expect(platformReplies("WhatsApp", "en").mediaWithheld).toBe("One of your photos or videos didn’t come through from WhatsApp. Please send it again.");
+    expect(platformReplies("WhatsApp", "es").mediaWithheld).toBe("Una de las fotos o vídeos que has enviado no ha llegado desde WhatsApp. Vuelve a enviarla.");
+    expect(platformReplies("WhatsApp", "pt").mediaWithheld).toBe("Uma das fotos ou vídeos que enviou não chegou pelo WhatsApp. Envie de novo.");
+    expect(platformReplies("WhatsApp", "en").messageWithheld).toBe("WhatsApp didn’t pass that message on to Ship. Please try sending it another way.");
+    expect(platformReplies("WhatsApp", "es").messageWithheld).toBe("WhatsApp no le ha pasado ese mensaje a Ship. Prueba a enviarlo de otra forma.");
+    expect(platformReplies("WhatsApp", "pt").messageWithheld).toBe("O WhatsApp não passou essa mensagem ao Ship. Tente enviá-la de outra forma.");
+  });
+
   it("takes the move answers in any reply language, only while the question is open", () => {
     const move = { expiresAt: 2_000 };
     for (const language of ["en", "es", "pt"] as const) {
