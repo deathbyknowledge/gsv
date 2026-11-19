@@ -142,8 +142,8 @@ function describeAdapterHilRequest(request: ProcHilRequest): string {
     case "fs.edit": return `edit a file ${place}`;
     case "fs.delete": return `delete a file ${place}`;
     case "net.fetch": return `fetch a web address ${place}`;
-    case "sched.add": return "schedule work to run later";
-    case "sched.update": return "change scheduled work";
+    case "sched.add": return "add a routine";
+    case "sched.update": return "update a routine";
     case "approach.create": {
       const recipient = messageRecipient(request.args);
       return recipient ? `send a message request to ${recipient}` : "send a message request";

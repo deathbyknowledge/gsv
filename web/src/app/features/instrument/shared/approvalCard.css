@@ -82,6 +82,8 @@
 
 /* a publish names who it speaks as, each change, and the files it carries */
 .zen-approval .approval-publish { margin-top: 8px; color: var(--text); }
+/* the words someone who is not a contact yet will read, in prose like the sentence above */
+.zen-approval .approval-message { margin: 8px 0 0; font-family: var(--gsv-font-prose); line-height: 1.4; color: var(--text); max-width: var(--measure-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
 .zen-approval .approval-publish p { margin: 0; }
 .zen-approval .approval-publish ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .zen-approval .approval-handle { color: var(--accent); cursor: help; }

@@ -50,6 +50,7 @@ describe("agent tool approval options", () => {
     expect(humanToolCapabilityLabel("sched.add")).toBe("Add a routine");
     expect(humanToolCapabilityLabel("sched.*")).toBe("Routines");
     expect(ruleCapabilityLabel("sched.add")).toBe("Add a routine");
+    expect(ruleCapabilityLabel("event.source.update")).toBe("Change an event source");
     expect(ruleCapabilityLabel("sched.*")).toBe("Routines");
     expect(ruleCapabilityLabel("sched.remove")).toBe("Routines · sched.remove");
     expect(ruleCapabilityLabel("sys.instance.stop")).toBe("Cloud browsers and computers · sys.instance.stop");

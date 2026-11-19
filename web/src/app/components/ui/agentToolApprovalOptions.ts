@@ -168,6 +168,7 @@ const GRANT_LABELS = new Map(Object.entries({
   "sched.list": "approval.match.schedList",
   "sched.add": "approval.match.schedAdd",
   "sched.update": "approval.match.schedUpdate",
+  "event.source.update": "approval.match.eventSourceUpdate",
 } satisfies Record<string, TextKey>));
 
 /** What each family of capabilities is about, keyed by the id prefix it covers. A wildcard grant such as

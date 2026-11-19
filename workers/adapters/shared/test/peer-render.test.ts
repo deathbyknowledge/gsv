@@ -131,7 +131,7 @@ describe("renderAdapterSend", () => {
     expect(createAdapterHilPresentation(context, request).action)
       .toBe(`Tidy up the morning routine.\n${shown}`);
     expect(createAdapterHilPresentation(context, { ...request, purpose: undefined }).action)
-      .toBe(`Schedule work to run later.\n${shown}`);
+      .toBe(`Add a routine.\n${shown}`);
     expect(createAdapterHilPresentation(context, { ...request, args: { name: "digest" } }).action)
       .toBe("Tidy up the morning routine.");
   });
@@ -281,7 +281,7 @@ describe("renderAdapterSend", () => {
         processId: "proc-1", runId: "run-1", processMode: "ship", hil: request,
       }, request).action;
     };
-    expect(ask("sched.update", { id: "routine-1" })).toBe("Change scheduled work.");
+    expect(ask("sched.update", { id: "routine-1" })).toBe("Update a routine.");
     expect(ask("event.source.update", { name: "github", ship: "wake" })).toBe("Let events from github wake Ship.");
     expect(ask("sys.mcp.call", { serverId: "mcp-1234", name: "create_issue" })).toBe("Use create_issue from a connected app.");
     expect(ask("contact.preferences.update", {})).toBe("Take an action in Ship's home.");

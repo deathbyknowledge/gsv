@@ -138,7 +138,7 @@ describe("mock gateway", () => {
     const client = await connectedClient();
     const raised: JsonValue[] = [];
     client.onSignal((signal, payload) => { if (signal === "proc.run.hil.requested" && payload !== undefined) raised.push(payload); });
-    for (const text of ["/approve-old", "/approve-mail", "/approve-file", "/approve-publish"]) {
+    for (const text of ["/approve-old", "/approve-mail", "/approve-file", "/approve-publish", "/approve-request", "/approve-request-old"]) {
       await client.request("conversation.send", { conversationId: "c-ship", text, idempotencyKey: text });
       await vi.runAllTimersAsync();
       const request = hilSchema.parse(raised.at(-1));
@@ -150,8 +150,11 @@ describe("mock gateway", () => {
       { syscall: "mail.send", purpose: expect.stringContaining("Mike") },
       { syscall: "fs.write", target: "studio", purpose: expect.stringContaining("notes") },
       { syscall: "atproto.write", target: "gsv", args: expect.objectContaining({ handle: "esteve", address: "esteve.ship.space" }) },
+      { syscall: "approach.create", target: "gsv", args: expect.objectContaining({ recipient: "maya.ship.space" }), purpose: expect.stringContaining("Maya") },
+      { syscall: "approach.create", target: "gsv" },
     ]);
     expect(hilSchema.parse(raised[0])).not.toHaveProperty("purpose");
+    expect(hilSchema.parse(raised[5])).not.toHaveProperty("purpose");
   });
 
   it("reads fixture files the way the gateway does: limited text, images, references, and refused binaries", async () => {

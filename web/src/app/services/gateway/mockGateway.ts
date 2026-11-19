@@ -28,6 +28,7 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   /approve-request, /approve-request-old   a message request to someone new, with and without a purpose
  *   /starters  a sketch of a welcome that opens with three things Ship can start right now: each Ship
  *              message offers replies to tap, and any answer, tapped or typed, moves it to the next step
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
@@ -450,8 +451,8 @@ type Step = {
   /** Hidden reasoning, a thinking block on the note record. */
   thought: string;
   place: "studio" | "gsv";
-  tool: "Shell" | "Read" | "Write" | "Search" | "mail.send";
-  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send" | "atproto.write";
+  tool: "Shell" | "Read" | "Write" | "Search" | "mail.send" | "approach.create";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send" | "atproto.write" | "approach.create";
   args: JsonObject;
   purpose?: string;
   /** How long the tool runs, before a little jitter. */
@@ -665,6 +666,19 @@ function approvalFor(trigger: string): ApprovalScenario | null {
       },
       approved: "Published your note with the photo.", denied: "Not published. Nothing went to the open network.",
     };
+  }
+  if (trigger === "/approve-request" || trigger === "/approve-request-old") {
+    // The Kernel asks about a message request itself, so the request carries the syscall as its tool.
+    const step: Step = {
+      think: "", thought: "Ask before reaching someone who is not a contact yet.", place: "gsv", tool: "approach.create", syscall: "approach.create",
+      args: {
+        recipient: "maya.ship.space", did: "did:plc:mockmaya", profileCid: "bafymockprofile", displayName: "Esteve",
+        text: "Hi Maya, this is Esteve's Ship. Esteve would like to stay in touch here.", idempotencyKey: "mock-request-1", shipHandlesMessages: false,
+      },
+      ms: 700, output: { ok: true },
+    };
+    if (trigger === "/approve-request") step.purpose = "send Maya the message request you asked for";
+    return { step, approved: "Sent Maya a message request. She decides whether to accept.", denied: "Okay, I didn't send it." };
   }
   if (trigger === "/approve-file") {
     const path = "/Users/esteve/Notes/granola-windows.md";

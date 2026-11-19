@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
-import { approvalAnswer, hilDetailLabel, hilPublication, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { approvalAnswer, hilDetailLabel, hilMessageLine, hilPublication, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
@@ -93,9 +93,38 @@ describe("HIL request wording", () => {
       lead: "none",
       text: "/var/spool/cron/sam\n0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt",
     });
-    expect(hilRequestSentence(crontab, "Home")).toBe("Schedule work to run later");
+    expect(hilRequestSentence(crontab, "Home")).toBe("Add a routine");
     expect(hilRequestLine({ ...crontab, args: { name: "digest", target: { kind: "command.exec" } } }))
       .toEqual({ lead: "place", text: "add" });
+  });
+
+  it("words what Ship asks about itself, and shows who a message request reaches and what it says", () => {
+    const request = {
+      ...BASE_REQUEST,
+      toolName: "approach.create",
+      syscall: "approach.create",
+      target: "gsv",
+      args: {
+        recipient: "jessica.ship.space", did: "did:plc:abc", profileCid: "bafyabc", displayName: "Juliette",
+        text: "Salut Jessica, c'est le Ship de Juliette.", idempotencyKey: "key-1", shipHandlesMessages: false,
+      },
+    };
+    expect(hilRequestSentence(request, "Home")).toBe("Send a message request to @jessica.ship.space");
+    expect(hilMessageLine(request)).toBe("“Salut Jessica, c'est le Ship de Juliette.”");
+    expect(hilMessageLine({ ...request, purpose: "Envoyer l'invitation à Jessica" }))
+      .toBe("To @jessica.ship.space: “Salut Jessica, c'est le Ship de Juliette.”");
+    // The words are on the card; the fold keeps the full request rather than a line of its ids.
+    expect(hilRequestLine(request)).toBeNull();
+    expect(hilMessageLine(shell)).toBeNull();
+
+    const routine = { ...BASE_REQUEST, toolName: "sched.update", syscall: "sched.update", target: "gsv", args: { id: "routine-1", patch: { enabled: true } } };
+    expect(hilRequestSentence(routine, "Home")).toBe("Update a routine");
+    expect(hilRequestLine(routine)).toBeNull();
+
+    const source = { ...BASE_REQUEST, toolName: "event.source.update", syscall: "event.source.update", target: "gsv", args: { name: "github", ship: "wake" } };
+    expect(hilRequestSentence(source, "Home")).toBe("Let events from github wake Ship");
+    expect(hilRequestSentence({ ...source, args: { name: "github", ship: "context" } }, "Home")).toBe("Change how Ship handles events from github");
+    expect(hilRequestLine(source)).toBeNull();
   });
 
   it("folds the request as a terminal line, a plain verb, or the tool's name, never the syscall id", () => {
