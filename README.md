@@ -18,8 +18,8 @@
 
 ## What is Ship?
 
-**Ship is an open-source personal AI assistant for the things you keep meaning
-to do.** Tell it what needs doing in your browser, on WhatsApp or on Telegram.
+**Ship is an open-source personal AI assistant, built in Europe, for the things
+you keep meaning to do.** Tell it what needs doing in your browser, on WhatsApp or on Telegram.
 Ship researches the options, uses the tools and accounts you connect, checks
 with you before anything important, and follows up until the job is done.
 
@@ -53,7 +53,7 @@ Culture novels. Ship takes its name from them too.
 | | |
 | --- | --- |
 | **What it is** | An open-source personal AI assistant that remembers you and follows through on tasks |
-| **Made by** | [Humans & Machines, Inc.](https://humansandmachin.es) |
+| **Made by** | [Humans & Machines, Inc.](https://humansandmachin.es), built in Europe |
 | **Built on** | [GSV](#what-is-gsv), the open-source stack in this repository |
 | **License** | MIT |
 | **How to use it** | Hosted at [ship.space](https://ship.space), free during early access, or self-hosted on your own Cloudflare account |
