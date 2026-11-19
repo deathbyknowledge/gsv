@@ -155,6 +155,20 @@ describe.sequential("secret-santa hat script", () => {
     await expect(new Hat().run({ people: PEOPLE.slice(0, 2), exclude: [] })).rejects.toThrow("at least 3");
   });
 
+  it("waits for earlier matches on their way before a redraw", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    hat.states.set(hat.sent[0].id, "queued");
+    const before = hat.sent.length;
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("still on their way");
+    expect(hat.sent).toHaveLength(before);
+    expect(hat.game.round).toBe(1);
+
+    hat.states.set(hat.sent[0].id, "delivered");
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true });
+    expect(hat.game.round).toBe(2);
+  });
+
   it("redraws under a new round with new delivery ids", async () => {
     const hat = new Hat();
     await hat.run({ people: PEOPLE, exclude: [] });
@@ -235,6 +249,33 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before)).toHaveLength(1);
     expect(hat.sent[before].message.startsWith("New match")).toBe(true);
     await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("is not in the draw");
+  });
+
+  it("drops messages about a leaver so a resend can't pass them on", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    const leaver = pair?.recipient.contact ?? "";
+    hat.refuse.add(giver);
+    await hat.run({ action: "address", contact: leaver, value: "Rua Y 2, Porto", text: "Their address is Rua Y 2, Porto." });
+    expect(hat.game.forwards).toHaveLength(1);
+    hat.refuse.clear();
+
+    await hat.run({ action: "leave", contact: leaver });
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+
+    expect(hat.game.forwards).toEqual([]);
+    expect(hat.sent.slice(before).some((s) => s.message.includes("Porto"))).toBe(false);
+  });
+
+  it("deletes a leaver's data even when the relink is refused", async () => {
+    const hat = new Hat();
+    await hat.run({ action: "address", contact: "c:bob", value: "Rua Z 3, Faro" });
+    await hat.run({ people: PEOPLE.slice(0, 3), exclude: [] });
+    await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
+    expect(hat.game.addresses["c:bob"]).toBeUndefined();
   });
 
   it("saves the relink when your own owner gave to the leaver", async () => {

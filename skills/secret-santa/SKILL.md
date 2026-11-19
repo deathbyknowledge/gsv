@@ -74,11 +74,11 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 
 Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving and resending. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
 
-- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one.
+- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
-- **`leave`**: removes `contact`'s address and wishes. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -127,6 +127,7 @@ const prepare = (pair, replaces) => {
   const key = `santa:${file}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
   game.sent[pair.giver.contact] = { to: pair.giver.contact, who: pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
+const stateOf = async (record) => /delivery_state=(\w+)/.exec((await shell(`message delivery show ${q(record.deliveryId)}`, { target: "gsv" })).output)?.[1];
 const deliver = async (record) => {
   record.deliveryId = await send(record.to, record.message, `${record.key}:${record.attempt}`);
   if (!record.deliveryId) failed.push(record.who);
@@ -138,7 +139,7 @@ const forward = async (side) => {
   if (!text) throw new Error("Write text to forward");
   const other = pairOf(side === "giver" ? "recipient" : "giver", contact)[side];
   if (other.contact === "owner") return { forYourOwner: true };
-  const record = { to: other.contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${game.forwards.length + 1}`, message: text, attempt: 1, deliveryId: null };
+  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${game.forwards.length + 1}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   await deliver(record);
@@ -147,6 +148,10 @@ const forward = async (side) => {
 
 if (action === "draw") {
   if (game.pairs && !redraw) throw new Error("Already drawn: use resend, or set redraw");
+  // A replaced match still on its way could arrive after its replacement.
+  for (const record of [...Object.values(game.sent), ...game.forwards]) {
+    if (record.deliveryId && (await stateOf(record)) === "queued") throw new Error("Earlier messages are still on their way: redraw once they arrive");
+  }
   if (people.length < 3) throw new Error("A draw needs at least 3 people");
   if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
   const rand = (n) => {
@@ -202,8 +207,7 @@ if (action === "resend") {
   const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours: owned ? matchOf(owned, false) : null };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
-    const shown = await shell(`message delivery show ${q(record.deliveryId)}`, { target: "gsv" });
-    const state = /delivery_state=(\w+)/.exec(shown.output)?.[1];
+    const state = await stateOf(record);
     if (state === "failed") { record.attempt++; report.resent++; await deliver(record); }
     else if (state === "delivered") report.delivered++;
     else if (state === "queued") report.onTheWay++;
@@ -222,9 +226,12 @@ if (action === "ask") {
   return forward(to);
 }
 if (action === "leave") {
+  // Their data and any message to or about them go first, even if the relink is refused.
   delete game.addresses[contact];
   delete game.wishes[contact];
-  if (!game.pairs) { await save(); return { left: true }; }
+  game.forwards = game.forwards.filter((f) => f.to !== contact && f.about !== contact);
+  await save();
+  if (!game.pairs) return { left: true };
   const out = pairOf("giver", contact);
   const before = pairOf("recipient", contact);
   if (game.pairs.length < 4 || banned(before.giver, out.recipient)) throw new Error("Re-linking breaks the draw: ask for a full redraw");
