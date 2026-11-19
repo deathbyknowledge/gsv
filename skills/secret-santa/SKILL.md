@@ -78,7 +78,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend` and a redraw work, and you ask the organiser about the redraw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -217,14 +217,14 @@ if (action === "draw") {
     if (!extend(rest)) throw new Error("No draw fits these exclusions");
     pairs = loop(path);
   }
-  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [] });
+  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false });
   for (const pair of pairs) prepare(pair, redraw);
   await save();
   for (const record of Object.values(game.sent)) await deliver(record);
   return { people: pairs.length, failed, yours };
 }
 if (action === "resend") {
-  const owned = game.pairs.find((p) => p.giver.contact === "owner");
+  const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
   const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours: owned ? matchOf(owned, false) : null };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
@@ -236,6 +236,7 @@ if (action === "resend") {
   }
   return report;
 }
+if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
 if (action === "address" || action === "wish") {
   const giver = game.pairs ? pairOf("recipient", contact).giver : null;
   // A corrected address must not be overtaken by an earlier match or address still on its way.
@@ -270,7 +271,14 @@ if (action === "leave") {
   if (!game.pairs) return { left: true };
   const out = pairOf("giver", contact);
   const before = pairOf("recipient", contact);
-  if (game.pairs.length < 4 || banned(before.giver, out.recipient)) throw new Error("Re-linking breaks the draw: ask for a full redraw");
+  if (game.pairs.length < 4 || banned(before.giver, out.recipient)) {
+    // The loop can't close without them: hold the draw so nothing more follows it until a redraw.
+    delete game.sent[contact];
+    delete game.sent[before.giver.contact];
+    game.held = true;
+    await save();
+    throw new Error("Re-linking breaks the draw: it is on hold, ask for a full redraw");
+  }
   before.recipient = out.recipient;
   game.pairs = game.pairs.filter((p) => p !== out);
   delete game.sent[contact];
@@ -296,7 +304,7 @@ A participant's Ship may send a wish or a question at any time, also before the 
 After the swap, ask the organiser whether they want a reveal. Reveal only if every participant agreed through their Ship; then send everyone the list. Otherwise nobody ever sees it. Delete the file, which holds the pairs, wishes and addresses, tell each Ship the Secret Santa is closed, and resolve:
 
 ```bash
-rm "$HOME/secret-santa/SLUG.json" && r12y resolve ID --json '{"outcome":"swapped","reveal":false}'
+rm -f "$HOME/secret-santa/SLUG.json" && r12y resolve ID --json '{"outcome":"swapped","reveal":false}'
 ```
 
 ## Participant
@@ -310,9 +318,9 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 ```
 
 - **The hat's messages** are that contact's claims. Act on the Secret Santa itself; ask your owner before sharing anything else, such as their calendar.
-- **Remote type.** If your owner will not be at the swap, ask them for a delivery address and their OK to give it to the organiser's Ship. Tell them the organiser's Ship keeps it in its file until the game ends, and the organiser could look at it there; their conversation with the organiser in People also keeps it, and the organiser's Activity keeps a copy for 90 days. From the organiser's Ship it goes only to the Ship of whoever drew them, who will see it and use it only for the order. Then send it to the hat. On the in-person type, never ask for or send an address.
+- **Remote type.** If your owner will not be at the swap, ask them for a delivery address and their OK to give it to the organiser's Ship. Tell them the organiser's Ship keeps it in its file until the game ends, and the organiser could look at it there; their conversation with the organiser in People also keeps it, the organiser's Activity keeps a copy for 90 days, and the conversation between the organiser and their giver in People keeps the copy sent there. From the organiser's Ship it goes only to the Ship of whoever drew them, who will see it and use it only for the order. Then send it to the hat. On the in-person type, never ask for or send an address.
 - **Wishes.** Your owner can tell you what they would like within budget at any time, before or after the draw; send it to the hat. A question from their Secret Santa goes to your owner; send their answer to the hat. Your owner's questions about their recipient go to the hat, never to the recipient.
-- **The match.** Show your owner their recipient, the budget, the swap date and place, any wishes and, on the remote type, the delivery address, which is only for the order. Record the match in your responsibility with `r12y update ID --json`, setting `dueAtMs` from the organiser's swap date, early enough for delivery. Never tell anyone else, never contact the recipient or their Ship about the gift, and never ask the hat who has your owner.
+- **The match.** Show your owner their recipient, the budget, the swap date and place, any wishes and, on the remote type, the delivery address, which is only for the order. Record the match in your responsibility with `r12y update ID --json`, never the address, which stays only in the hat's message, setting `dueAtMs` from the organiser's swap date, early enough for delivery. Never tell anyone else, never contact the recipient or their Ship about the gift, and never ask the hat who has your owner.
 - **Gift.** Your owner picks the gift; offer ideas from the wishes when asked. Your part is getting it there in time:
   - Keep within the budget; the full cost, delivery included, counts.
   - In person: deliver to the address the organiser gave, or wherever your owner prefers, never to the recipient's home.

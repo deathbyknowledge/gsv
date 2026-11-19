@@ -402,6 +402,14 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ people: PEOPLE.slice(0, 3), exclude: [] });
     await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
     expect(hat.game.addresses["c:bob"]).toBeUndefined();
+
+    // The draw is on hold: nothing follows the old loop, and a resend never replays Bob's match.
+    await expect(hat.run({ action: "wish", contact: "c:carla", value: "Tea", text: "Tea, please." })).rejects.toThrow("on hold");
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent.slice(before).some((s) => s.to === "c:bob")).toBe(false);
+    await hat.run({ people: [PEOPLE[0], PEOPLE[2], PEOPLE[3]], exclude: [], redraw: true });
+    expect(await hat.run({ action: "wish", contact: "c:carla", value: "Tea", text: "Tea, please." })).not.toEqual(expect.objectContaining({ kept: true }));
   });
 
   it("saves the relink when your own owner gave to the leaver", async () => {
