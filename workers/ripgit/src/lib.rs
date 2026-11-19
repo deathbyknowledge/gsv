@@ -172,7 +172,7 @@ async fn serve(req: Request, env: &Env) -> Result<Response> {
 
     Response::from_json(&serde_json::json!({
         "name": "ripgit",
-        "version": "0.7.9",
+        "version": "0.7.10",
         "description": "Git remote backed by Cloudflare Durable Objects"
     }))
 }
