@@ -23,9 +23,11 @@ to do.** Tell it what needs doing in your browser, on WhatsApp or on Telegram.
 Ship researches the options, uses the tools and accounts you connect, checks
 with you before anything important, and follows up until the job is done.
 
-Ship (formerly GSV) is made by [Humans & Machines, Inc.](https://humansandmachin.es)
-and released under the MIT license. Use the hosted Ship for free during early
-access, or run your own on infrastructure you control.
+Ship is built on **[GSV](#what-is-gsv)**, the open-source personal intelligence
+stack in this repository, and made by
+[Humans & Machines, Inc.](https://humansandmachin.es) The code is MIT-licensed.
+Use the hosted Ship for free during early access, or deploy GSV and run your own
+Ship on infrastructure you control.
 
 **[Try Ship →](https://signup.ship.space)** ·
 [Watch the 18-second demo](https://ship.space/#demo) · [Website](https://ship.space) ·
@@ -38,7 +40,7 @@ access, or run your own on infrastructure you control.
 | --- | --- |
 | **What it is** | An open-source personal AI assistant that remembers you and follows through on tasks |
 | **Made by** | [Humans & Machines, Inc.](https://humansandmachin.es) |
-| **Formerly** | GSV (General Systems Vehicle) |
+| **Built on** | [GSV](#what-is-gsv), the open-source personal intelligence stack in this repository |
 | **License** | MIT |
 | **How to use it** | Hosted at [ship.space](https://ship.space), free during early access, or self-hosted on your own Cloudflare account |
 | **Where you talk to it** | Web app, Desktop app (macOS, Windows, Linux), `gsv` CLI, WhatsApp, Telegram, Slack, Discord |
@@ -122,8 +124,8 @@ working between conversations and messages you when something changes.
 ### How is Ship different from other self-hosted AI agents?
 
 Most self-hosted agents run as one process on one machine that you keep alive: a
-laptop, a VPS or a container. Ship's control plane runs on Cloudflare's edge,
-so it stays reachable while your machines sleep, and it treats every computer
+laptop, a VPS or a container. Ship runs on GSV, whose control plane lives on
+Cloudflare's edge, so Ship stays reachable while your machines sleep, and it treats every computer
 and browser you connect as part of one system. Its agents are durable processes
 with their own identity, history, permissions and memory.
 
@@ -137,14 +139,15 @@ and any AI provider you use.
 
 ### Is Ship open source?
 
-Yes. The Ship runtime, Accounts, inference execution and deployment components
-are MIT-licensed in this repository. You can read the code, contribute, or run
-your own Ship.
+Yes. Ship is built on GSV, and GSV's runtime, Accounts, inference execution
+and deployment components are MIT-licensed in this repository. You can read the
+code, contribute, or run your own Ship.
 
 ### Can I self-host Ship?
 
-Yes, in your own Cloudflare account. See [Self-host Ship](#self-host-ship).
-Running Ship entirely off Cloudflare is not supported yet.
+Yes. Deploy GSV to your own Cloudflare account and it runs your own Ship. See
+[Self-host Ship](#self-host-ship). Running GSV entirely off Cloudflare is not
+supported yet.
 
 ### Can I bring my own API keys or local models?
 
@@ -187,13 +190,35 @@ messages sent through it. Connected computers use outbound connections, so
 pairing never opens inbound ports. Only what you choose to make public reaches
 the open network.
 
-### Why is it called Ship? What is GSV?
+### What is GSV?
 
-Ship is named for the General Systems Vehicles in Iain M. Banks' Culture novels,
-vast ship-Minds that look after their crew. Ship is the product name. GSV remains
-the name of the underlying runtime, the `gsv` CLI and technical identifiers.
+GSV is the open-source stack that Ship is built on: a distributed operating
+environment for personal intelligence. It runs a lightweight control plane on
+Cloudflare's edge, treats agents as durable processes with their own identity,
+memory and permissions, and lets them work across the computers, browsers and
+services you connect through one set of capability-gated syscalls. GSV stands
+for General Systems Vehicle. See [GSV: the stack behind Ship](#gsv-the-stack-behind-ship).
+
+### How are Ship and GSV related?
+
+Ship is the product: the personal AI assistant you talk to. GSV is the stack
+underneath it: the runtime, protocol, CLI and deployment in this repository.
+The hosted Ship at [ship.space](https://ship.space) runs on GSV, and anyone can
+deploy GSV to run their own Ship. Technical names keep the GSV identity: the
+`deathbyknowledge/gsv` repository, the `gsv` CLI, the `gsv` target and `.gsv`
+folders. Earlier releases also used GSV as the product name, so older posts and
+links may call the whole thing GSV.
+
+### Why is it called Ship?
+
+Both names come from Iain M. Banks' Culture novels, where General Systems
+Vehicles are vast ship-Minds that look after their crew. Ship is the Mind; your
+devices are the crew.
 
 ## Self-host Ship
+
+Self-hosting deploys the GSV stack into your own Cloudflare account. Your Ship's
+state then lives in infrastructure you control.
 
 **Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up)
 on [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), a
@@ -271,11 +296,12 @@ Ship can now use the shell and files on that machine. To connect a browser,
 Connect messengers under **Settings → Messengers**; see
 [Connect a messenger](docs/how-to/messengers.md).
 
-## Architecture
+## GSV: the stack behind Ship
 
-Under the hood, GSV is a distributed operating environment for personal
-intelligence. It uses Linux as a design model, not as a POSIX promise: familiar,
-composable primitives make the system understandable to people and models.
+Ship is built on GSV, an open-source, user-owned operating environment for
+personal intelligence. GSV uses Linux as a design model, not as a POSIX promise:
+familiar, composable primitives make the system understandable to people and
+models.
 
 - **Gateway** — a lightweight, globally reachable control plane in your
   Cloudflare account. It coordinates identity, state, routing, schedules and
