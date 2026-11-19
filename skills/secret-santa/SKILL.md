@@ -45,7 +45,7 @@ The type changes delivery:
 Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[]}' > "$HOME/secret-santa/SLUG.json"
+mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json"
 r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[{"name":"NAME","contact":"owner"}],"exclude":[]}'
 ```
 
@@ -78,7 +78,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits while one of those messages is still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -97,7 +97,8 @@ const note = ({ name, address, wishes, replaces }) => `...`; // draw, leave: the
 
 const path = `~/${file}`;
 const read = await fs.read({ target: "gsv", path });
-if (!read.ok || read.truncated) throw new Error(`Cannot read ${file}`);
+if (!read.ok) throw new Error(`Cannot read ${file}: ${read.error}`);
+if (read.truncated) throw new Error(`${file} is too large to read in one go`);
 const game = JSON.parse(read.content);
 const save = async () => {
   const written = await fs.write({ target: "gsv", path, content: JSON.stringify(game) });
@@ -145,7 +146,7 @@ const forward = async (side) => {
   if (!text) throw new Error("Write text to forward");
   const other = pairOf(side === "giver" ? "recipient" : "giver", contact)[side];
   if (other.contact === "owner") return { forYourOwner: true };
-  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${game.forwards.length + 1}`, message: text, attempt: 1, deliveryId: null };
+  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -231,10 +232,15 @@ if (action === "ask") {
   return forward(to);
 }
 if (action === "leave") {
-  // Their data and any message to or about them go first, even if the relink is refused.
+  // Their data and any message to or about them go first, even if the relink is refused,
+  // once nothing about them is still on its way.
+  const affected = game.forwards.filter((f) => f.to === contact || f.about === contact);
+  for (const record of affected) {
+    if (record.deliveryId && (await stateOf(record)) === "queued") throw new Error("A message to or about them is on its way: leave again once it arrives");
+  }
   delete game.addresses[contact];
   delete game.wishes[contact];
-  game.forwards = game.forwards.filter((f) => f.to !== contact && f.about !== contact);
+  game.forwards = game.forwards.filter((f) => !affected.includes(f));
   await save();
   if (!game.pairs) return { left: true };
   const out = pairOf("giver", contact);

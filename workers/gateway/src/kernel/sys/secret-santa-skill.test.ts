@@ -51,7 +51,7 @@ function option(command: string, name: string): string | null {
 }
 
 class Hat {
-  file: string | null = JSON.stringify({ round: 0, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [] });
+  file: string | null = JSON.stringify({ round: 0, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [], forwardCount: 0 });
   sent: Sent[] = [];
   refuse = new Set<string>();
   states = new Map<string, string>();
@@ -308,6 +308,29 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before).some((s) => s.message.includes("Porto"))).toBe(false);
   });
 
+  it("waits while a message about a leaver is on its way, and never reuses a forward key", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const pairs = hat.game.pairs ?? [];
+    const outside = pairs.filter((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const [first, second] = outside;
+    await hat.run({ action: "wish", contact: first.recipient.contact, value: "Tea", text: "Your recipient would like tea." });
+    await hat.run({ action: "wish", contact: second.recipient.contact, value: "Socks", text: "Your recipient would like socks." });
+    const [tea] = hat.sent.slice(-2);
+    hat.states.set(tea.id, "queued");
+
+    await expect(hat.run({ action: "leave", contact: first.recipient.contact })).rejects.toThrow("on its way");
+    expect(hat.game.wishes[first.recipient.contact]).toEqual(["Tea"]);
+
+    hat.states.set(tea.id, "delivered");
+    await hat.run({ action: "leave", contact: first.recipient.contact });
+    const keys = hat.game.forwards.map((f) => f.key);
+    await hat.run({ action: "wish", contact: second.recipient.contact, value: "A mug", text: "Your recipient would like a mug." });
+    const newKey = hat.game.forwards[hat.game.forwards.length - 1].key;
+    expect(keys).not.toContain(newKey);
+    expect(newKey).toMatch(/:forward:3$/);
+  });
+
   it("deletes a leaver's data even when the relink is refused", async () => {
     const hat = new Hat();
     await hat.run({ action: "address", contact: "c:bob", value: "Rua Z 3, Faro" });
@@ -336,7 +359,7 @@ describe.sequential("secret-santa hat script", () => {
     const [ana, bob, carla, dev] = PEOPLE;
     const loop = [ana, bob, carla, dev];
     hat.file = JSON.stringify({
-      round: 1, exclude: [["owner", "c:carla"]], wishes: {}, addresses: {}, sent: {}, forwards: [],
+      round: 1, exclude: [["owner", "c:carla"]], wishes: {}, addresses: {}, sent: {}, forwards: [], forwardCount: 0,
       pairs: loop.map((giver, i) => ({ giver, recipient: loop[(i + 1) % loop.length] })),
     });
     await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
@@ -371,6 +394,6 @@ describe.sequential("secret-santa hat script", () => {
   it("stops when the file cannot be read instead of starting over", async () => {
     const hat = new Hat();
     hat.file = null;
-    await expect(hat.run({ people: PEOPLE, exclude: [] })).rejects.toThrow("Cannot read");
+    await expect(hat.run({ people: PEOPLE, exclude: [] })).rejects.toThrow("Cannot read secret-santa/SLUG.json: not found");
   });
 });
