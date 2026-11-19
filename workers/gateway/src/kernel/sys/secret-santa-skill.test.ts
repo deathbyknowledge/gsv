@@ -17,6 +17,7 @@ type Game = {
   wishes: Record<string, string[]>;
   addresses: Record<string, string>;
   sent: Record<string, { deliveryId: string | null }>;
+  forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null }>;
 };
 type Settings = {
   action?: string;
@@ -50,7 +51,7 @@ function option(command: string, name: string): string | null {
 }
 
 class Hat {
-  file: string | null = JSON.stringify({ round: 0, exclude: [], wishes: {}, addresses: {}, sent: {} });
+  file: string | null = JSON.stringify({ round: 0, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [] });
   sent: Sent[] = [];
   refuse = new Set<string>();
   states = new Map<string, string>();
@@ -203,6 +204,25 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before).map((s) => s.to)).toEqual([giverOfBob, recipientOfBob].filter((c) => c !== "owner"));
   });
 
+  it("keeps forwarded messages and resends them without naming who they were for", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    const recipient = pair?.recipient.contact ?? "";
+    hat.refuse.add(giver);
+
+    expect(await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Your recipient would like tea." })).toEqual({ forwarded: false });
+    expect(hat.game.forwards).toEqual([expect.objectContaining({ to: giver, who: "a forwarded message", deliveryId: null })]);
+
+    hat.refuse.clear();
+    const before = hat.sent.length;
+    const report = await hat.run({ action: "resend" });
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: "Your recipient would like tea.", key: `${hat.game.forwards[0].key}:1` })]);
+    expect(report).toEqual(expect.objectContaining({ resent: 1, failed: [] }));
+    expect(hat.game.forwards[0].deliveryId).toEqual(expect.any(String));
+  });
+
   it("re-links the leaver's giver to the leaver's recipient and keeps one loop", async () => {
     const hat = new Hat();
     await hat.run({ people: PEOPLE, exclude: [] });
@@ -237,7 +257,7 @@ describe.sequential("secret-santa hat script", () => {
     const [ana, bob, carla, dev] = PEOPLE;
     const loop = [ana, bob, carla, dev];
     hat.file = JSON.stringify({
-      round: 1, exclude: [["owner", "c:carla"]], wishes: {}, addresses: {}, sent: {},
+      round: 1, exclude: [["owner", "c:carla"]], wishes: {}, addresses: {}, sent: {}, forwards: [],
       pairs: loop.map((giver, i) => ({ giver, recipient: loop[(i + 1) % loop.length] })),
     });
     await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");

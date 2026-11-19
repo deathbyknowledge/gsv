@@ -45,7 +45,7 @@ The type changes delivery:
 Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{}}' > "$HOME/secret-santa/SLUG.json"
+mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[]}' > "$HOME/secret-santa/SLUG.json"
 r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[{"name":"NAME","contact":"owner"}],"exclude":[]}'
 ```
 
@@ -75,7 +75,7 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving and resending. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one.
-- **`resend`**: when `failed` names someone, or a giver says nothing arrived. It sends again only the matches that were never accepted or that failed for good, with the same text, and reports how many are delivered and still on their way.
+- **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`leave`**: removes `contact`'s address and wishes. After the draw, their giver gets the leaver's recipient instead, with a new `note`; it refuses when that would break the loop, and then you ask the organiser about a redraw. Tell the leaver's Ship they are out.
@@ -120,16 +120,16 @@ const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: g
 const failed = [];
 let yours = null;
 
-// Records each match's exact text before anything is sent, so a resend repeats the same message.
+// Every match and forward is recorded with its exact text before it is sent, so a resend repeats
+// the same message. `who` names a giver for a match, never the person a forward went to.
 const prepare = (pair, replaces) => {
   if (pair.giver.contact === "owner") { yours = matchOf(pair, replaces); return; }
   const key = `santa:${file}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
-  game.sent[pair.giver.contact] = { key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
+  game.sent[pair.giver.contact] = { to: pair.giver.contact, who: pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
-const deliver = async (giver) => {
-  const sent = game.sent[giver.contact];
-  sent.deliveryId = await send(giver.contact, sent.message, `${sent.key}:${sent.attempt}`);
-  if (!sent.deliveryId) failed.push(giver.name);
+const deliver = async (record) => {
+  record.deliveryId = await send(record.to, record.message, `${record.key}:${record.attempt}`);
+  if (!record.deliveryId) failed.push(record.who);
   await save();
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair.
@@ -138,7 +138,11 @@ const forward = async (side) => {
   if (!text) throw new Error("Write text to forward");
   const other = pairOf(side === "giver" ? "recipient" : "giver", contact)[side];
   if (other.contact === "owner") return { forYourOwner: true };
-  return { forwarded: (await send(other.contact, text)) !== null };
+  const record = { to: other.contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${game.forwards.length + 1}`, message: text, attempt: 1, deliveryId: null };
+  game.forwards.push(record);
+  await save();
+  await deliver(record);
+  return { forwarded: record.deliveryId !== null };
 };
 
 if (action === "draw") {
@@ -187,21 +191,20 @@ if (action === "draw") {
     if (!extend(rest)) throw new Error("No draw fits these exclusions");
     pairs = loop(path);
   }
-  Object.assign(game, { round: game.round + 1, pairs, sent: {} });
+  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [] });
   for (const pair of pairs) prepare(pair, redraw);
   await save();
-  for (const { giver } of pairs) if (game.sent[giver.contact]) await deliver(giver);
+  for (const record of Object.values(game.sent)) await deliver(record);
   return { people: pairs.length, failed, yours };
 }
 if (action === "resend") {
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours };
-  for (const pair of game.pairs) {
-    const sent = game.sent[pair.giver.contact];
-    if (!sent) { report.yours = matchOf(pair, false); continue; }
-    if (!sent.deliveryId) { report.resent++; await deliver(pair.giver); continue; }
-    const shown = await shell(`message delivery show ${q(sent.deliveryId)}`, { target: "gsv" });
+  const owned = game.pairs.find((p) => p.giver.contact === "owner");
+  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours: owned ? matchOf(owned, false) : null };
+  for (const record of [...Object.values(game.sent), ...game.forwards]) {
+    if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
+    const shown = await shell(`message delivery show ${q(record.deliveryId)}`, { target: "gsv" });
     const state = /delivery_state=(\w+)/.exec(shown.output)?.[1];
-    if (state === "failed") { sent.attempt++; report.resent++; await deliver(pair.giver); }
+    if (state === "failed") { record.attempt++; report.resent++; await deliver(record); }
     else if (state === "delivered") report.delivered++;
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
@@ -230,7 +233,7 @@ if (action === "leave") {
   delete game.sent[contact];
   prepare(before, true);
   await save();
-  if (game.sent[before.giver.contact]) await deliver(before.giver);
+  if (game.sent[before.giver.contact]) await deliver(game.sent[before.giver.contact]);
   return { people: game.pairs.length, failed, yours };
 }
 throw new Error(`Unknown action: ${action}`);
@@ -238,7 +241,7 @@ throw new Error(`Unknown action: ${action}`);
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- In a resend, `onTheWay` matches are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
+- `failed` names a giver whose match did not go out; a forward that did not go out shows as "a forwarded message", never by who it was for. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
 - Update details with the people and exclusions, never with pairs.
 
 ### 4. Wishes and questions
