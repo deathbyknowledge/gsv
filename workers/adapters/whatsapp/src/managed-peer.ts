@@ -782,7 +782,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (!payload.routeGeneration) {
       // Nobody is linked yet: the platform answers on its own behalf.
       if (inbound.unsupportedContent) {
-        return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported, { kind: "platform" });
+        return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, unsupportedReply(inbound), { kind: "platform" });
       }
       return await this.linkResponse(inbound, null) ?? await this.pairingResponse(inbound, null, false);
     }
@@ -801,7 +801,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return await this.pairingResponse(inbound, route.generation, true);
     }
     if (inbound.unsupportedContent) {
-      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, replies(inbound).unsupported, linked);
+      return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, unsupportedReply(inbound), linked);
     }
 
     let transfer: WhatsAppInboundMediaLoadResult;
@@ -1559,4 +1559,11 @@ function requireCanonicalOrigin(value: string): string {
 /** The platform's own replies, in the language of the sender's country. */
 function replies(sender: { actorId: string }): PlatformReplies {
   return platformReplies("WhatsApp", whatsAppReplyLanguage(sender.actorId));
+}
+
+/** What the platform answers a message it cannot relay: what WhatsApp withheld is asked for again; anything else hears what Ship receives. */
+function unsupportedReply(inbound: ManagedWhatsAppInbound): string {
+  const text = replies(inbound);
+  if (inbound.withheld === "media") return text.mediaWithheld;
+  return inbound.withheld === "message" ? text.messageWithheld : text.unsupported;
 }
