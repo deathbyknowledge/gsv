@@ -57,6 +57,9 @@ class Hat {
   states = new Map<string, string>();
   writeFails = false;
   failing = new Set<string>();
+  retryable = new Set<string>();
+  timesOut = new Set<string>();
+  lookupFails = false;
   private readonly source = hatScript();
 
   async run(settings: Settings): Promise<JsonValue> {
@@ -86,17 +89,19 @@ class Hat {
   }
 
   private shell(command: string) {
-    // Like the real command: only `delivery:` ids, and the states queued, delivered and failed.
+    // Like `message delivery show --json`: only `delivery:` ids, the states queued, delivered and
+    // failed, and `delivery: null` once the record has expired.
     if (command.startsWith("message delivery show ")) {
-      const id = unquote(command.slice("message delivery show ".length));
+      const id = unquote(command.slice("message delivery show ".length).replace(/ --json$/, ""));
+      if (this.lookupFails) return { status: "failed", output: "", error: "lookup failed" };
       if (!id.startsWith("delivery:")) return { status: "completed", exitCode: 1, output: "Contact delivery id is invalid" };
       const state = this.states.get(id);
-      return state
-        ? { status: "completed", exitCode: 0, output: `delivery_id=${id}\ndelivery_state=${state}\n` }
-        : { status: "completed", exitCode: 1, output: `delivery not found: ${id}` };
+      const delivery = state ? { deliveryId: id, state, retryable: this.retryable.has(id) } : null;
+      return { status: "completed", exitCode: 0, output: JSON.stringify({ delivery }) };
     }
     if (!command.startsWith("message send ")) throw new Error(`unexpected command: ${command}`);
     const to = option(command, "to") ?? "";
+    if (this.timesOut.has(to)) return { status: "failed", output: "", error: "Command timed out after 30000ms" };
     if (this.refuse.has(to)) return { status: "completed", exitCode: 1, output: "refused" };
     const sent = { to, message: option(command, "message") ?? "", key: option(command, "delivery-id"), id: `delivery:${this.sent.length + 1}` };
     this.sent.push(sent);
@@ -205,6 +210,43 @@ describe.sequential("secret-santa hat script", () => {
     }
     await hat.run({ action: "leave", contact: "c:dev" });
     expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== "c:dev"));
+  });
+
+  it("keeps the shell's reason when a send never ran", async () => {
+    const hat = new Hat();
+    hat.timesOut.add("c:bob");
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "Command timed out after 30000ms" }] }));
+  });
+
+  it("won't replace a match whose status can't be read or that can still be retried", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    hat.lookupFails = true;
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("Cannot read a delivery");
+    hat.lookupFails = false;
+
+    hat.states.set(hat.sent[0].id, "failed");
+    hat.retryable.add(hat.sent[0].id);
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("on their way");
+    hat.retryable.clear();
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true });
+    expect(hat.game.round).toBe(2);
+  });
+
+  it("holds a corrected address until the giver's earlier messages have arrived", async () => {
+    const hat = new Hat();
+    await hat.run({ action: "address", contact: "c:carla", value: "Rua X 1, Palma" });
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const giver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === "c:carla")?.giver.contact ?? "";
+    const match = hat.sent.find((s) => s.to === giver);
+    if (match) {
+      hat.states.set(match.id, "queued");
+      await expect(hat.run({ action: "address", contact: "c:carla", value: "Rua X 9, Palma", text: "Their new address is Rua X 9." })).rejects.toThrow("earlier messages");
+      expect(hat.game.addresses["c:carla"]).toBe("Rua X 1, Palma");
+      hat.states.set(match.id, "delivered");
+    }
+    await hat.run({ action: "address", contact: "c:carla", value: "Rua X 9, Palma", text: "Their new address is Rua X 9." });
+    expect(hat.game.addresses["c:carla"]).toBe("Rua X 9, Palma");
   });
 
   it("redraws under a new round with new delivery ids", async () => {
