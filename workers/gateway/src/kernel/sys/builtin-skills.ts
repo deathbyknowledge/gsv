@@ -8,6 +8,7 @@ import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
 import processOrchestrationSkill from "../../../../../skills/process-orchestration/SKILL.md";
+import shoppingSkill from "../../../../../skills/shopping/SKILL.md";
 import skillAuthoringSkill from "../../../../../skills/skill-authoring/SKILL.md";
 
 /** Built-in skills, served read-only to every process at /sys/skills.d. */
@@ -25,6 +26,7 @@ const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["image-reading/SKILL.md", imageReadingSkill],
   ["memory/SKILL.md", memorySkill],
   ["process-orchestration/SKILL.md", processOrchestrationSkill],
+  ["shopping/SKILL.md", shoppingSkill],
   ["skill-authoring/SKILL.md", skillAuthoringSkill],
 ]);
 
