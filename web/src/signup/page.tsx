@@ -3,7 +3,6 @@ import { AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
-import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
 import { presumedSpaceDomain, signupDestination, signupHomepage, signupMessenger } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
@@ -66,5 +65,5 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
       homeHref={invite ? undefined : signupHomepage(accountsOrigin)} spaceDomain={spaceDomain}
       invitation={invite ? { name: invite.name } : undefined} chooseSpace={!!invite}
       addressPanel={invite || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={load} onConnect={connect} />{!invite && <DesktopAppLink />}</Frame></AuthScene>;
+      load={load} onConnect={connect} /></Frame></AuthScene>;
 }

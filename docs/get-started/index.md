@@ -63,8 +63,9 @@ link issued directly by an operator, ask the operator to renew it.
 
 Email sign-in through **Open Ship** lists your Ships and unfinished activations.
 It is separate from signing in to a Ship. Signing in with email alone does not
-create a Ship or grant operator administration rights. The signup page also
-links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
+create a Ship or grant operator administration rights. Web signup stays in the
+browser and does not offer an app download. To install Desktop separately, see
+[Install host apps](/how-to/install-host-apps).
 If Desktop cannot connect after activation completes, choose your Ship from the list
 to retry opening it.
 
@@ -156,6 +157,7 @@ the team handles deletion manually; there is no self-service deletion button yet
 Under **Settings → Preferences → Appearance**, turn off **Show stars** for a
 plain background. This device preference also applies to sign-in. Help's
 navigation reference includes a reminder of where to find this setting.
+The stars are decorative graphics and are left out when you select or copy text.
 
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
