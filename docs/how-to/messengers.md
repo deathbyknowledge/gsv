@@ -78,10 +78,11 @@ it can't see, and it asks rather than guesses.
    one-time code, which works once, for 10 minutes.
 2. Choose **Open Telegram**. It opens a chat with the official Ship bot; tap
    **Start**. On a computer, you can scan the QR code with your phone's camera
-   instead, or send the code shown to the bot handle shown.
+   instead, or open **Trouble connecting?** and send the code shown to the bot
+   handle shown.
 3. The page moves on by itself and names the Telegram account that connected:
-   its display name, handle, and numeric ID. If that is not your account, choose
-   **Disconnect**, then send a new link from your own account.
+   its display name and handle. If that is not your account, choose
+   **Not you?**, then send a new link from your own account.
 4. Send another message in Telegram. It reaches the same Ship conversation
    you use in Ship, without selecting a helper.
 
@@ -172,12 +173,12 @@ Platform. You message that number from your own WhatsApp account.
    one-time code, which works once, for 10 minutes.
 2. Choose **Open WhatsApp**. It opens a chat with the Ship number, with
    "Connect my Ship" and your code already filled in; send it. On a computer,
-   you can scan the QR code with your phone's camera instead, or send the code
-   shown to the number shown.
+   you can scan the QR code with your phone's camera instead, or open
+   **Trouble connecting?** and send the code shown to the number shown.
 3. The page moves on by itself and names the account that connected: its
    WhatsApp profile name and masked number, or your WhatsApp username if you
    keep your number private. If that is not your account, choose
-   **Disconnect**, then send a new link from your own account.
+   **Not you?**, then send a new link from your own account.
 4. Send another message. It reaches the same Ship conversation you use in Ship.
 
 The code connects only to the Ship that made it, for the person signed in there.

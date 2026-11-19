@@ -3,7 +3,6 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { Surface } from "../../../components/ui/Surface";
 import { Tag } from "../../../components/ui/Tag";
 import { gatewayHttpOrigin } from "../../../services/platform/gatewayOrigin";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -11,7 +10,8 @@ import { clearFirstRunMessenger, readFirstRunMessenger } from "../../../services
 import { useT, type TextKey } from "../../../i18n/locale";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { loadMessengerConnections } from "../settings/messengerConnectionsService";
-import { FirstRunPairing, type MessengerChoice } from "./FirstRunPairing";
+import { MessengerCard } from "../settings/messengers/MessengerCard";
+import { MessengerSteps, type MessengerChoice } from "../settings/messengers/MessengerSteps";
 import { MessengerIcon } from "./MessengerIcon";
 
 const MESSENGERS: ReadonlyArray<{ id: MessengerChoice; name: string; sub: TextKey }> = [
@@ -73,28 +73,13 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
         {offered.map(({ id, name, sub }, index) => {
           const linked = connections.data?.links.some((link) => link.adapter === id) === true;
           const expanded = open === id;
-          // Only the header toggles; the pairing beneath it holds its own controls.
-          return <section key={id} class="first-run-card" aria-label={name}>
-            <Surface as="button" level={expanded ? 2 : 1} interactive={!busy} disabled={busy} aria-expanded={expanded}
-              aria-controls={expanded ? `first-run-${id}` : undefined} onClick={() => setOpen(expanded ? null : id)}>
-              <span class="first-run-card-head">
-                <MessengerIcon id={id} size={24} />
-                <span class="first-run-card-name">{name}</span>
-                <span class="first-run-card-sub gsv-prose-lead">{t(sub)}</span>
-                {expanded
-                  ? <span class="gsv-btn gsv-btn-link first-run-card-state">{t("settings.messengers.closeSetup")}</span>
-                  : linked
-                    ? <span class="first-run-card-state"><Tag tone="online" dot label={t("onboarding.surface.connectedSub")} /></span>
-                    : <span class={`gsv-btn ${index === 0 && open === null ? "gsv-btn-primary" : "gsv-btn-secondary"} first-run-card-action${busy ? " is-disabled" : ""}`}>
-                      {t("onboarding.surface.chatOn", { name })}
-                    </span>}
-              </span>
-            </Surface>
-            {expanded && <Surface id={`first-run-${id}`} level={2}>
-              <FirstRunPairing adapter={id} name={name} linked={linked} disabled={busy} links={connections.data?.links}
-                onRefreshLinks={() => { void connections.refetch(); }} onFinish={finish} />
-            </Surface>}
-          </section>;
+          return <MessengerCard key={id} id={id} name={name} sub={t(sub)} icon={<MessengerIcon id={id} size={24} />}
+            action={linked ? undefined : t("onboarding.surface.chatOn", { name })} primary={index === 0 && open === null}
+            status={linked && <Tag tone="online" dot label={t("onboarding.surface.connectedSub")} />}
+            expanded={expanded} disabled={busy} onToggle={() => setOpen(expanded ? null : id)}>
+            {expanded && <MessengerSteps adapter={id} name={name} linked={linked} disabled={busy} links={connections.data?.links}
+              onRefreshLinks={() => { void connections.refetch(); }} doneLabel={t("onboarding.surface.openChatHere")} onFinish={finish} />}
+          </MessengerCard>;
         })}
         <p class="first-run-note">{t("onboarding.surface.messengerPrivacy")}</p>
       </div>}
@@ -104,7 +89,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
         {!connections.isPending && offered.length === 0
           ? <Button variant="primary" label={t("onboarding.surface.openChat")} disabled={busy} onClick={finish} />
           /* "here" is the client the first run is finishing in */
-          : <Button variant="link" label={t("onboarding.surface.skip")} disabled={busy} onClick={finish} />}
+          : <Button variant="secondary" label={t("onboarding.surface.skip")} disabled={busy} onClick={finish} />}
       </div>
     </div>
   </section>;

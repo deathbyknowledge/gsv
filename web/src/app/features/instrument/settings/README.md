@@ -23,6 +23,7 @@ when nobody will hear about it. Memory review is a separate switch, and a line b
 names what is always on. Logs explains
 its action history above the entries. Messengers lists WhatsApp first and labels
 Slack and Discord Coming soon; their connect and reconnect actions are disabled while existing links remain inspectable and removable.
+Each messenger is the signup screen's card (`MessengerCard`), and WhatsApp and Telegram connect through its two numbered steps (`MessengerSteps`).
 Account explains manual early-access deletion and links to hello@humansandmachin.es.
 
 The section rail fits its widest label, including an unsaved-change marker, and

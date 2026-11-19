@@ -9,6 +9,8 @@ import { IconButton } from "../../../components/ui/IconButton";
 import { Table, type TableProps } from "../../../components/ui/Table";
 import { Select, type SelectProps } from "../../../components/ui/Select";
 import { MessengerConnections } from "./MessengerConnections";
+import { MessengerCard } from "./messengers/MessengerCard";
+import { MessengerSteps } from "./messengers/MessengerSteps";
 import { MessengerPairing } from "./Telegram";
 
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
@@ -43,16 +45,14 @@ it("keeps Slack and Discord connection controls disabled even when their adapter
   settingsGatewayFixture();
   const screen = await mount(() => MessengerConnections({ account, active: true }));
   try {
-    await vi.waitFor(() => expect(screen.nodes().filter((node) => node.props.class === "settings-messenger")).toHaveLength(4));
+    await vi.waitFor(() => expect(screen.nodes().filter((node) => node.type === MessengerCard)).toHaveLength(4));
+    const card = (name: string) => screen.nodes().find((node) => node.type === MessengerCard && node.props.name === name)!;
     for (const name of ["Slack", "Discord"]) {
-      const section = screen.nodes().find((node) => node.props["aria-label"] === name)!;
-      const connect = collectNodes(section).find((node) => node.type === "button")!;
-      expect(connect.props.disabled).toBe(true);
-      await act(() => connect.props.onClick?.());
-      expect(screen.nodes().some((node) => node.type === MessengerPairing)).toBe(false);
+      expect(card(name).props.disabled).toBe(true);
+      await act(() => card(name).props.onToggle?.());
+      expect(card(name).props.expanded).toBe(false);
     }
-    const whatsapp = screen.nodes().find((node) => node.props["aria-label"] === "WhatsApp")!;
-    expect(collectNodes(whatsapp).find((node) => node.type === "button")!.props.disabled).toBe(false);
+    expect(card("WhatsApp").props.disabled).toBe(false);
   } finally { await screen.close(); }
 });
 
@@ -61,15 +61,15 @@ it("opens the setup of the messenger Ship's setup link names, and only one that 
   stubPage("https://ship.example/chat/settings?section=messengers&messenger=whatsapp");
   const screen = await mount(() => MessengerConnections({ account, active: true }));
   try {
-    await vi.waitFor(() => expect(screen.nodes().find((node) => node.type === MessengerPairing)?.props.adapter).toBe("whatsapp"));
+    await vi.waitFor(() => expect(screen.nodes().find((node) => node.type === MessengerSteps)?.props.adapter).toBe("whatsapp"));
   } finally { await screen.close(); }
 
   for (const messenger of ["slack", "nonsense"]) {
     stubPage(`https://ship.example/chat/settings?section=messengers&messenger=${messenger}`);
     const other = await mount(() => MessengerConnections({ account, active: true }));
     try {
-      await vi.waitFor(() => expect(other.nodes().filter((node) => node.props.class === "settings-messenger")).toHaveLength(4));
-      expect(other.nodes().some((node) => node.type === MessengerPairing)).toBe(false);
+      await vi.waitFor(() => expect(other.nodes().filter((node) => node.type === MessengerCard)).toHaveLength(4));
+      expect(other.nodes().some((node) => node.type === MessengerSteps || node.type === MessengerPairing)).toBe(false);
     } finally { await other.close(); }
   }
 });
