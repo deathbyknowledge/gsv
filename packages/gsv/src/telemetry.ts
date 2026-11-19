@@ -430,9 +430,9 @@ export const attributionExampleSchema = z.enum([
   "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
 ]);
 
-// `invite` means the signup carried another Ship's contact invitation and
-// Accounts resolved that Ship. Which Ship it was stays in Accounts; the record
-// never names it, so two installations' product series cannot be joined.
+// `invite` means the signup came from another Ship's invitation link and
+// Accounts resolved that Ship. Neither this record nor Accounts keeps which Ship
+// it was, so two installations' product series cannot be joined.
 // Campaign tags are the operator's own names for an ad or a post, bounded to the
 // same slug shape; the visitor's click id and anything else on the link stay out.
 const installationAttributedSchema = z.strictObject({
@@ -447,9 +447,6 @@ const installationAttributedSchema = z.strictObject({
   }),
 });
 
-// A Ship issuing a contact invitation link, and the first time another Ship
-// accepts one it issued. Both are counted for the issuing Ship only: the other
-// side's identity, the link and the name stay in the Kernel.
 // Accounts reports a signup that followed the Ship's invitation link under the
 // inviting Ship's pseudonym; the new Ship's own record says only `origin: "invite"`,
 // so the two series share no key.
