@@ -77,9 +77,12 @@ const whatsAppWebhookSchema = z.object({
 const SILENT_MESSAGE_TYPES = new Set(["request_welcome", "reaction", "system"]);
 /** Media message types relayed as attachments. */
 const MEDIA_MESSAGE_TYPES = new Set(["image", "video", "audio", "document", "sticker"]);
-/** What WhatsApp withholds that needs no answer: a change to an earlier message, a pin or a reaction. */
-const SILENT_WITHHELD_TYPES = new Set(["edit", "keep_in_chat", "pin", "reaction"]);
-/** What WhatsApp withholds that was a photo or video, as one of an album's can be. */
+/**
+ * What WhatsApp withholds that needs no answer: a change to an earlier message, a pin, a reaction, or the
+ * marker that comes before an album's photos, which each arrive as their own message.
+ */
+const SILENT_WITHHELD_TYPES = new Set(["album", "edit", "keep_in_chat", "pin", "reaction"]);
+/** What WhatsApp withholds that was a photo or video. */
 const MEDIA_WITHHELD_TYPES = new Set(["gif", "image", "media_placeholder"]);
 
 /**

@@ -27,7 +27,7 @@ export type PlatformReplies = {
   unsupported: string;
   mediaUnavailable: string;
   /**
-   * What the messenger withheld instead of delivering, as WhatsApp can one photo of an album: asked
+   * What the messenger withheld instead of delivering, such as a photo WhatsApp didn't pass on: asked
    * for again, without listing what Ship receives, since the person may just have sent exactly that.
    */
   mediaWithheld: string;
