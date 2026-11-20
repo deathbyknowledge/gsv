@@ -855,6 +855,38 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.game.round).toBe(1);
   });
 
+  it("reports a failed relinked match again when the leave is repeated", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.failing.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match", ref: expect.any(String) }] }));
+  });
+
+  it("replaces the in-person address before the draw, never after", async () => {
+    const hat = new Hat();
+    hat.file = null;
+    await hat.run({ action: "start", value: "A very long office address" });
+    expect(await hat.run({ action: "start", value: "Office" })).toEqual({ started: true });
+    expect(hat.game).toEqual(expect.objectContaining({ deliverTo: "A very long office address" }));
+    await hat.run({ action: "start", value: "Office", redraw: true });
+    expect(hat.game).toEqual(expect.objectContaining({ deliverTo: "Office" }));
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await expect(hat.run({ action: "start", value: "Elsewhere", redraw: true })).rejects.toThrow("Already drawn");
+  });
+
+  it("drops delivered forwards' text to make room for the reveal", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    for (const s of hat.sent) hat.states.set(s.id, "delivered");
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." });
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
+    await hat.run({ action: "reveal", text: "The list" });
+    expect(hat.file?.includes("Tea, please.")).toBe(false);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();

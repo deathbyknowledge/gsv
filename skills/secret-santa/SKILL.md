@@ -48,7 +48,7 @@ Repeat the whole plan back to the organiser and wait for their OK. Then open one
 r12y create --dedupe "secret-santa:SLUG:SWAP_ISO" --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","invited":["NAME"],"people":[],"exclude":[]}'
 ```
 
-Then create the Secret Santa file with the hat script's `start` action, `r12y` set to that id and `value` set to where gifts go on the in-person type, up to 300 characters (empty on the remote type). The file is named after the responsibility, so no two games share one, and `start` writes it only when missing, so running it again never replaces a game. The in-person address lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
+Then create the Secret Santa file with the hat script's `start` action, `r12y` set to that id and `value` set to where gifts go on the in-person type, up to 300 bytes (empty on the remote type). Before the draw, `start` with `redraw` set replaces that address, for example with a shorter one if the draw finds there is too much to keep. The file is named after the responsibility, so no two games share one, and `start` writes it only when missing, so running it again never replaces a game. The in-person address lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
 
 `r12y update ID --json '{"details":{...}}'` replaces all details: always send the whole object.
 
@@ -115,14 +115,14 @@ const save = async (delivery = false) => {
   const written = await fs.write({ target: "gsv", path, content });
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
+// Every match repeats the in-person address, so it must stay short.
+if (action === "start" && new TextEncoder().encode(String(value)).length > 300) throw new Error("That address is too long: ask for a shorter one");
 const read = await fs.read({ target: "gsv", path });
 if (!read.ok) {
   const missing = (await shell(`test -e "$HOME"/${q(file)}`, { target: "gsv" })).exitCode === 1;
   // A close that deleted the file but stopped before it could answer is already finished.
   if (missing && action === "close") return { closed: true };
   if (!missing || action !== "start") throw new Error(`Cannot read ${file}: ${read.error}`);
-  // Every match repeats this address, so it must stay short.
-  if (String(value).length > 300) throw new Error("That address is too long: ask for a shorter one");
   const made = await shell(`mkdir -p "$HOME/secret-santa"`, { target: "gsv" });
   if (made.exitCode !== 0) throw new Error(`Cannot create the folder: ${String(made.error || made.output).trim().slice(0, 200)}`);
   game = { round: 0, deliverTo: value, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [], forwardCount: 0, left: [] };
@@ -131,7 +131,14 @@ if (!read.ok) {
 }
 if (read.truncated) throw new Error(`${file} is too large to read in one go`);
 game = JSON.parse(read.content);
-if (action === "start") return { started: true };
+if (action === "start") {
+  // Running it again only replaces the in-person address, and only with `redraw` set and before the draw.
+  if (!redraw) return { started: true };
+  if (game.pairs) throw new Error("Already drawn: the address went out in the matches");
+  game.deliverTo = value;
+  await save();
+  return { started: true };
+}
 // The delivery id and state `message send` prints. Without an id it was not accepted, and the
 // error keeps why, from the shell or the command.
 const send = async (to, message, key) => {
@@ -317,6 +324,7 @@ if (action === "resend") {
     }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
     const { state } = await statusOf(record.deliveryId);
+    if (!record.reveal && record.message === undefined) { report.delivered++; continue; }
     // A confirmed-missing message goes again, unless it was an address a later one corrected;
     // wishes and questions add up, so each goes again.
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
@@ -377,6 +385,10 @@ if (action === "reveal") {
   if (!game.pairs) throw new Error("No draw yet");
   if (!text) throw new Error("Write the list as text");
   if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
+  // Delivered forwards no longer need their text, which makes room for the list at the end.
+  for (const f of game.forwards) {
+    if (f.message !== undefined && f.to !== "owner" && f.deliveryId && (await statusOf(f.deliveryId)).state === "delivered") delete f.message;
+  }
   // The list is stored once; each record keeps only where it goes and how it went.
   game.revealText = text;
   const records = game.pairs.filter((p) => p.giver.contact !== "owner").map((p) => ({ ref: newRef(), to: p.giver.contact, reveal: true, who: "a forwarded message", key: `santa:${r12y}:${game.round}:reveal:${p.giver.contact}`, attempt: 1, deliveryId: null }));
@@ -403,7 +415,11 @@ if (action === "leave") {
   game.left = game.left ?? [];
   if (game.left.includes(contact)) {
     // Already gone: finish a relink that stopped before its new match went out or reached your owner.
-    for (const record of Object.values(game.sent)) if (record.to !== "owner" && record.who === "a replaced match" && !record.deliveryId) await deliver(record);
+    for (const record of Object.values(game.sent)) {
+      if (record.to === "owner" || record.who !== "a replaced match") continue;
+      if (!record.deliveryId) await deliver(record);
+      else if (record.lastError) failed.push({ who: record.who, ref: record.ref });
+    }
     const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
     return { left: true, failed, yours: own ? matchOf(own, game.sent.owner.replaces) : null };
   }
