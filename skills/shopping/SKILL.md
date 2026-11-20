@@ -100,7 +100,7 @@ r12y wait ID --until 2026-11-03T18:00:00Z --blocker "Waiting for delivery"
 
 ## 6. Close
 
-Close the responsibility after you get feedback on the product and the delivery, and update the user's preferences from it. Do they want to use that store again? Did the person like the gift?
+Close the responsibility after you get feedback on the product and the delivery. Update the user's preferences from their feedback on the store and the delivery: do they want to use that store again? For a gift, update that person's page in the wiki only with what they said about it: did they like it?
 
 ```bash
 r12y resolve ID --json '{"outcome":"delivered","feedback":"Liked it; would use the store again"}'
