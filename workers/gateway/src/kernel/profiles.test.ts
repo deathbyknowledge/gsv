@@ -78,6 +78,35 @@ describe("publishing the profile record", () => {
     });
   });
 
+  it("publishes the default profile a Ship shows before anything saved it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      // Ships set up before setup saved a profile show the Kernel's default at revision 0 until their owner edits it.
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { displayName: "local", about: "", contactPolicy: "requests" } });
+      const result = await handleProfilePublish({ expectedRevision: 0 }, ctx);
+      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" };
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record },
+        blueskyPut({ displayName: "local" }),
+      ]);
+      expect(result.profile).toMatchObject({ revision: 1, draft: { displayName: "local" }, published: { revision: 1, contactPolicy: "requests" } });
+      // Once saved, revision 0 is out of date like any other.
+      await expect(handleProfilePublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("changed");
+      expect(repository.applyWrites).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("tells the owner's clients about the default it saved when publishing it fails, so they retry at its revision", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
+      await expect(handleProfilePublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("unavailable");
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      expect(handleProfileGet(ctx).profile).toEqual({ revision: 1, url: PROFILE_URL, handle: "local", draft: { displayName: "local", about: "", contactPolicy: "requests" } });
+      expect((await handleProfilePublish({ expectedRevision: 1 }, ctx)).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
+    });
+  });
+
   it("reports the draft revision the record holds, so unpublished changes show and a failed publish can be retried", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);

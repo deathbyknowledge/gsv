@@ -50,15 +50,15 @@ export class ProfileStore {
 
   draft(ownerUid: number): ProfileDraft | null {
     const row = this.row(ownerUid);
-    if (!row) return null;
-    return { revision: row.revision, fields: draftFields(row), avatar: row.draft_avatar_cid ? this.avatarMetadata(row.draft_avatar_cid) : null };
+    return row ? this.draftOf(row) : null;
   }
 
-  update(ownerUid: number, expectedRevision: number, draft: ProfileFields): void {
-    this.storage.transactionSync(() => {
+  /** Saves `draft` over the one at `expectedRevision`, 0 when nothing is saved yet, and returns it as saved. */
+  update(ownerUid: number, expectedRevision: number, draft: ProfileFields): ProfileDraft {
+    return this.storage.transactionSync(() => {
       this.requireEditable(ownerUid, expectedRevision);
-      this.sql.exec(`INSERT INTO social_profiles (owner_uid, revision, draft_json) VALUES (?, 1, ?)
-        ON CONFLICT(owner_uid) DO UPDATE SET revision = revision + 1, draft_json = excluded.draft_json`, ownerUid, JSON.stringify(draft));
+      return this.draftOf(this.sql.exec<ProfileRow>(`INSERT INTO social_profiles (owner_uid, revision, draft_json) VALUES (?, 1, ?)
+        ON CONFLICT(owner_uid) DO UPDATE SET revision = revision + 1, draft_json = excluded.draft_json RETURNING *`, ownerUid, JSON.stringify(draft)).one());
     });
   }
 
@@ -181,6 +181,10 @@ export class ProfileStore {
     if ((existing?.revision ?? 0) !== expectedRevision) throw new Error("Profile changed; reload before saving");
     if (!existing && this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM social_profiles").one().count > 0) throw new Error("A Ship has one public profile");
     return existing;
+  }
+
+  private draftOf(row: ProfileRow): ProfileDraft {
+    return { revision: row.revision, fields: draftFields(row), avatar: row.draft_avatar_cid ? this.avatarMetadata(row.draft_avatar_cid) : null };
   }
 
   private row(ownerUid: number): ProfileRow | null {
