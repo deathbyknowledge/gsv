@@ -849,6 +849,8 @@ function resolvedOpenAICompletionsCompat(
     requiresAssistantAfterToolResult: false,
     requiresThinkingAsText: false,
     requiresReasoningContentOnAssistantMessages: false,
+    requiresNonNullAssistantContent: false,
+    requiresToolsWithToolHistory: false,
     thinkingFormat: "openai",
     openRouterRouting: {},
     vercelGatewayRouting: {},

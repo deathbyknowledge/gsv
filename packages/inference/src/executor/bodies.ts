@@ -1,7 +1,6 @@
 import type { JsonObject, JsonValue } from "@humansandmachines/gsv/protocol";
 import type { ExecutorEnvironment } from "./config";
 import { raceWithAbort } from "../shared/abort";
-import { errorMessageFromUnknown, formatProviderErrorDiagnostic } from "../text/errors";
 
 type BindingResult = Response | ReadableStream<Uint8Array> | ArrayBuffer | ArrayBufferView | Blob | JsonValue;
 type Binding = NonNullable<ExecutorEnvironment["AI"]>;
@@ -10,7 +9,6 @@ type Binding = NonNullable<ExecutorEnvironment["AI"]>;
 export function requestBinding(
   binding: Binding | undefined,
   signal: AbortSignal,
-  onFetchError?: (diagnostic: string) => void,
 ): Binding | undefined {
   if (!binding) return undefined;
   const run = async (model: string, input: JsonObject, options?: { signal?: AbortSignal }): Promise<BindingResult> => {
@@ -26,13 +24,8 @@ export function requestBinding(
       signal.throwIfAborted();
       const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       const combined = requestSignal ? AbortSignal.any([signal, requestSignal]) : signal;
-      try {
-        const response = await raceWithAbort(binding.fetch!(input, { ...init, signal: combined }), combined, { onLateResolve: cancelResult });
-        return new Response(response.body ? ownBody(response.body, combined) : null, response);
-      } catch (error) {
-        onFetchError?.(formatProviderErrorDiagnostic(errorMessageFromUnknown(error)));
-        throw error;
-      }
+      const response = await raceWithAbort(binding.fetch!(input, { ...init, signal: combined }), combined, { onLateResolve: cancelResult });
+      return new Response(response.body ? ownBody(response.body, combined) : null, response);
     } : undefined,
     // SAFETY: this wrapper preserves every native run overload's input and result shape.
     run: run as Binding["run"],

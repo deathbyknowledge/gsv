@@ -295,11 +295,12 @@ describe("OpenAI Codex routed fetch transport", () => {
       model: "gpt-6-astra",
       stream: true,
       store: false,
-      instructions: "Reply briefly.",
       prompt_cache_key: "session-1",
       tool_choice: "auto",
       parallel_tool_calls: true,
     });
+    expect(body).not.toHaveProperty("instructions");
+    expect(body.input[0]).toEqual({ role: "developer", content: "Reply briefly." });
     expect(body).not.toHaveProperty("max_output_tokens");
   });
 
