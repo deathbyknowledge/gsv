@@ -203,14 +203,16 @@ export async function handleProfilePublish(args: ProfilePublishArgs, ctx: Kernel
 /** Writes the owner's saved draft at exactly `revision` to the Ship's repository; the first publish creates the Ship's DID. */
 async function publishProfileRevision(ownerUid: number, revision: number, ctx: KernelContext): Promise<void> {
   await ctx.profiles.exclusive(async () => {
-    const draft = ctx.profiles.draft(ownerUid);
-    if (!draft || draft.revision !== revision) throw new Error("Profile changed; reload before publishing");
+    const saved = ctx.profiles.draft(ownerUid);
+    if ((saved?.revision ?? 0) !== revision) throw new Error("Profile changed; reload before publishing");
     if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
+    // Until something saves it, the profile is the default its editor shows at revision 0; publishing it saves it first.
+    const draft = saved ?? ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
     const avatar = draft.avatar ? ctx.profiles.avatar(draft.avatar.cid) : null;
     const record = profileRecord(draft.fields, avatar);
     const { cid, mirror } = await putProfileRecord(ctx, record, avatar, (takedowns) => blueskyMirror(record, takedowns, ctx));
     // The repository now holds this revision, so it is recorded even if the draft moved on meanwhile.
-    ctx.profiles.publish(ownerUid, revision, cid, record, avatar, mirror);
+    ctx.profiles.publish(ownerUid, draft.revision, cid, record, avatar, mirror);
     // A publish settles a public choice from setup that hadn't published yet.
     ctx.config.delete(publicChoiceKey(ownerUid));
   });

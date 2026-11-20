@@ -32,8 +32,7 @@ export function InviteContact({ account, profile, onBusy, onFind, onEditProfile 
   const unpublished = !!profile && profileUnpublished(profile);
   const turnOn = useMutation({
     mutationFn: async (state: ProfileState) => {
-      // Only a stored draft publishes; revision 0 is the Kernel's default, which nothing has saved yet.
-      const saved = state.revision > 0 && state.draft.contactPolicy === "requests" ? state
+      const saved = state.draft.contactPolicy === "requests" ? state
         : (await client.profile.update({ expectedRevision: state.revision, draft: profileNamed(state, { ...state.draft, contactPolicy: "requests" }) })).profile;
       return (await client.profile.publish({ expectedRevision: saved.revision })).profile;
     },
