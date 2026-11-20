@@ -262,6 +262,21 @@ describe("secret santa hat script", () => {
     await expect(hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).rejects.toThrow("set round to 2");
   });
 
+  it("refuses a question about a round the draw has moved past", async () => {
+    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
+    await hat.run({});
+    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
+    await expect(hat.run({ action: "ask", contact: "c:bob", to: "giver", round: 1, value: "tea?", text: "Tea?" })).rejects.toThrow("the draw is now round 2");
+  });
+
+  it("keeps a redraw replayable when only wishes changed", async () => {
+    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
+    await hat.run({});
+    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
+    hat.game = { people: PEOPLE.slice(0, 4).map((p) => ({ ...p, wishes: ["Tea"] })) };
+    expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
+  });
+
   it("refuses a person whose contact is not a name, before saving a draw", async () => {
     const hat = new Hat();
     // Written as raw JSON, as a hand-edited game file could be.

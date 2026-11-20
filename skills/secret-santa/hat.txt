@@ -39,7 +39,7 @@ const saveDraw = async (draw) => {
 // One contact message under a fixed key: the same key and text again returns the same delivery
 // instead of sending a second message, so running this script again never sends anything twice.
 const send = async (destination, message, key) => {
-  const sent = await shell(`message send --to ${q(destination)} --message ${q(message)} --delivery-id ${q(key)} --responsibility ${q(r12y)} --also`, { target: "gsv" });
+  const sent = await shell(`message send --to ${q(destination)} --message ${q(message)} --delivery-id ${q(key)} --responsibility ${q(`r12y:${id}`)} --also`, { target: "gsv" });
   const state = sent.exitCode === 0 ? /delivery_state=(\w+)/.exec(sent.output)?.[1] : undefined;
   return state ?? `unsent: ${String(sent.error || sent.output || "no delivery").trim().slice(0, 200)}`;
 };
@@ -48,6 +48,8 @@ const sentOk = (state) => state === "queued" || state === "delivered";
 if (action === "ask") {
   const draw = await readJson(`${id}.draw.json`);
   if (!draw) throw new Error("No draw yet");
+  // A question about an earlier round's match would reach the wrong person after a redraw.
+  if (from && from !== draw.round) throw new Error(`That was about round ${from}, and the draw is now round ${draw.round}: ask them to send it again about their new match`);
   if (to !== "giver" && to !== "recipient") throw new Error('Set to to "giver" or "recipient"');
   if (!text) throw new Error("Write text to forward");
   if (bytes(text) > 2000) throw new Error("Too long to forward: shorten it");
@@ -71,7 +73,7 @@ if (redraw && previous && (from < 1 || (from !== previous.round && from !== prev
 // A redraw run again, naming the round it already replaced, sends that redraw again rather than
 // drawing everyone a third time.
 // What a redraw drew from, so a rerun naming an old round is accepted only for the same people.
-const inputOf = async (game) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([game?.people, game?.exclude ?? []]))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+const inputOf = async (game) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([(game?.people ?? []).map((p) => p.contact).sort(), game?.exclude ?? []]))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
 if (redraw && previous && from === previous.round - 1 && previous.input !== await inputOf(await readJson(`${id}.json`))) throw new Error(`Round ${from} was already replaced and the people or exclusions changed since: set round to ${previous.round}`);
 if (previous && (!redraw || from === previous.round - 1)) {
   // Sending the same draw again: a match already accepted comes back as it is, and one that failed
