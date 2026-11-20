@@ -292,7 +292,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(resent.map((s) => s.to).sort()).toEqual(["c:bob", lost.to].sort());
     expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2"), id: expect.any(String) });
     expect(report).toEqual({
-      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, failed: [],
+      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [],
       yours: expect.objectContaining({ replaces: false }),
     });
   });
@@ -525,6 +525,7 @@ describe.sequential("secret-santa hat script", () => {
     const [second] = hat.sent.slice(before);
     hat.states.set(second.id, "delivered");
 
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ earlierRetryable: 1, resent: 0 }));
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
     hat.retryable.clear();
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
@@ -536,6 +537,19 @@ describe.sequential("secret-santa hat script", () => {
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
     await expect(hat.run({ action: "resend" })).rejects.toThrow("Cannot read");
+  });
+
+  it("keeps a late joiner's address and wishes for the redraw that adds them", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE.slice(0, 5), exclude: [] });
+    expect(await hat.run({ action: "address", contact: "c:fei", value: "Rua V 5, Lagos" })).toEqual({ kept: true, notInDraw: true });
+    expect(await hat.run({ action: "wish", contact: "c:fei", value: "Jam" })).toEqual({ kept: true, notInDraw: true });
+
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true });
+    const giver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === "c:fei")?.giver.contact;
+    if (giver !== "owner") {
+      expect(hat.sent.find((s) => s.to === giver && s.message.startsWith("New match"))?.message).toBe("New match|Fei|Rua V 5, Lagos|Jam");
+    }
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

@@ -42,10 +42,10 @@ The type changes delivery:
 - **In person:** you should default to the address the organizer gives you for gift delivery. If anyone prefers to send the gift somewhere else, allow them to, and be mindful of delivery times.
 - **With remote people:** each remote participant's Ship sends a delivery address to you, and you pass it only to the Ship of whoever drew them, for the order. Before collecting any address, tell the organiser once that addresses are personal data: at work, the organiser should be someone from HR or another person responsible for and authorised to handle colleagues' personal data. Your default is using ONLY the hat as the holder of any PII (full names, addresses etc). Ask the organizer for permission to share with the other participants, and make sure the participants are aware, when you ask them for their info, of how and when it is going to be used. Delete the file when the game ends; what Activity and People keep is in The promise.
 
-Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up:
+Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Pick a `SLUG` from the event name; the command refuses one already in use, so a live game's file is never replaced; pick another then. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
+mkdir -p "$HOME/secret-santa" && test ! -e "$HOME/secret-santa/SLUG.json" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
 r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[],"exclude":[]}'
 ```
 
@@ -78,7 +78,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
-- **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
+- **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
 - **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Tell the leaver's Ship they are out.
@@ -249,8 +249,14 @@ if (action === "draw") {
 }
 if (action === "resend") {
   const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours: owned ? matchOf(owned, false) : null };
+  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, false) : null };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
+    // A replaced attempt that People can still retry holds up a redraw, a leave and close.
+    for (const id of record.earlier ?? []) {
+      const { state, retryable } = await statusOf(id);
+      if (state === "failed" && retryable) report.earlierRetryable++;
+      else if (state === "queued") report.onTheWay++;
+    }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
     const { state } = await statusOf(record.deliveryId);
     if (state === "failed") { record.attempt++; report.resent++; await deliver(record); }
@@ -271,7 +277,8 @@ if (action === "close") {
 }
 if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
 if (action === "address" || action === "wish") {
-  const giver = game.pairs ? pairOf("recipient", contact).giver : null;
+  // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
+  const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
   // A corrected address must not be overtaken by an earlier match or address still on its way.
   if (action === "address" && giver) {
     const earlier = [game.sent[giver.contact], ...game.forwards.filter((f) => f.to === giver.contact && f.about === contact)].filter(Boolean);
@@ -281,7 +288,7 @@ if (action === "address" || action === "wish") {
   }
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(game.wishes[contact] ?? []), value];
-  if (!giver) { await save(); return { kept: true }; }
+  if (!giver) { await save(); return game.pairs ? { kept: true, notInDraw: true } : { kept: true }; }
   return forward(giver);
 }
 if (action === "ask") {
@@ -327,7 +334,7 @@ throw new Error(`Unknown action: ${action}`);
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
+- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
 - Update details with the people and exclusions, never with pairs.
 
 ### 4. Wishes and questions
