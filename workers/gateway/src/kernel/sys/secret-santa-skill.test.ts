@@ -1112,6 +1112,37 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent).toHaveLength(before);
   });
 
+  it("counts one person's wishes with their delimiters", async () => {
+    const hat = new Hat();
+    let error = "";
+    for (let i = 0; i < 400 && !error; i++) error = await hat.run({ action: "wish", contact: "c:bob", value: String.fromCodePoint(0x4e00 + i) }).then(() => "", (e: Error) => e.message);
+    expect(error).toMatch("Too many wishes from them");
+    expect(JSON.stringify(hat.game.wishes["c:bob"]).length).toBeLessThanOrEqual(2000);
+  });
+
+  it("sends a repeated forward again when its kept copy failed", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const ask = { action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "Your Secret Santa asks your size." };
+    await hat.run(ask);
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "failed");
+    const before = hat.sent.length;
+    expect(await hat.run(ask)).toEqual({ already: true, forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual([ask.text]);
+  });
+
+  it("drops the text of delivered forwards when the file fills", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const old = Array.from({ length: 30 }, (_, i) => ({ ref: `r${i}`, kind: "ask", to: "c:x", about: "c:y", who: "a forwarded message", key: `k${i}`, message: "m".repeat(1900), attempt: 1, deliveryId: `delivery:old${i}` }));
+    for (const r of old) hat.states.set(r.deliveryId, "delivered");
+    hat.file = JSON.stringify({ ...hat.game, forwards: old });
+    expect(await hat.run({ action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "Your Secret Santa asks your size." })).toEqual({ forwarded: true });
+    expect(hat.file?.includes("m".repeat(1900))).toBe(false);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();

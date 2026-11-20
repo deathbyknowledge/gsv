@@ -25,16 +25,28 @@ const file = `secret-santa/${r12y.replace(/^r12y:/, "")}.json`;
 const path = `~/${file}`;
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 // Size as the file stores it: UTF-8, with JSON escaping.
-const bytes = (v) => new TextEncoder().encode(JSON.stringify(String(v))).length;
+const size = (v) => new TextEncoder().encode(JSON.stringify(v)).length;
+const bytes = (v) => size(String(v));
+// A short fingerprint of a message, so a repeat can be recognised after its text is dropped.
+const digest = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
 let game = null;
 // CodeMode reads at most 64 KiB, so a file any larger could never be read again, not even to
 // close. Every write, the first included, goes through this check, and always leaves room for
 // the delivery id and error each message not yet sent will add. New content stops well short;
 // recording a delivery, an attempt or a mark (`delivery`) may use the room up to just under it.
 const save = async (delivery = false) => {
+  const records = () => [...Object.values(game.sent), ...game.forwards];
+  const limit = () => (delivery ? 65000 : 60000) - 400 * records().filter((r) => r.to !== "owner" && !r.deliveryId).length;
+  if (size(game) > limit()) {
+    // Messages that arrived are never sent again, so their text can go to make room.
+    for (const r of records()) {
+      if (r.message === undefined || r.to === "owner" || !r.deliveryId || r.arrived) continue;
+      if ((await statusOf(r.deliveryId)).state === "delivered") r.arrived = true;
+    }
+    for (const r of records()) if (r.arrived && r.to !== "owner" && r.message !== undefined) delete r.message;
+  }
   const content = JSON.stringify(game);
-  const unsent = [...Object.values(game.sent), ...game.forwards].filter((r) => r.to !== "owner" && !r.deliveryId).length;
-  if (new TextEncoder().encode(content).length > (delivery ? 65000 : 60000) - 400 * unsent) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
+  if (new TextEncoder().encode(content).length > limit()) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
   const written = await fs.write({ target: "gsv", path, content });
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
@@ -173,10 +185,15 @@ const fence = async (other) => {
 // The same message sent again, for example after a run that stopped: finish what the first run
 // started instead of keeping or sending it twice.
 const resume = async (other) => {
-  const earlier = game.forwards.find((f) => f.to === other.contact && f.about === contact && f.kind === action && f.message === text);
+  const sum = await digest(text);
+  const earlier = game.forwards.find((f) => f.to === other.contact && f.about === contact && f.kind === action && f.sum === sum);
   if (!earlier) return null;
   if (earlier.to === "owner") return earlier.told ? { already: true } : { already: true, forYourOwner: earlier.id };
   if (!earlier.deliveryId) return { already: true, forwarded: await deliver(earlier) };
+  // A copy that failed goes again; one still on its way or delivered is left alone.
+  const { state } = await statusOf(earlier.deliveryId);
+  if (state === "delivered") { earlier.arrived = true; await save(true); }
+  if (state === "failed" && !earlier.arrived) return { already: true, forwarded: await rotate(earlier) };
   return { already: true, forwarded: true };
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair. The
@@ -187,11 +204,11 @@ const forward = async (other) => {
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
     const id = ++game.forwardCount;
-    game.forwards.push({ to: "owner", kind: action, about: contact, id, message: text, told: false });
+    game.forwards.push({ to: "owner", kind: action, about: contact, id, sum: await digest(text), message: text, told: false });
     await save();
     return { forYourOwner: id };
   }
-  const record = { ref: newRef(), kind: action, to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
+  const record = { ref: newRef(), kind: action, sum: await digest(text), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -339,9 +356,9 @@ if (action === "address" || action === "wish") {
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
   // The draw repeats every wish and address in a match, so the file has to hold them twice.
-  const kept = (o) => bytes(Object.values(o).flat().join(""));
-  if (bytes((game.wishes[contact] ?? []).join("")) > 2000) throw new Error("Too many wishes from them to keep: ask them to sum up, and send it with redraw set to replace the rest");
-  if (kept(game.wishes) + kept(game.addresses) > 15000) throw new Error("Too many wishes to keep for this group: ask the people with the longest lists to sum up, sent with redraw set");
+  // Sized as stored, delimiters included.
+  if (size(game.wishes[contact] ?? []) > 2000) throw new Error("Too many wishes from them to keep: ask them to sum up, and send it with redraw set to replace the rest");
+  if (size(game.wishes) + size(game.addresses) > 15000) throw new Error("Too many wishes to keep for this group: ask the people with the longest lists to sum up, sent with redraw set");
   if (!giver) { await save(); return game.pairs ? { kept: true, notInDraw: true } : { kept: true }; }
   return forward(giver);
 }
