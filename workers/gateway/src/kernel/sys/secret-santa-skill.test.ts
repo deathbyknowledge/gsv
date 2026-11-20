@@ -586,7 +586,7 @@ describe.sequential("secret-santa hat script", () => {
   it("refuses a save the next read could not hold", async () => {
     const hat = new Hat();
     await expect(hat.run({ action: "wish", contact: "c:bob", value: "x".repeat(2001) })).rejects.toThrow("Too long to keep");
-    hat.file = JSON.stringify({ ...hat.game, wishes: { "c:bob": ["x".repeat(59990)] } });
+    hat.file = JSON.stringify({ ...hat.game, padding: "x".repeat(59990) });
     await expect(hat.run({ action: "wish", contact: "c:carla", value: "Tea" })).rejects.toThrow("Too much to keep");
     expect(hat.game.wishes["c:carla"]).toBeUndefined();
   });
@@ -688,12 +688,12 @@ describe.sequential("secret-santa hat script", () => {
     // that room can't take another wish.
     const hat = new Hat();
     const pending = { to: "c:bob", who: "Bob", key: "k", message: "m", attempt: 1, deliveryId: null };
-    const seed = { ...hat.game, sent: { "c:bob": pending }, wishes: { "c:carla": [""] } };
-    const pad = 59800 - JSON.stringify({ ...seed, wishes: { ...seed.wishes, "c:dev": ["Tea"] } }).length;
-    hat.file = JSON.stringify({ ...seed, wishes: { "c:carla": ["x".repeat(pad)] } });
+    const seed = { ...hat.game, sent: { "c:bob": pending }, padding: "" };
+    const pad = 59800 - JSON.stringify({ ...seed, wishes: { "c:dev": ["Tea"] } }).length;
+    hat.file = JSON.stringify({ ...seed, padding: "x".repeat(pad) });
     await expect(hat.run({ action: "wish", contact: "c:dev", value: "Tea" })).rejects.toThrow("Too much to keep");
 
-    hat.file = JSON.stringify({ ...seed, sent: {}, wishes: { "c:carla": ["x".repeat(pad)] } });
+    hat.file = JSON.stringify({ ...seed, sent: {}, padding: "x".repeat(pad) });
     expect(await hat.run({ action: "wish", contact: "c:dev", value: "Tea" })).toEqual({ kept: true });
   });
 
@@ -786,22 +786,6 @@ describe.sequential("secret-santa hat script", () => {
     await expect(hat.run({ action: "address", contact: pair?.recipient.contact ?? "", value: "Rua N 2", text: "New address: Rua N 2." })).rejects.toThrow("failed");
   });
 
-  it("sends a confirmed-missing forward again, but not one a later message replaced", async () => {
-    const hat = new Hat();
-    await hat.draw({ people: PEOPLE, exclude: [] });
-    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
-    const giver = pair?.giver.contact ?? "";
-    const recipient = pair?.recipient.contact ?? "";
-    for (const s of hat.sent) hat.states.set(s.id, "delivered");
-    await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Tea, please." });
-    hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
-    await hat.run({ action: "wish", contact: recipient, value: "Socks", text: "Socks too." });
-    hat.states.clear();
-    const before = hat.sent.length;
-    await hat.run({ action: "resend", contact: giver });
-    expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Socks too."]);
-  });
-
   it("abandons an unnamed forward by the ref its failure gave, without naming who it was for", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });
@@ -836,6 +820,39 @@ describe.sequential("secret-santa hat script", () => {
     hat.file = null;
     await expect(hat.run({ action: "start", value: "x".repeat(301) })).rejects.toThrow("too long");
     expect(hat.file).toBeNull();
+  });
+
+  it("resends every confirmed-missing wish, and only the latest address", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    const recipient = pair?.recipient.contact ?? "";
+    for (const s of hat.sent) hat.states.set(s.id, "delivered");
+    for (const [action, text] of [["wish", "Tea, please."], ["wish", "Socks too."], ["address", "Rua A 1."], ["address", "Rua B 2."]]) {
+      await hat.run({ action, contact: recipient, value: text, text });
+      hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
+    }
+    hat.states.clear();
+    const before = hat.sent.length;
+    await hat.run({ action: "resend", contact: giver });
+    expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Tea, please.", "Socks too.", "Rua B 2."]);
+  });
+
+  it("bounds one person's wishes and lets a summary replace them", async () => {
+    const hat = new Hat();
+    for (let i = 0; i < 2; i++) await hat.run({ action: "wish", contact: "c:bob", value: "w".repeat(900) });
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "w".repeat(900) })).rejects.toThrow("Too many wishes from them");
+    expect(await hat.run({ action: "wish", contact: "c:bob", value: "Books or tea", redraw: true })).toEqual({ kept: true });
+    expect(hat.game.wishes["c:bob"]).toEqual(["Books or tea"]);
+  });
+
+  it("bounds the whole group's wishes so the draw can always be saved", async () => {
+    const hat = new Hat();
+    for (const p of PEOPLE.slice(1)) for (let i = 0; i < 2; i++) await hat.run({ action: "wish", contact: p.contact, value: "w".repeat(990) }).catch(() => null);
+    expect(Object.values(hat.game.wishes).flat().join("").length).toBeLessThanOrEqual(15000);
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    expect(hat.game.round).toBe(1);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

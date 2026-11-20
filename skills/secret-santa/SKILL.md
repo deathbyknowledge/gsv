@@ -42,7 +42,7 @@ The type changes delivery:
 - **In person:** you should default to the address the organizer gives you for gift delivery. If anyone prefers to send the gift somewhere else, allow them to, and be mindful of delivery times.
 - **With remote people:** each remote participant's Ship sends a delivery address to you, and you pass it only to the Ship of whoever drew them, for the order. Before collecting any address, tell the organiser once that addresses are personal data: at work, the organiser should be someone from HR or another person responsible for and authorised to handle colleagues' personal data. Your default is using ONLY the hat as the holder of any PII (full names, addresses etc). Ask the organizer for permission to share with the other participants, and make sure the participants are aware, when you ask them for their info, of how and when it is going to be used. Delete the file when the game ends; what Activity and People keep is in The promise.
 
-Repeat the whole plan back to the organiser and wait for their OK. Then open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up. The dedupe key, from the event name and the swap date, makes a repeat return the same responsibility, so you can run it again when its answer is lost:
+Repeat the whole plan back to the organiser and wait for their OK. Then open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up. The dedupe key, from the event name and the swap date, makes a repeat return the same responsibility, so you can run it again when its answer is lost. If what it returns was created before this setup (`createdAtMs`) or its details differ, it is another game: add a number to `SLUG` and run it again, so the two never share a file:
 
 ```bash
 r12y create --dedupe "secret-santa:SLUG:SWAP_ISO" --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","invited":["NAME"],"people":[],"exclude":[]}'
@@ -77,7 +77,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one. "No draw fits" means none exists; "No draw found yet" means the search ran out of time, so run it again before asking the organiser to drop an exclusion. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
-- **`address`** and **`wish`**: keep what `contact` sent, up to 2,000 characters each. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
+- **`address`** and **`wish`**: keep what `contact` sent, up to 2,000 characters each and 2,000 for all of one person's wishes. With `redraw` set, a wish replaces that person's earlier ones, for when they sum up a long list. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
@@ -93,7 +93,7 @@ const action = "draw"; // start | draw | resend | address | wish | ask | told | 
 const r12y = "RESPONSIBILITY_ID";
 const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in details.people, "owner" only when the organiser plays
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
-const redraw = false; // draw: replace an existing draw
+const redraw = false; // draw: replace an existing draw; wish: replace their earlier wishes with this one
 const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a Ship that confirmed nothing arrived
 const value = ""; // abandon: the ref from failed; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
 const to = "giver"; // ask: "giver" or "recipient" of contact
@@ -237,7 +237,7 @@ const forward = async (other) => {
     await save();
     return { forYourOwner: id };
   }
-  const record = { ref: newRef(), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
+  const record = { ref: newRef(), kind: action, to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -317,8 +317,9 @@ if (action === "resend") {
     }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
     const { state } = await statusOf(record.deliveryId);
-    // A confirmed-missing message goes again, unless a later one about the same person replaced it.
-    const replaced = record.about !== undefined && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.to === record.to && f.about === record.about);
+    // A confirmed-missing message goes again, unless it was an address a later one corrected;
+    // wishes and questions add up, so each goes again.
+    const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
     if (state === "failed" || (state === "gone" && record.to === contact && !replaced)) { report.resent++; await rotate(record); }
     else if (state === "delivered") report.delivered++;
     else if (state === "queued") report.onTheWay++;
@@ -359,7 +360,11 @@ if (action === "address" || action === "wish") {
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
   if (action === "address") game.addresses[contact] = value;
-  else game.wishes[contact] = [...(game.wishes[contact] ?? []), value];
+  else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
+  // The draw repeats every wish and address in a match, so the file has to hold them twice.
+  const kept = (o) => Object.values(o).flat().join("").length;
+  if ((game.wishes[contact] ?? []).join("").length > 2000) throw new Error("Too many wishes from them to keep: ask them to sum up, and send it with redraw set to replace the rest");
+  if (kept(game.wishes) + kept(game.addresses) > 15000) throw new Error("Too many wishes to keep for this group: ask the people with the longest lists to sum up, sent with redraw set");
   if (!giver) { await save(); return game.pairs ? { kept: true, notInDraw: true } : { kept: true }; }
   return forward(giver);
 }
