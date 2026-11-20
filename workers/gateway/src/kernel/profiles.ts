@@ -21,7 +21,7 @@ import { blueskyProfile, type BlueskyProfileRecord } from "./bluesky-profile";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederation, readFederationJson } from "./federation/http";
 import { FederationHttpError } from "./federation/errors";
-import type { ProfileAvatarFile } from "./profile-store";
+import type { ProfileAvatarFile, ProfileDraft } from "./profile-store";
 import { DidNotResolvedError, resolveDid, resolveHandle, type ResolvedDid } from "./ships/did-directory";
 
 export type { ShipProfileRecord } from "@humansandmachines/gsv/protocol";
@@ -206,8 +206,9 @@ async function publishProfileRevision(ownerUid: number, revision: number, ctx: K
     const saved = ctx.profiles.draft(ownerUid);
     if ((saved?.revision ?? 0) !== revision) throw new Error("Profile changed; reload before publishing");
     if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
-    // Until something saves it, the profile is the default its editor shows at revision 0; publishing it saves it first.
-    const draft = saved ?? ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
+    // Until something saves it, the profile is the default its editor shows at revision 0; publishing it saves it first,
+    // and clients learn its revision even if the publication then fails, so a retry isn't refused as out of date.
+    const draft = saved ?? saveDefaultDraft(ownerUid, ctx);
     const avatar = draft.avatar ? ctx.profiles.avatar(draft.avatar.cid) : null;
     const record = profileRecord(draft.fields, avatar);
     const { cid, mirror } = await putProfileRecord(ctx, record, avatar, (takedowns) => blueskyMirror(record, takedowns, ctx));
@@ -216,6 +217,12 @@ async function publishProfileRevision(ownerUid: number, revision: number, ctx: K
     // A publish settles a public choice from setup that hadn't published yet.
     ctx.config.delete(publicChoiceKey(ownerUid));
   });
+}
+
+function saveDefaultDraft(ownerUid: number, ctx: KernelContext): ProfileDraft {
+  const draft = ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
+  ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  return draft;
 }
 
 /**
