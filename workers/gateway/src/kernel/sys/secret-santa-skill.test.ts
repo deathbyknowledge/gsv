@@ -24,7 +24,7 @@ type Settings = {
   action?: string;
   r12y?: string;
   people?: Person[];
-  exclude?: string[][];
+  exclude?: string[][] | string[];
   redraw?: boolean;
   round?: number;
   contact?: string;
@@ -1385,6 +1385,24 @@ describe.sequential("secret-santa hat script", () => {
     hat.states.set(first.id, "delivered");
     hat.states.set(second.id, "queued");
     expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ onTheWay: 1 }));
+  });
+
+  it("refuses exclusions that are not pairs before drawing", async () => {
+    const hat = new Hat();
+    await expect(hat.run({ people: PEOPLE, exclude: ["c:bob", "c:carla"] })).rejects.toThrow("pair of contact IDs");
+    expect(hat.sent).toHaveLength(0);
+  });
+
+  it("finishes a saved wish forward even when Ship words it differently the second time", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.timesOut.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "They'd love tea." });
+    hat.timesOut.clear();
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Your recipient wishes for tea." })).toEqual({ kept: true, already: true, forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["They'd love tea."]);
   });
 
   it("never sends an abandoned forward again when it is repeated", async () => {

@@ -9,6 +9,7 @@ if (!r12y) throw new Error("Set r12y to the Secret Santa responsibility");
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
 if (!Array.isArray(people) || !Array.isArray(exclude)) throw new Error("people and exclude must be lists");
 if (!people.every((p) => p && typeof p.name === "string" && p.name && typeof p.contact === "string" && p.contact)) throw new Error("Each person needs a name and a contact");
+if (!exclude.every((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((c) => typeof c === "string" && c))) throw new Error("Each exclusion must be a pair of contact IDs, like [[\"CONTACT_ID\", \"CONTACT_ID\"]]");
 if (to !== "giver" && to !== "recipient") throw new Error('to must be "giver" or "recipient"');
 if (!Number.isInteger(round) || round < 0) throw new Error("round must be a whole number");
 // The match message: `note` with {name}, {address}, {wishes} and {deliverTo} filled in. A line whose
@@ -219,10 +220,13 @@ const fence = async (other) => {
     throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
   }
 };
+// What identifies a forward when it is sent again: the wish or address itself, since Ship may word
+// its text differently each time, or a question's own text.
+const source = () => digest(action === "ask" ? text : value);
 // The same message sent again, for example after a run that stopped: finish what the first run
 // started instead of keeping or sending it twice.
 const resume = async (other) => {
-  const sum = await digest(text);
+  const sum = await source();
   // The latest matching one: the same text may have gone before, for example an address changed and changed back.
   const earlier = game.forwards.findLast((f) => f.to === other.contact && f.about === contact && f.kind === action && f.sum === sum);
   if (!earlier) return null;
@@ -244,11 +248,11 @@ const forward = async (other) => {
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
     const id = ++game.forwardCount;
-    game.forwards.push({ to: "owner", kind: action, about: contact, id, sum: await digest(text), message: text, told: false });
+    game.forwards.push({ to: "owner", kind: action, about: contact, id, sum: await source(), message: text, told: false });
     await save();
     return { forYourOwner: id };
   }
-  const record = { ref: newRef(), kind: action, sum: await digest(text), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
+  const record = { ref: newRef(), kind: action, sum: await source(), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -270,7 +274,11 @@ if (action === "draw") {
     }
     if (round !== game.round) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
   }
+  // Check the input before looking at any delivery.
+  if (people.length < 3) throw new Error("A draw needs at least 3 people");
+  if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
   // A replaced match still on its way, or never confirmed, could arrive after its replacement.
+  const knownArrived = new Set([...Object.values(game.sent), ...game.forwards].filter((r) => r.arrived));
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (!(await settled(record))) {
       // Keep any delivery the checks just saw before turning this away.
@@ -278,8 +286,8 @@ if (action === "draw") {
       throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
     }
   }
-  if (people.length < 3) throw new Error("A draw needs at least 3 people");
-  if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
+  // Keep deliveries the checks just saw, in case this draw is refused below.
+  if ([...Object.values(game.sent), ...game.forwards].some((r) => r.arrived && !knownArrived.has(r))) await save(true);
   const rand = (n) => {
     const a = new Uint32Array(1);
     do {
