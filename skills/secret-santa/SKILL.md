@@ -42,11 +42,16 @@ The type changes delivery:
 - **In person:** you should default to the address the organizer gives you for gift delivery. If anyone prefers to send the gift somewhere else, allow them to, and be mindful of delivery times.
 - **With remote people:** each remote participant's Ship sends a delivery address to you, and you pass it only to the Ship of whoever drew them, for the order. Before collecting any address, tell the organiser once that addresses are personal data: at work, the organiser should be someone from HR or another person responsible for and authorised to handle colleagues' personal data. Your default is using ONLY the hat as the holder of any PII (full names, addresses etc). Ask the organizer for permission to share with the other participants, and make sure the participants are aware, when you ask them for their info, of how and when it is going to be used. Delete the file when the game ends; what Activity and People keep is in The promise.
 
-Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Pick a `SLUG` from the event name; the command refuses one already in use, so a live game's file is never replaced; pick another then. Due is the swap; check a few days before the draw, to remind them who has not signed up:
+Repeat the whole plan back to the organiser and wait for their OK. Then open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up. The dedupe key, from the event name and the swap date, makes a repeat return the same responsibility, so you can run it again when its answer is lost:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && test ! -e "$HOME/secret-santa/SLUG.json" && echo '{"round":0,"deliverTo":"IN-PERSON DELIVERY ADDRESS","exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
-r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[],"exclude":[]}'
+r12y create --dedupe "secret-santa:SLUG:SWAP_ISO" --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","invited":["NAME"],"people":[],"exclude":[]}'
+```
+
+Then create the Secret Santa file, named after the UUID in the responsibility's id (`r12y:UUID`), so no two games share one. It is written only when missing, so running it again never replaces a game:
+
+```bash
+mkdir -p "$HOME/secret-santa" && test -e "$HOME/secret-santa/UUID.json" || echo '{"round":0,"deliverTo":"IN-PERSON DELIVERY ADDRESS","exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/UUID.json"
 ```
 
 On the in-person type, `deliverTo` is where gifts go; leave it empty on the remote type. It lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
@@ -88,17 +93,17 @@ Write `note` and `text` yourself, in your own words. `note` gets the recipient's
 
 ```js
 const action = "draw"; // draw | resend | address | wish | ask | told | leave | close
-const file = "secret-santa/SLUG.json";
 const r12y = "RESPONSIBILITY_ID";
 const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in details.people, "owner" only when the organiser plays
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw
-const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about
-const value = ""; // address, wish: what they sent; told: the forYourOwner number
+const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a giver whose Ship confirmed their match never arrived
+const value = ""; // address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
 const to = "giver"; // ask: "giver" or "recipient" of contact
 const text = ""; // address, wish, ask: your message to forward after the draw
 const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw, leave: the match message
 
+const file = `secret-santa/${r12y.replace(/^r12y:/, "")}.json`;
 const path = `~/${file}`;
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 const read = await fs.read({ target: "gsv", path });
@@ -150,7 +155,12 @@ let yours = null;
 // Every match and forward is recorded with its exact text before it is sent, so a resend repeats
 // the same message. Keys carry the responsibility id, so a new game never reuses an old one's. `who` names a giver for a match, never the person a forward went to.
 const prepare = (pair, replaces) => {
-  if (pair.giver.contact === "owner") { yours = matchOf(pair, replaces); return; }
+  if (pair.giver.contact === "owner") {
+    // Kept until you have told your owner, like a message for them.
+    yours = matchOf(pair, replaces);
+    game.sent.owner = { to: "owner", match: true, told: false };
+    return;
+  }
   const key = `santa:${r12y}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
   game.sent[pair.giver.contact] = { to: pair.giver.contact, who: pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
@@ -178,13 +188,21 @@ const settled = async (record) => {
 // forward's reason could name who it was for.
 const deliver = async (record) => {
   const { id, state, error } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
-  if (record.deliveryId && record.deliveryId !== id) record.earlier = [...(record.earlier ?? []), record.deliveryId];
   record.deliveryId = id;
   record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
   await save();
   if (!record.lastError) return true;
   failed.push(record.who === "a forwarded message" ? { who: record.who } : { who: record.who, error: record.lastError });
   return false;
+};
+// A new attempt is saved before it is sent, with the old id kept in `earlier`, so a run that stops
+// mid-send leaves the record unconfirmed rather than pointing at the old, settled attempt.
+const rotate = async (record) => {
+  record.earlier = [...(record.earlier ?? []), record.deliveryId];
+  record.deliveryId = null;
+  record.attempt++;
+  await save();
+  return deliver(record);
 };
 // After the draw, a wish, an address or a question goes on to the other side of that pair. The
 // change and its forward are saved together, then sent.
@@ -256,7 +274,7 @@ if (action === "draw") {
   Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false });
   for (const pair of pairs) prepare(pair, redraw);
   await save();
-  for (const record of Object.values(game.sent)) await deliver(record);
+  for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
   return { people: pairs.length, failed, yours };
 }
 if (action === "resend") {
@@ -264,7 +282,7 @@ if (action === "resend") {
   const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, false) : null, forYourOwner: [] };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (record.to === "owner") {
-      if (!record.told) report.forYourOwner.push({ id: record.id, text: record.message });
+      if (!record.told && !record.match) report.forYourOwner.push({ id: record.id, text: record.message });
       continue;
     }
     // A replaced attempt that People can still retry holds up a redraw, a leave and close.
@@ -275,7 +293,7 @@ if (action === "resend") {
     }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
     const { state } = await statusOf(record.deliveryId);
-    if (state === "failed") { record.attempt++; report.resent++; await deliver(record); }
+    if (state === "failed" || (state === "gone" && record === game.sent[contact])) { report.resent++; await rotate(record); }
     else if (state === "delivered") report.delivered++;
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
@@ -292,7 +310,7 @@ if (action === "close") {
   return { closed: true };
 }
 if (action === "told") {
-  const record = game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
+  const record = value === "match" ? game.sent.owner : game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
   if (!record) throw new Error(`No message for your owner numbered ${value}`);
   record.told = true;
   await save();
@@ -302,11 +320,11 @@ if (game.held && action !== "draw" && action !== "resend") throw new Error("This
 if (action === "address" || action === "wish") {
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
-  // A corrected address must not be overtaken by an earlier match or address still on its way.
-  if (action === "address" && giver) {
+  // A correction or a new wish must not be overtaken by the match or an earlier forward still on its way.
+  if (giver) {
     const earlier = [game.sent[giver.contact], ...game.forwards.filter((f) => f.to === giver.contact && f.about === contact)].filter(Boolean);
     for (const record of earlier) {
-      if (!(await settled(record))) throw new Error("Their giver's earlier messages are unconfirmed or on their way: run resend, then send the address again once they arrive");
+      if (!(await settled(record))) throw new Error("Their giver's earlier messages are unconfirmed or on their way: run resend, then send this again once they arrive");
     }
   }
   if (action === "address") game.addresses[contact] = value;
@@ -349,15 +367,15 @@ if (action === "leave") {
   delete game.sent[contact];
   prepare(before, true);
   await save();
-  if (game.sent[before.giver.contact]) await deliver(game.sent[before.giver.contact]);
+  if (before.giver.contact !== "owner") await deliver(game.sent[before.giver.contact]);
   return { people: game.pairs.length, failed, yours };
 }
 throw new Error(`Unknown action: ${action}`);
 ```
 
-- `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
+- `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else, then run `told` with `value` "match". Until then it holds up a redraw, a leave and `close`. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it, then run `told` with that number as `value`. Until then it holds up a redraw, a leave and `close`, and `resend` lists it again under `forYourOwner` with its text. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
+- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again, and if it confirms its match never arrived, run `resend` with `contact` set to that giver to send it once more. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
 - Update details with the people and exclusions, never with pairs or addresses.
 
 ### 4. Wishes and questions
