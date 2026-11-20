@@ -272,6 +272,13 @@ function normalizeMessage(
 
   if (message.type === "unsupported") {
     const what = message.unsupported?.type ?? "";
+    // Meta names what it withheld from a set it doesn't fully document; logging the name, never the message,
+    // shows which one an unfamiliar case was.
+    console.info(JSON.stringify({
+      component: "managed_whatsapp",
+      event: "inbound_withheld",
+      type: /^[a-z_]{1,40}$/.test(what) ? what : what ? "other" : "none",
+    }));
     if (SILENT_WITHHELD_TYPES.has(what)) return null;
     return unsupported(message.id, token, sender, profile, timestamp, MEDIA_WITHHELD_TYPES.has(what) ? "media" : "message");
   }
