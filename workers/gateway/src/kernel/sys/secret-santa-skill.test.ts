@@ -292,7 +292,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(resent.map((s) => s.to).sort()).toEqual(["c:bob", lost.to].sort());
     expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2"), id: expect.any(String) });
     expect(report).toEqual({
-      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [],
+      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [], forYourOwner: [],
       yours: expect.objectContaining({ replaces: false }),
     });
   });
@@ -307,10 +307,10 @@ describe.sequential("secret-santa hat script", () => {
 
     const wish = await hat.run({ action: "wish", contact: "c:bob", value: "Socks", text: "Your recipient would like socks." });
     expect(hat.game.wishes["c:bob"]).toEqual(["Socks"]);
-    expect(wish).toEqual(giverOfBob === "owner" ? { forYourOwner: true } : { forwarded: true });
+    expect(wish).toEqual(giverOfBob === "owner" ? { forYourOwner: expect.any(Number) } : { forwarded: true });
 
     const ask = await hat.run({ action: "ask", contact: "c:bob", to: "recipient", text: "Your Secret Santa asks your size." });
-    expect(ask).toEqual(recipientOfBob === "owner" ? { forYourOwner: true } : { forwarded: true });
+    expect(ask).toEqual(recipientOfBob === "owner" ? { forYourOwner: expect.any(Number) } : { forwarded: true });
     expect(hat.sent.slice(before).map((s) => s.to)).toEqual([giverOfBob, recipientOfBob].filter((c) => c !== "owner"));
   });
 
@@ -448,7 +448,7 @@ describe.sequential("secret-santa hat script", () => {
     expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== leaver));
     expect(hat.sent).toHaveLength(before);
     const newRecipient = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
-    expect(await hat.run({ action: "wish", contact: newRecipient, value: "Tea", text: "Your recipient would like tea." })).toEqual({ forYourOwner: true });
+    expect(await hat.run({ action: "wish", contact: newRecipient, value: "Tea", text: "Your recipient would like tea." })).toEqual({ forYourOwner: expect.any(Number) });
   });
 
   it("refuses a relink that would pair people kept apart", async () => {
@@ -550,6 +550,35 @@ describe.sequential("secret-santa hat script", () => {
     if (giver !== "owner") {
       expect(hat.sent.find((s) => s.to === giver && s.message.startsWith("New match"))?.message).toBe("New match|Fei|Rua V 5, Lagos|Jam");
     }
+  });
+
+  it("keeps a message for your owner until you have told them", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const recipient = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
+    const result = await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Your recipient would like tea." });
+    expect(result).toEqual({ forYourOwner: expect.any(Number) });
+    // SAFETY: the line above checked that the result is { forYourOwner: number }.
+    const id = (result as { forYourOwner: number }).forYourOwner;
+
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ forYourOwner: [{ id, text: "Your recipient would like tea." }] }));
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    expect(await hat.run({ action: "told", value: String(id) })).toEqual({ told: true });
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ forYourOwner: [] }));
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("refuses a save the next read could not hold", async () => {
+    const hat = new Hat();
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "x".repeat(61000) })).rejects.toThrow("Too much to keep");
+    expect(hat.game.wishes).toEqual({});
+  });
+
+  it("keeps the in-person address in the file and the match, never elsewhere", async () => {
+    const hat = new Hat();
+    hat.file = JSON.stringify({ ...hat.game, deliverTo: "Office, Rua Q 7" });
+    const result = await hat.run({ people: PEOPLE, exclude: [] });
+    expect(result).toEqual(expect.objectContaining({ yours: expect.objectContaining({ deliverTo: "Office, Rua Q 7" }) }));
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

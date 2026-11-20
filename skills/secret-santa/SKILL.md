@@ -45,11 +45,11 @@ The type changes delivery:
 Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Pick a `SLUG` from the event name; the command refuses one already in use, so a live game's file is never replaced; pick another then. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && test ! -e "$HOME/secret-santa/SLUG.json" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
-r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[],"exclude":[]}'
+mkdir -p "$HOME/secret-santa" && test ! -e "$HOME/secret-santa/SLUG.json" && echo '{"round":0,"deliverTo":"IN-PERSON DELIVERY ADDRESS","exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
+r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[],"exclude":[]}'
 ```
 
-`people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
+On the in-person type, `deliverTo` is where gifts go; leave it empty on the remote type. It lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
 
 `r12y update ID --json '{"details":{...}}'` replaces all details: always send the whole object.
 
@@ -59,7 +59,7 @@ r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_I
 - **By email.** `contact invite` prints the organiser's link; it also creates a Ship for someone without one. Write the link and a short note about the event to a file, then `mail send --to ADDRESS --subject SUBJECT --body PATH`.
 - **They ask to join.** A colleague's Ship sends a request or a message saying they are in. Requests are accepted only by the organiser in People: tell them who is waiting, never accept for them.
 - Everyone the organiser invites goes in `invited`.
-- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner, whom you tell in your conversation instead). Send each contact one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place; on the in-person type, also the address gifts go to (`deliverTo`). Say that wishes and questions come to you:
+- **When someone is in**, add `{"name","contact"}` to `people`, using the contact ID from `contact list` (`owner` for your own owner, whom you tell in your conversation instead). Send each contact one message bound to the responsibility, so their later messages reach you. In your own words, welcome them and give the event name, the type, the budget, the draw date, and the swap date and place; their match message will say where to send the gift. Say that wishes and questions come to you:
 
 ```bash
 message send --to CONTACT_ID --message TEXT --responsibility ID --also
@@ -79,24 +79,25 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
+- **`told`**: marks a message for your owner as passed on.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
 - **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Tell the leaver's Ship they are out.
 
-Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
+Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, `deliverTo`), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
 ```js
-const action = "draw"; // draw | resend | address | wish | ask | leave | close
+const action = "draw"; // draw | resend | address | wish | ask | told | leave | close
 const file = "secret-santa/SLUG.json";
 const r12y = "RESPONSIBILITY_ID";
 const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in details.people, "owner" only when the organiser plays
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw
 const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about
-const value = ""; // address, wish: what they sent
+const value = ""; // address, wish: what they sent; told: the forYourOwner number
 const to = "giver"; // ask: "giver" or "recipient" of contact
 const text = ""; // address, wish, ask: your message to forward after the draw
-const note = ({ name, address, wishes, replaces }) => `...`; // draw, leave: the match message
+const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw, leave: the match message
 
 const path = `~/${file}`;
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
@@ -108,8 +109,12 @@ if (!read.ok) {
 }
 if (read.truncated) throw new Error(`${file} is too large to read in one go`);
 const game = JSON.parse(read.content);
+// CodeMode reads at most 64 KiB, so a file any larger could never be read again, not even to
+// close. A save that would pass the limit stops before writing.
 const save = async () => {
-  const written = await fs.write({ target: "gsv", path, content: JSON.stringify(game) });
+  const content = JSON.stringify(game);
+  if (new TextEncoder().encode(content).length > 60000) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
+  const written = await fs.write({ target: "gsv", path, content });
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
 // The delivery id and state `message send` prints. Without an id it was not accepted, and the
@@ -138,7 +143,7 @@ const pairOf = (side, id) => {
   if (!pair) throw new Error(`${id} is not in the draw`);
   return pair;
 };
-const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces });
+const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces, deliverTo: game.deliverTo || null });
 const failed = [];
 let yours = null;
 
@@ -161,6 +166,7 @@ const statusOf = async (deliveryId) => {
 // left, or a last send without an id to a contact that has ended. An attempt replaced by a resend
 // still counts, since it can be retried from People for up to a week.
 const settled = async (record) => {
+  if (record.to === "owner") return record.told;
   if (!record.deliveryId && !(await ended(record.to))) return false;
   for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
     const { state, retryable } = await statusOf(id);
@@ -184,7 +190,13 @@ const deliver = async (record) => {
 // change and its forward are saved together, then sent.
 const forward = async (other) => {
   if (!text) throw new Error("Write text to forward");
-  if (other.contact === "owner") { await save(); return { forYourOwner: true }; }
+  if (other.contact === "owner") {
+    // Kept until you have told your owner, so a run that stops first can still pass it on.
+    const id = ++game.forwardCount;
+    game.forwards.push({ to: "owner", about: contact, id, message: text, told: false });
+    await save();
+    return { forYourOwner: id };
+  }
   const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
@@ -249,8 +261,12 @@ if (action === "draw") {
 }
 if (action === "resend") {
   const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, false) : null };
+  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, false) : null, forYourOwner: [] };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
+    if (record.to === "owner") {
+      if (!record.told) report.forYourOwner.push({ id: record.id, text: record.message });
+      continue;
+    }
     // A replaced attempt that People can still retry holds up a redraw, a leave and close.
     for (const id of record.earlier ?? []) {
       const { state, retryable } = await statusOf(id);
@@ -274,6 +290,13 @@ if (action === "close") {
   const removed = await shell(`rm -f "$HOME"/${q(file)}`, { target: "gsv" });
   if (removed.exitCode !== 0) throw new Error(`Cannot delete ${file}: ${String(removed.error || removed.output).trim().slice(0, 200)}`);
   return { closed: true };
+}
+if (action === "told") {
+  const record = game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
+  if (!record) throw new Error(`No message for your owner numbered ${value}`);
+  record.told = true;
+  await save();
+  return { told: true };
 }
 if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
 if (action === "address" || action === "wish") {
@@ -333,9 +356,9 @@ throw new Error(`Unknown action: ${action}`);
 ```
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
-- `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
+- `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it, then run `told` with that number as `value`. Until then it holds up a redraw, a leave and `close`, and `resend` lists it again under `forYourOwner` with its text. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
 - `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
-- Update details with the people and exclusions, never with pairs.
+- Update details with the people and exclusions, never with pairs or addresses.
 
 ### 4. Wishes and questions
 
