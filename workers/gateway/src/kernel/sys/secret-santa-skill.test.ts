@@ -104,6 +104,7 @@ class Hat {
       const delivery = state ? { deliveryId: id, state, retryable: this.retryable.has(id) } : null;
       return { status: "completed", exitCode: 0, output: JSON.stringify({ delivery }) };
     }
+    if (command.startsWith("test -e ")) return { status: "completed", exitCode: this.file === null ? 1 : 0, output: "" };
     if (command.startsWith("rm -f ")) {
       this.removed.push(command);
       this.file = null;
@@ -192,12 +193,12 @@ describe.sequential("secret-santa hat script", () => {
     expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "delivery failed" }] }));
   });
 
-  it("refuses a redraw until unconfirmed matches are resent", async () => {
+  it("refuses a redraw until a send that never answered is resent", async () => {
     const hat = new Hat();
-    hat.refuse.add("c:bob");
+    hat.timesOut.add("c:bob");
     await hat.run({ people: PEOPLE, exclude: [] });
     await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("unconfirmed");
-    hat.refuse.clear();
+    hat.timesOut.clear();
     await hat.run({ action: "resend" });
     await hat.run({ people: PEOPLE, exclude: [], redraw: true });
     expect(hat.game.round).toBe(2);
@@ -400,9 +401,9 @@ describe.sequential("secret-santa hat script", () => {
 
     const giverOfLeaver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === leaver)?.giver.contact ?? "";
     if (giverOfLeaver !== "owner") {
-      hat.refuse.add(giverOfLeaver);
+      hat.timesOut.add(giverOfLeaver);
       await hat.run({ action: "wish", contact: leaver, value: "Tea", text: "Your recipient would like tea." });
-      hat.refuse.clear();
+      hat.timesOut.clear();
       await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("unconfirmed");
       await hat.run({ action: "resend" });
     }
@@ -497,6 +498,37 @@ describe.sequential("secret-santa hat script", () => {
     await held.run({ people: PEOPLE.slice(0, 3), exclude: [] });
     await expect(held.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("on hold");
     expect(await held.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("lets a refused match settle, so a removed contact never blocks the end", async () => {
+    const hat = new Hat();
+    hat.refuse.add("c:bob");
+    await hat.run({ people: PEOPLE, exclude: [] });
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("keeps a replaced attempt that can still be retried in the fence", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    const [second] = hat.sent.slice(before);
+    hat.states.set(second.id, "delivered");
+
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    hat.retryable.clear();
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("finishes a close whose file is already gone, and still stops on a file it can't read", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+    await expect(hat.run({ action: "resend" })).rejects.toThrow("Cannot read");
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

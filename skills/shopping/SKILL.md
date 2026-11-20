@@ -74,7 +74,7 @@ Show the full cost. Include delivery costs and free-delivery thresholds, and say
 Only recommend and buy what was asked for. Never add items, bundles or upgrades the user did not request.
 
 - If the user likes none of the options, go back to RESEARCH.
-- If the user approves one, update the tastes and preferences of the user, or of the person it is for, and move to BUY.
+- If the user approves one, update the user's tastes and preferences and move to BUY. When it is for someone else, the choice is the user's, not that person's taste: record only what that person said they like, and learn the rest from their feedback at CLOSE.
 
 ## 4. Buy (online only)
 

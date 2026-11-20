@@ -99,23 +99,31 @@ const text = ""; // address, wish, ask: your message to forward after the draw
 const note = ({ name, address, wishes, replaces }) => `...`; // draw, leave: the match message
 
 const path = `~/${file}`;
+const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 const read = await fs.read({ target: "gsv", path });
-if (!read.ok) throw new Error(`Cannot read ${file}: ${read.error}`);
+if (!read.ok) {
+  // A close that deleted the file but stopped before it could answer is already finished.
+  if (action === "close" && (await shell(`test -e "$HOME"/${q(file)}`, { target: "gsv" })).exitCode === 1) return { closed: true };
+  throw new Error(`Cannot read ${file}: ${read.error}`);
+}
 if (read.truncated) throw new Error(`${file} is too large to read in one go`);
 const game = JSON.parse(read.content);
 const save = async () => {
   const written = await fs.write({ target: "gsv", path, content: JSON.stringify(game) });
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
-const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 // The delivery id and state `message send` prints. Without an id it was not accepted, and the
-// error keeps why, from the shell or the command.
+// error keeps why, from the shell or the command. `refused` means the command ran and turned the
+// message down, so nothing is on its way; a send that never answered might still be.
 const send = async (to, message, key) => {
   const id = key ? ` --delivery-id ${q(key)}` : "";
   const sent = await shell(`message send --to ${q(to)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
   const deliveryId = sent.exitCode === 0 ? /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null : null;
-  if (!deliveryId) return { id: null, state: null, error: String(sent.error || sent.output || "no delivery id").trim().slice(0, 200) };
-  return { id: deliveryId, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null, error: null };
+  if (!deliveryId) {
+    const refused = typeof sent.exitCode === "number" && sent.exitCode !== 0;
+    return { id: null, state: null, refused, error: String(sent.error || sent.output || "no delivery id").trim().slice(0, 200) };
+  }
+  return { id: deliveryId, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null, refused: false, error: null };
 };
 const banned = (a, b) => game.exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
 const pairOf = (side, id) => {
@@ -136,23 +144,30 @@ const prepare = (pair, replaces) => {
 };
 // A delivery's state, "gone" once its record has expired. A lookup that fails throws, so
 // nothing is replaced on a guess.
-const statusOf = async (record) => {
-  const shown = await shell(`message delivery show ${q(record.deliveryId)} --json`, { target: "gsv" });
+const statusOf = async (deliveryId) => {
+  const shown = await shell(`message delivery show ${q(deliveryId)} --json`, { target: "gsv" });
   if (shown.exitCode !== 0) throw new Error(`Cannot read a delivery: ${String(shown.error || shown.output).trim().slice(0, 200)}`);
   const { delivery } = JSON.parse(shown.output);
   return delivery ? { state: delivery.state, retryable: delivery.retryable } : { state: "gone", retryable: false };
 };
-// Settled means nothing more can arrive: delivered, expired, or failed with no retry left.
+// Settled means nothing more can arrive: every attempt delivered, expired, or failed with no retry
+// left, or the last send refused outright. An attempt replaced by a resend still counts, since it
+// can be retried from People for up to a week.
 const settled = async (record) => {
-  if (!record.deliveryId) return false;
-  const { state, retryable } = await statusOf(record);
-  return state === "delivered" || state === "gone" || (state === "failed" && !retryable);
+  if (!record.deliveryId && !record.refused) return false;
+  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
+    const { state, retryable } = await statusOf(id);
+    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable))) return false;
+  }
+  return true;
 };
 // A failure keeps its reason in the file; the report shows it only for a match, since a
 // forward's reason could name who it was for.
 const deliver = async (record) => {
-  const { id, state, error } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
+  const { id, state, refused, error } = await send(record.to, record.message, `${record.key}:${record.attempt}`);
+  if (record.deliveryId && record.deliveryId !== id) record.earlier = [...(record.earlier ?? []), record.deliveryId];
   record.deliveryId = id;
+  record.refused = refused;
   record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
   await save();
   if (!record.lastError) return true;
@@ -231,7 +246,7 @@ if (action === "resend") {
   const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, failed, yours: owned ? matchOf(owned, false) : null };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
-    const { state } = await statusOf(record);
+    const { state } = await statusOf(record.deliveryId);
     if (state === "failed") { record.attempt++; report.resent++; await deliver(record); }
     else if (state === "delivered") report.delivered++;
     else if (state === "queued") report.onTheWay++;
@@ -306,7 +321,7 @@ throw new Error(`Unknown action: ${action}`);
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again.
+- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again. A message the command refused outright, for example because that contact was removed, never arrives, so it no longer holds up a redraw, a leave or `close`.
 - Update details with the people and exclusions, never with pairs.
 
 ### 4. Wishes and questions
