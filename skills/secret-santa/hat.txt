@@ -232,7 +232,11 @@ if (action === "draw") {
     // A redraw names the round it replaces, so running it again after it went through returns that
     // result instead of drawing everyone a second new match.
     const owned = game.held ? null : game.pairs?.find((p) => p.giver.contact === "owner");
-    if (round < game.round) return { people: game.pairs.length, round: game.round, already: true, failed: [], yours: owned ? matchOf(owned, true) : null };
+    if (round < game.round) {
+      // Finish sending any new match the earlier run saved but never sent, under its own key.
+      for (const record of Object.values(game.sent)) if (record.to !== "owner" && !record.deliveryId && !record.abandoned) await deliver(record);
+      return { people: game.pairs.length, round: game.round, already: true, failed, yours: owned ? matchOf(owned, true) : null };
+    }
     if (round !== game.round) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
   }
   // A replaced match still on its way, or never confirmed, could arrive after its replacement.

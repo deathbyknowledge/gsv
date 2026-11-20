@@ -1207,6 +1207,17 @@ describe.sequential("secret-santa hat script", () => {
     await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 7 })).rejects.toThrow("Set round to 2");
   });
 
+  it("finishes sending a redraw's new matches when it is run again after stopping", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    hat.timesOut.add("c:bob");
+    await hat.draw({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    hat.timesOut.clear();
+    const before = hat.sent.length;
+    expect(await hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 1 })).toEqual(expect.objectContaining({ already: true, round: 2, failed: [] }));
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: "c:bob", message: expect.stringMatching(/^New match/) })]);
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });
