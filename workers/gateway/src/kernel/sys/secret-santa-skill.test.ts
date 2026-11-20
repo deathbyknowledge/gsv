@@ -16,7 +16,7 @@ type Game = {
   pairs?: Pair[];
   wishes: Record<string, string[]>;
   addresses: Record<string, string>;
-  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string }>;
+  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string; message?: string }>;
   held?: boolean;
   forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null }>;
 };
@@ -861,6 +861,7 @@ describe.sequential("secret-santa hat script", () => {
     const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
     hat.failing.add(pair?.giver.contact ?? "");
     await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "failed");
     expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match", ref: expect.any(String) }] }));
   });
 
@@ -885,6 +886,33 @@ describe.sequential("secret-santa hat script", () => {
     hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
     await hat.run({ action: "reveal", text: "The list" });
     expect(hat.file?.includes("Tea, please.")).toBe(false);
+  });
+
+  it("counts wishes in bytes, so non-Latin wishes can't outgrow the file", async () => {
+    const hat = new Hat();
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "愿".repeat(700) })).rejects.toThrow("Too long");
+    expect(await hat.run({ action: "wish", contact: "c:bob", value: "愿".repeat(600) })).toEqual({ kept: true });
+  });
+
+  it("drops delivered matches' text too before the reveal", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    for (const s of hat.sent) hat.states.set(s.id, "delivered");
+    await hat.run({ action: "reveal", text: "The list" });
+    expect(Object.values(hat.game.sent).filter((r) => r.to !== "owner").every((r) => !("message" in r))).toBe(true);
+  });
+
+  it("sends a relinked match again on a repeated leave once it has failed", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    const relink = hat.sent[hat.sent.length - 1];
+    hat.states.set(relink.id, "failed");
+    const before = hat.sent.length;
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: relink.message })]);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
