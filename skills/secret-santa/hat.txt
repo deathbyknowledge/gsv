@@ -4,12 +4,13 @@
 // gsv with
 //   codemode /sys/skills.d/secret-santa/hat.txt --args-json JSON
 // giving `action` ("draw" or "ask") and the arguments that action uses; SKILL.md says what each is for.
-const defaults = { action: "", r12y: "", redraw: false, note: "", contact: "", to: "", text: "" };
+const defaults = { action: "", r12y: "", redraw: false, round: 0, note: "", contact: "", to: "", text: "", value: "" };
 const unknown = Object.keys(args).find((key) => !Object.hasOwn(defaults, key));
 if (unknown) throw new Error(`Unknown argument ${unknown}: use ${Object.keys(defaults).join(", ")}`);
-const { action, r12y, redraw, note, contact, to, text } = { ...defaults, ...args };
+const { action, r12y, redraw, round: from, note, contact, to, text, value } = { ...defaults, ...args };
 if (action !== "draw" && action !== "ask") throw new Error('Set action to "draw" or "ask"');
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
+if (!Number.isInteger(from) || from < 0) throw new Error("round must be a whole number");
 const id = String(r12y).replace(/^r12y:/, "");
 if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Set r12y to the Secret Santa responsibility");
 
@@ -54,14 +55,20 @@ if (action === "ask") {
   if (!pair) throw new Error(`${contact} is not in the draw`);
   const other = pair[to];
   if (other === "owner") return { forYourOwner: text };
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${contact}\n${to}\n${text}`));
-  const sum = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
-  const state = await send(other, text, `santa:${id}:${draw.round}:ask:${sum}`);
+  const fingerprint = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${contact}\n${to}\n${t}`)))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+  // Keyed by what the person sent (`value`) when given, so a rerun is not sent twice however Ship
+  // words `text`. If that copy failed for good, a reworded `text` goes under its own key.
+  const key = `santa:${id}:${draw.round}:ask:${await fingerprint(value || text)}`;
+  let state = await send(other, text, key);
+  if (state === "failed" && value) state = await send(other, text, `${key}:${await fingerprint(text)}`);
   return { forwarded: sentOk(state), state };
 }
 
 const previous = await readJson(`${id}.draw.json`);
-if (previous && !redraw) {
+if (redraw && previous && (from < 1 || (from !== previous.round && from !== previous.round - 1))) throw new Error(`Set round to ${previous.round}, the round this redraw replaces`);
+// A redraw run again, naming the round it already replaced, sends that redraw again rather than
+// drawing everyone a third time.
+if (previous && (!redraw || from === previous.round - 1)) {
   // Sending the same draw again: a match already accepted comes back as it is, and one that failed
   // goes again under its next key, saved first so a later run reuses that key.
   const failed = [];
@@ -80,7 +87,7 @@ if (previous && !redraw) {
 const game = await readJson(`${id}.json`);
 if (!game) throw new Error(`Write the game file ~/secret-santa/${id}.json first`);
 const people = game.people;
-if (!Array.isArray(people) || people.some((p) => !p?.name || !p?.contact)) throw new Error("Give each person in the game file a name and a contact");
+if (!Array.isArray(people) || people.some((p) => typeof p?.name !== "string" || !p.name.trim() || typeof p?.contact !== "string" || !p.contact.trim())) throw new Error("Give each person in the game file a name and a contact");
 if (people.length < 3) throw new Error("A draw needs at least 3 people");
 if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
 const exclude = game.exclude ?? [];
@@ -158,6 +165,9 @@ const draw = {
   yours: owned ? render(owned.recipient) : null,
 };
 if (draw.matches.some((match) => bytes(match.message) > 32000)) throw new Error("A match message is too long to send: ask for shorter wishes");
+// Two draws at once would each save their own pairs: stop if another run saved one meanwhile.
+const latest = await readJson(`${id}.draw.json`);
+if ((latest?.round ?? 0) !== (previous?.round ?? 0)) throw new Error("Another draw was saved while this ran: run one hat action at a time, then send the draw again");
 // Saved before anything is sent, so a run that stops partway sends the same matches when run again.
 await saveDraw(draw);
 const failed = [];

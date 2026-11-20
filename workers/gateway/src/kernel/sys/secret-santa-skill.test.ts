@@ -221,15 +221,45 @@ describe("secret santa hat script", () => {
     const hat = new Hat({ people: PEOPLE.slice(0, 4) });
     await hat.run({});
     hat.game = { people: PEOPLE.slice(0, 5) };
-    await expect(hat.run({ redraw: true })).rejects.toThrow("Put {round} in a redraw's note");
+    await expect(hat.run({ redraw: true, round: 1 })).rejects.toThrow("Put {round} in a redraw's note");
 
-    const result = await hat.run({ redraw: true, note: "Round {round} replaces your match\n{name}" });
+    const result = await hat.run({ redraw: true, round: 1, note: "Round {round} replaces your match\n{name}" });
     expect(result).toMatchObject({ round: 2, people: 5 });
     expect(hat.draw.pairs.map((p) => p.giver).sort()).toEqual(PEOPLE.slice(0, 5).map((p) => p.contact).sort());
     expect(hat.received("c:eva")).toHaveLength(1);
     expect(hat.received("c:eva")[0]).toMatch(/^Round 2 replaces your match\n/);
     expect(hat.received("c:bob")).toHaveLength(2);
     expect([...hat.deliveries.keys()].filter((key) => key.startsWith(`santa:${ID}:2:`))).toHaveLength(4);
+  });
+
+  it("sends the same redraw again when it is run again with the round it replaced", async () => {
+    const hat = new Hat();
+    await hat.run({});
+    await expect(hat.run({ redraw: true, note: "Round {round}\n{name}" })).rejects.toThrow("Set round to 1");
+    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
+    const pairs = JSON.stringify(hat.draw.pairs);
+    const sent = hat.deliveries.size;
+    expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
+    expect(JSON.stringify(hat.draw.pairs)).toBe(pairs);
+    expect(hat.deliveries.size).toBe(sent);
+  });
+
+  it("forwards a question once however Ship words it, keyed by what the person asked", async () => {
+    const hat = new Hat();
+    await hat.run({});
+    const bobsGiver = hat.draw.pairs.find((p) => p.recipient === "c:bob")!.giver;
+    if (bobsGiver === "owner") return;
+    await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient asks: tea?" });
+    await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient wonders whether you like tea." });
+    expect(hat.received(bobsGiver).filter((m) => m.includes("tea"))).toHaveLength(1);
+  });
+
+  it("refuses a person whose contact is not a name, before saving a draw", async () => {
+    const hat = new Hat();
+    // Written as raw JSON, as a hand-edited game file could be.
+    hat.files.set(GAME, JSON.stringify({ people: [...PEOPLE.slice(0, 3), { name: "Alex", contact: 7 }] }));
+    await expect(hat.run({})).rejects.toThrow("a name and a contact");
+    expect(hat.files.has(DRAW)).toBe(false);
   });
 
   it("forwards a question to the giver or the recipient once, and returns one for your owner", async () => {
