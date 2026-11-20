@@ -77,14 +77,14 @@ Everything that touches the file goes through this one script, run with CodeMode
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
-- **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
+- **`address`** and **`wish`**: keep what `contact` sent, up to 2,000 characters each. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
 - **`abandon`**: stops waiting for messages that are unconfirmed or still on their way, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Running it again for someone who already left returns `left` and changes nothing; `notInDraw` means they were not in the current draw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Running it again for someone who already left returns `left` and changes nothing, and nothing new of theirs is kept until a draw adds them back; `notInDraw` means they were not in the current draw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, `deliverTo`), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -165,7 +165,7 @@ const prepare = (pair, replaces) => {
   if (pair.giver.contact === "owner") {
     // Kept until you have told your owner, like a message for them.
     yours = matchOf(pair, replaces);
-    game.sent.owner = { to: "owner", match: true, told: false };
+    game.sent.owner = { to: "owner", match: true, told: false, replaces };
     return;
   }
   const key = `santa:${r12y}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
@@ -285,7 +285,8 @@ if (action === "draw") {
     if (!extend(rest)) throw new Error("No draw fits these exclusions");
     pairs = loop(path);
   }
-  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: [] });
+  // Someone who left stays out, so nothing late of theirs is kept, unless this draw adds them back.
+  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: (game.left ?? []).filter((c) => !people.some((p) => p.contact === c)) });
   for (const pair of pairs) prepare(pair, redraw);
   await save();
   for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
@@ -293,7 +294,7 @@ if (action === "draw") {
 }
 if (action === "resend") {
   const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, false) : null, forYourOwner: [] };
+  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (record.abandoned) continue;
     if (record.to === "owner") {
@@ -345,6 +346,8 @@ if (action === "told") {
 if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
 if (action === "address" || action === "wish") {
   if (game.left?.includes(contact)) throw new Error("They have left this Secret Santa: nothing of theirs is kept");
+  // Each wish or address is stored and repeated in a match, so keep it short enough for the file.
+  if (String(value).length > 2000 || String(text).length > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
   if (action === "address") game.addresses[contact] = value;

@@ -459,7 +459,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(result).toEqual(expect.objectContaining({ yours: expect.objectContaining({ replaces: true }) }));
     expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== leaver));
     expect(hat.sent).toHaveLength(before);
-    expect(hat.game.sent.owner).toEqual({ to: "owner", match: true, told: false });
+    expect(hat.game.sent.owner).toEqual({ to: "owner", match: true, told: false, replaces: true });
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
     await hat.run({ action: "told", value: "match" });
     const newRecipient = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
@@ -585,8 +585,10 @@ describe.sequential("secret-santa hat script", () => {
 
   it("refuses a save the next read could not hold", async () => {
     const hat = new Hat();
-    await expect(hat.run({ action: "wish", contact: "c:bob", value: "x".repeat(61000) })).rejects.toThrow("Too much to keep");
-    expect(hat.game.wishes).toEqual({});
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "x".repeat(2001) })).rejects.toThrow("Too long to keep");
+    hat.file = JSON.stringify({ ...hat.game, wishes: { "c:bob": ["x".repeat(59990)] } });
+    await expect(hat.run({ action: "wish", contact: "c:carla", value: "Tea" })).rejects.toThrow("Too much to keep");
+    expect(hat.game.wishes["c:carla"]).toBeUndefined();
   });
 
   it("keeps the in-person address in the file and the match, never elsewhere", async () => {
@@ -681,10 +683,17 @@ describe.sequential("secret-santa hat script", () => {
   });
 
   it("leaves room in the file for the delivery ids still to come", async () => {
+    // One match not yet sent needs room for its delivery id, so a file just under the cap without
+    // that room can't take another wish.
     const hat = new Hat();
-    await hat.run({ action: "wish", contact: "c:bob", value: "x".repeat(58000) });
-    await expect(hat.draw({ people: PEOPLE, exclude: [] })).rejects.toThrow("Too much to keep");
-    expect(hat.sent).toHaveLength(0);
+    const pending = { to: "c:bob", who: "Bob", key: "k", message: "m", attempt: 1, deliveryId: null };
+    const seed = { ...hat.game, sent: { "c:bob": pending }, wishes: { "c:carla": [""] } };
+    const pad = 59800 - JSON.stringify({ ...seed, wishes: { ...seed.wishes, "c:dev": ["Tea"] } }).length;
+    hat.file = JSON.stringify({ ...seed, wishes: { "c:carla": ["x".repeat(pad)] } });
+    await expect(hat.run({ action: "wish", contact: "c:dev", value: "Tea" })).rejects.toThrow("Too much to keep");
+
+    hat.file = JSON.stringify({ ...seed, sent: {}, wishes: { "c:carla": ["x".repeat(pad)] } });
+    expect(await hat.run({ action: "wish", contact: "c:dev", value: "Tea" })).toEqual({ kept: true });
   });
 
   it("keeps your owner's copy of the reveal until you have told them", async () => {
@@ -705,6 +714,25 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ action: "leave", contact: leaver });
     await expect(hat.run({ action: "wish", contact: leaver, value: "Tea" })).rejects.toThrow("have left");
     expect(hat.game.wishes[leaver]).toBeUndefined();
+  });
+
+  it("keeps who left out of later redraws unless the draw adds them back", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const leaver = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner")?.recipient.contact ?? "";
+    await hat.run({ action: "leave", contact: leaver });
+    const rest = PEOPLE.filter((p) => p.contact !== leaver);
+    await hat.draw({ people: rest, exclude: [], redraw: true });
+    await expect(hat.run({ action: "wish", contact: leaver, value: "Tea" })).rejects.toThrow("have left");
+    await hat.draw({ people: PEOPLE, exclude: [], redraw: true });
+    expect(await hat.run({ action: "wish", contact: leaver, value: "Tea", text: "Tea, please." })).not.toEqual(expect.objectContaining({ kept: true }));
+  });
+
+  it("tells your owner again that a recovered match replaces the old one", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true });
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ yours: expect.objectContaining({ replaces: true }) }));
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
