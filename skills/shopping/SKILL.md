@@ -87,7 +87,7 @@ A first payment or sign-in on a store is the user's step: follow the `browser-ta
 Once it is bought, update the responsibility to track the delivery, creating one if none exists:
 
 ```bash
-r12y update ID --json '{"title":"Track delivery: Essie polish from Boozyshop","details":{"skill":"shopping","store":"Boozyshop","order":"<order number>"}}'
+r12y update ID --json '{"title":"Track delivery: Essie polish from Boozyshop","details":{"skill":"shopping","store":"Boozyshop","order":"<order number>"}}' && \
 r12y wait ID --until 2026-11-03T18:00:00Z --blocker "Waiting for delivery"
 ```
 

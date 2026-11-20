@@ -45,9 +45,11 @@ The type changes delivery:
 Repeat the whole plan back to the organiser and wait for their OK. Then create the Secret Santa file and open one responsibility, filling every value from their answers. Due is the swap; check a few days before the draw, to remind them who has not signed up:
 
 ```bash
-mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json"
-r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[{"name":"NAME","contact":"owner"}],"exclude":[]}'
+mkdir -p "$HOME/secret-santa" && echo '{"round":0,"exclude":[],"wishes":{},"addresses":{},"sent":{},"forwards":[],"forwardCount":0}' > "$HOME/secret-santa/SLUG.json" && \
+r12y create --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","deliverTo":"IN-PERSON DELIVERY ADDRESS","file":"secret-santa/SLUG.json","invited":["NAME"],"people":[],"exclude":[]}'
 ```
+
+`people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
 
 `r12y update ID --json '{"details":{...}}'` replaces all details: always send the whole object.
 
@@ -72,21 +74,22 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 
 ### 3. The hat script
 
-Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving and resending. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
+Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving, resending and deleting the file at the end. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent. After the draw, they also forward `text` to that person's giver.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend` and a redraw work, and you ask the organiser about the redraw. Tell the leaver's Ship they are out.
+- **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, the organiser's `deliverTo` address), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
 ```js
-const action = "draw"; // draw | resend | address | wish | ask | leave
+const action = "draw"; // draw | resend | address | wish | ask | leave | close
 const file = "secret-santa/SLUG.json";
 const r12y = "RESPONSIBILITY_ID";
-const people = [{ name: "NAME", contact: "owner" }, { name: "NAME", contact: "CONTACT_ID" }]; // draw
+const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in details.people, "owner" only when the organiser plays
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw
 const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about
@@ -125,10 +128,10 @@ const failed = [];
 let yours = null;
 
 // Every match and forward is recorded with its exact text before it is sent, so a resend repeats
-// the same message. `who` names a giver for a match, never the person a forward went to.
+// the same message. Keys carry the responsibility id, so a new game never reuses an old one's. `who` names a giver for a match, never the person a forward went to.
 const prepare = (pair, replaces) => {
   if (pair.giver.contact === "owner") { yours = matchOf(pair, replaces); return; }
-  const key = `santa:${file}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
+  const key = `santa:${r12y}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
   game.sent[pair.giver.contact] = { to: pair.giver.contact, who: pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
 // A delivery's state, "gone" once its record has expired. A lookup that fails throws, so
@@ -161,7 +164,7 @@ const deliver = async (record) => {
 const forward = async (other) => {
   if (!text) throw new Error("Write text to forward");
   if (other.contact === "owner") { await save(); return { forYourOwner: true }; }
-  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${file}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
+  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -236,6 +239,15 @@ if (action === "resend") {
   }
   return report;
 }
+if (action === "close") {
+  // The file holds the only delivery ids: keep it until nothing more can arrive.
+  for (const record of [...Object.values(game.sent), ...game.forwards]) {
+    if (!(await settled(record))) throw new Error("Messages are unconfirmed or on their way: run resend, then close again once they arrive");
+  }
+  const removed = await shell(`rm -f "$HOME"/${q(file)}`, { target: "gsv" });
+  if (removed.exitCode !== 0) throw new Error(`Cannot delete ${file}: ${String(removed.error || removed.output).trim().slice(0, 200)}`);
+  return { closed: true };
+}
 if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
 if (action === "address" || action === "wish") {
   const giver = game.pairs ? pairOf("recipient", contact).giver : null;
@@ -264,12 +276,14 @@ if (action === "leave") {
   for (const record of [...affected, ...matches]) {
     if (!(await settled(record))) throw new Error("A message to or about them is unconfirmed or on its way: run resend, then leave again once it arrives");
   }
+  // Each path below saves once, so the file never holds the leaver's removal without the hold or
+  // the relink that goes with it.
   delete game.addresses[contact];
   delete game.wishes[contact];
   game.forwards = game.forwards.filter((f) => !affected.includes(f));
-  await save();
-  if (!game.pairs) return { left: true };
-  const out = pairOf("giver", contact);
+  if (!game.pairs) { await save(); return { left: true }; }
+  const out = game.pairs.find((p) => p.giver.contact === contact);
+  if (!out) { await save(); throw new Error(`${contact} is not in the draw`); }
   const before = pairOf("recipient", contact);
   if (game.pairs.length < 4 || banned(before.giver, out.recipient)) {
     // The loop can't close without them: hold the draw so nothing more follows it until a redraw.
@@ -301,10 +315,10 @@ A participant's Ship may send a wish or a question at any time, also before the 
 
 ### 5. Close
 
-After the swap, ask the organiser whether they want a reveal. Reveal only if every participant agreed through their Ship; then send everyone the list. Otherwise nobody ever sees it. Delete the file, which holds the pairs, wishes and addresses, tell each Ship the Secret Santa is closed, and resolve:
+After the swap, ask the organiser whether they want a reveal. Reveal only if every participant agreed through their Ship; then send everyone the list. Otherwise nobody ever sees it. Delete the file, which holds the pairs, wishes and addresses, with the hat script's `close` action. Once it returns `closed`, tell each Ship the Secret Santa is closed and resolve, with `reveal` set to whether the list went out:
 
 ```bash
-rm -f "$HOME/secret-santa/SLUG.json" && r12y resolve ID --json '{"outcome":"swapped","reveal":false}'
+r12y resolve ID --json '{"outcome":"swapped","reveal":true|false}'
 ```
 
 ## Participant

@@ -16,11 +16,13 @@ type Game = {
   pairs?: Pair[];
   wishes: Record<string, string[]>;
   addresses: Record<string, string>;
-  sent: Record<string, { deliveryId: string | null }>;
+  sent: Record<string, { deliveryId: string | null; key: string }>;
+  held?: boolean;
   forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null }>;
 };
 type Settings = {
   action?: string;
+  r12y?: string;
   people?: Person[];
   exclude?: string[][];
   redraw?: boolean;
@@ -60,6 +62,8 @@ class Hat {
   retryable = new Set<string>();
   timesOut = new Set<string>();
   lookupFails = false;
+  writes: string[] = [];
+  removed: string[] = [];
   private readonly source = hatScript();
 
   async run(settings: Settings): Promise<JsonValue> {
@@ -83,6 +87,7 @@ class Hat {
     if (call === "fs.write") {
       if (this.writeFails) return { ok: false, error: "disk full" };
       this.file = String(args.content);
+      this.writes.push(this.file);
       return { ok: true };
     }
     throw new Error(`unexpected call: ${call}`);
@@ -98,6 +103,11 @@ class Hat {
       const state = this.states.get(id);
       const delivery = state ? { deliveryId: id, state, retryable: this.retryable.has(id) } : null;
       return { status: "completed", exitCode: 0, output: JSON.stringify({ delivery }) };
+    }
+    if (command.startsWith("rm -f ")) {
+      this.removed.push(command);
+      this.file = null;
+      return { status: "completed", exitCode: 0, output: "" };
     }
     if (!command.startsWith("message send ")) throw new Error(`unexpected command: ${command}`);
     const to = option(command, "to") ?? "";
@@ -322,10 +332,14 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ people: PEOPLE, exclude: [] });
     const leaver = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner")?.recipient.contact ?? "";
     const before = hat.sent.length;
+    const writes = hat.writes.length;
 
     await hat.run({ action: "leave", contact: leaver });
 
     expectOneLoop(hat.game.pairs ?? [], PEOPLE.filter((p) => p.contact !== leaver));
+    // The first write after the leave already holds the relink, never the old loop without the data.
+    const firstWrite: Game = JSON.parse(hat.writes[writes]);
+    expect((firstWrite.pairs ?? []).some((p) => p.giver.contact === leaver || p.recipient.contact === leaver)).toBe(false);
     expect(hat.sent.slice(before)).toHaveLength(1);
     expect(hat.sent[before].message.startsWith("New match")).toBe(true);
     await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("is not in the draw");
@@ -400,8 +414,12 @@ describe.sequential("secret-santa hat script", () => {
     const hat = new Hat();
     await hat.run({ action: "address", contact: "c:bob", value: "Rua Z 3, Faro" });
     await hat.run({ people: PEOPLE.slice(0, 3), exclude: [] });
+    const writes = hat.writes.length;
     await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("Re-linking breaks the draw");
     expect(hat.game.addresses["c:bob"]).toBeUndefined();
+    // One write holds the draw and drops Bob's data together, so no saved state follows the old loop.
+    expect(hat.writes.slice(writes)).toHaveLength(1);
+    expect(hat.game.held).toBe(true);
 
     // The draw is on hold: nothing follows the old loop, and a resend never replays Bob's match.
     await expect(hat.run({ action: "wish", contact: "c:carla", value: "Tea", text: "Tea, please." })).rejects.toThrow("on hold");
@@ -462,6 +480,32 @@ describe.sequential("secret-santa hat script", () => {
     hat.writeFails = true;
     await expect(hat.run({ people: PEOPLE, exclude: [] })).rejects.toThrow("Cannot save");
     expect(hat.sent).toHaveLength(0);
+  });
+
+  it("deletes the file at close only once every message has settled", async () => {
+    const hat = new Hat();
+    await hat.run({ people: PEOPLE, exclude: [] });
+    hat.states.set(hat.sent[0].id, "queued");
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    expect(hat.file).not.toBeNull();
+
+    hat.states.set(hat.sent[0].id, "delivered");
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+    expect(hat.removed).toEqual([`rm -f "$HOME"/'secret-santa/SLUG.json'`]);
+
+    const held = new Hat();
+    await held.run({ people: PEOPLE.slice(0, 3), exclude: [] });
+    await expect(held.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("on hold");
+    expect(await held.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
+    const first = new Hat();
+    const second = new Hat();
+    await first.run({ r12y: "r12y:one", people: PEOPLE, exclude: [] });
+    await second.run({ r12y: "r12y:two", people: PEOPLE, exclude: [] });
+    expect(first.sent.every((s) => s.key?.startsWith("santa:r12y:one:1:"))).toBe(true);
+    expect(second.sent.every((s) => s.key?.startsWith("santa:r12y:two:1:"))).toBe(true);
   });
 
   it("stops when the file cannot be read instead of starting over", async () => {
