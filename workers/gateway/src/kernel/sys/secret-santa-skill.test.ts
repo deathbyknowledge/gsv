@@ -277,6 +277,19 @@ describe("secret santa hat script", () => {
     expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
   });
 
+  it("refuses a contact with spaces around it, which would reach the same Ship twice", async () => {
+    const hat = new Hat({ people: [...PEOPLE.slice(0, 3), { name: "Bob again", contact: "c:bob " }] });
+    await expect(hat.run({})).rejects.toThrow("a name and a contact");
+  });
+
+  it("replays a redraw whatever order its exclusions are written in", async () => {
+    const hat = new Hat({ people: PEOPLE.slice(0, 5), exclude: [["c:bob", "c:carla"], ["c:dev", "c:eva"]] });
+    await hat.run({});
+    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
+    hat.game = { people: PEOPLE.slice(0, 5), exclude: [["c:eva", "c:dev"], ["c:carla", "c:bob"]] };
+    expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
+  });
+
   it("refuses a person whose contact is not a name, before saving a draw", async () => {
     const hat = new Hat();
     // Written as raw JSON, as a hand-edited game file could be.

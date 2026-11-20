@@ -73,7 +73,7 @@ if (redraw && previous && (from < 1 || (from !== previous.round && from !== prev
 // A redraw run again, naming the round it already replaced, sends that redraw again rather than
 // drawing everyone a third time.
 // What a redraw drew from, so a rerun naming an old round is accepted only for the same people.
-const inputOf = async (game) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([(game?.people ?? []).map((p) => p.contact).sort(), game?.exclude ?? []]))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+const inputOf = async (game) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([(game?.people ?? []).map((p) => p.contact).sort(), (game?.exclude ?? []).map((pair) => [...pair].sort().join("\n")).sort()]))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
 if (redraw && previous && from === previous.round - 1 && previous.input !== await inputOf(await readJson(`${id}.json`))) throw new Error(`Round ${from} was already replaced and the people or exclusions changed since: set round to ${previous.round}`);
 if (previous && (!redraw || from === previous.round - 1)) {
   // Sending the same draw again: a match already accepted comes back as it is, and one that failed
@@ -94,7 +94,7 @@ if (previous && (!redraw || from === previous.round - 1)) {
 const game = await readJson(`${id}.json`);
 if (!game) throw new Error(`Write the game file ~/secret-santa/${id}.json first`);
 const people = game.people;
-if (!Array.isArray(people) || people.some((p) => typeof p?.name !== "string" || !p.name.trim() || typeof p?.contact !== "string" || !p.contact.trim())) throw new Error("Give each person in the game file a name and a contact");
+if (!Array.isArray(people) || people.some((p) => typeof p?.name !== "string" || !p.name.trim() || typeof p?.contact !== "string" || !p.contact || p.contact !== p.contact.trim())) throw new Error("Give each person in the game file a name and a contact");
 if (people.length < 3) throw new Error("A draw needs at least 3 people");
 if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
 const exclude = game.exclude ?? [];
