@@ -3,6 +3,7 @@ import { memo } from "preact/compat";
 import type { JSX } from "preact";
 import { renderMarkdownHtml, renderPlainTextHtml } from "../shared/markdown";
 import { enhanceCodeBlocks } from "../shared/codeBlocks";
+import "../shared/prose.css";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
 import { linkPlaceReferences, type Place } from "./zenModel";
 import { filePathLinks } from "./fileReferences";

@@ -395,6 +395,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | `/run-updates` | The long run with two progress messages separating three receipts, followed by a final reply. |
 | `/run-old` | The short run without purposes, using generated descriptions. |
 | `/think`, then `/reply` or `/stream` | Hold a tool open, then finish with a plain or streamed reply. |
+| `/table` | A reply with a table, linking a note that has one too. |
 | `/approve` / `/approve-old` | The same shell approval with or without a purpose. |
 | `/approve-mail` / `/approve-file` | Email and file approvals. |
 | `/approve-request` / `/approve-request-old` | A message request to someone new, with or without a purpose. |

@@ -14,3 +14,19 @@
 .prose ul, .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
 .prose li::marker { color: var(--accent); }
 .prose img { max-width: 100%; }
+/* Tables read the same in documents and in chat: ruled cells, a header row of its own and shaded alternate rows, at reading size
+   even beside chat's larger type. A wide one scrolls. */
+:is(.prose, .zen-moment .text) table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.4em 0 1em;
+  border-collapse: collapse;
+  font-size: clamp(15px, 0.75em, 20px);
+  line-height: 1.45;
+  overflow-wrap: normal;
+}
+:is(.prose, .zen-moment .text) :is(th, td) { padding: 0.4em 0.8em; border: 1px solid var(--rule-section); vertical-align: top; }
+:is(.prose, .zen-moment .text) th { font-weight: 600; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+:is(.prose, .zen-moment .text) th:not([align]) { text-align: start; }
+:is(.prose, .zen-moment .text) tbody tr:nth-child(even) { background: color-mix(in srgb, var(--accent) 5%, transparent); }
