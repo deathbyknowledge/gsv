@@ -120,16 +120,17 @@ const statusOf = async (deliveryId) => {
 // left, or a last send without an id to a contact that has ended. An attempt replaced by a resend
 // still counts, since it can be retried from People for up to a week.
 const settled = async (record, arrived = false) => {
-  if (record.abandoned) return true;
+  if (record.abandoned || record.retired) return true;
   if (record.to === "owner") return record.told;
   if (!record.deliveryId && !(await ended(record.to))) return false;
-  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
-    const { state, retryable } = await statusOf(id);
-    const current = id === record.deliveryId;
-    // Seen delivered is remembered, since an expired record proves nothing about arrival.
-    if (current && state === "delivered") record.arrived = true;
-    if (arrived && current && state === "gone" && !record.arrived) return false;
-    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable && !(arrived && current)))) return false;
+  const attempts = [];
+  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) attempts.push({ id, ...(await statusOf(id)) });
+  // Any attempt seen delivered proves arrival, and is remembered, since an expired record
+  // proves nothing.
+  if (attempts.some((a) => a.state === "delivered")) record.arrived = true;
+  for (const { id, state, retryable } of attempts) {
+    if (arrived && id === record.deliveryId && !record.arrived && (state === "gone" || state === "failed")) return false;
+    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable))) return false;
   }
   return true;
 };
@@ -139,6 +140,7 @@ const deliver = async (record) => {
   const { id, state, error } = await send(record.to, record.reveal ? game.revealText : record.message, `${record.key}:${record.attempt}`);
   record.deliveryId = id;
   record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
+  if (state === "delivered") record.arrived = true;
   await save(true);
   if (!record.lastError) return true;
   failed.push(record.who.startsWith("a ") ? { who: record.who, ref: record.ref } : { who: record.who, error: record.lastError, ref: record.ref });
@@ -153,20 +155,26 @@ const rotate = async (record) => {
   await save(true);
   return deliver(record);
 };
+// A correction, a new wish or a new answer must not be overtaken by the match or an earlier
+// message about the same person still on its way, or sent again after it. It waits, before
+// anything changes, until those have arrived; one whose record expired unconfirmed is sent
+// again, so the new message follows a copy that is tracked. The error names nothing, since
+// which messages wait could show the pair.
+const fence = async (other) => {
+  const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
+  let waiting = false;
+  for (const record of earlier) {
+    if (await settled(record, true)) continue;
+    waiting = true;
+    if (record.deliveryId && !record.arrived && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
+  }
+  if (waiting) throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
+};
 // After the draw, a wish, an address or a question goes on to the other side of that pair. The
 // change and its forward are saved together, then sent.
 const forward = async (other) => {
   if (!text) throw new Error("Write text to forward");
   if (bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter message");
-  // A correction, a new wish or a new answer must not be overtaken by the match or an earlier
-  // message about the same person still on its way, or sent again after it. Nothing is saved
-  // until those have arrived.
-  const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
-  const waiting = [];
-  for (const record of earlier) if (!(await settled(record, true))) waiting.push(record.ref);
-  if (waiting.length) {
-    throw new Error(`Earlier messages to them are unconfirmed, failed, expired or on their way (${waiting.join(", ")}): run resend, then send this again once they arrive. If one expired, ask that Ship whether it has it: if so, run arrived with its ref; if not, resend with contact set to that Ship`);
-  }
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
     const id = ++game.forwardCount;
@@ -232,7 +240,9 @@ if (action === "draw") {
   }
   // Someone who left stays out, so nothing late of theirs is kept, unless this draw adds them back.
   Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: (game.left ?? []).filter((c) => !people.some((p) => p.contact === c)) });
-  for (const pair of pairs) prepare(pair, redraw);
+  // Records are kept, sent and reported in contact order, never in the loop's order, which would
+  // show who follows whom.
+  for (const pair of [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1))) prepare(pair, redraw);
   await save();
   for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
   return { people: pairs.length, failed, yours };
@@ -249,7 +259,8 @@ if (action === "resend") {
     // A replaced attempt that People can still retry holds up a redraw, a leave and close.
     for (const id of record.earlier ?? []) {
       const { state, retryable } = await statusOf(id);
-      if (state === "failed" && retryable) report.earlierRetryable++;
+      if (state === "delivered") record.arrived = true;
+      else if (state === "failed" && retryable) report.earlierRetryable++;
       else if (state === "queued") report.onTheWay++;
     }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
@@ -258,20 +269,23 @@ if (action === "resend") {
     // A confirmed-missing message goes again, unless it was an address a later one corrected;
     // wishes and questions add up, so each goes again.
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
-    if (state === "failed" || (state === "gone" && record.to === contact && !replaced)) { report.resent++; await rotate(record); }
-    else if (state === "delivered") report.delivered++;
+    // One that already arrived through an earlier attempt is not sent again.
+    if (!record.arrived && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
+    else if (state === "delivered") { record.arrived = true; report.delivered++; }
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
   }
+  await save(true);
+  // Counts for one Ship's messages could show whom it drew or who wrote to it.
+  if ([...Object.values(game.sent), ...game.forwards].some((r) => r.to === contact)) return { resent: true };
   return report;
 }
 if (action === "arrived") {
-  // That Ship confirmed it has this message, though its delivery record has expired.
-  const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
-  if (!record) throw new Error(`No message ${value}`);
-  record.arrived = true;
+  // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Nothing
+  // is counted back, since that could show who drew whom.
+  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact && record.deliveryId) record.arrived = true;
   await save(true);
-  return { arrived: true };
+  return { confirmed: true };
 }
 if (action === "abandon") {
   // Only on the organiser's word, for the one message `failed` named by `value`, once they know
@@ -295,6 +309,8 @@ if (action === "told") {
   const record = value === "match" ? game.sent.owner : game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
   if (!record) throw new Error(`No message for your owner numbered ${value}`);
   record.told = true;
+  // Once told, the text is no longer needed in the file.
+  if (!record.match) delete record.message;
   await save(true);
   return { told: true };
 }
@@ -305,6 +321,9 @@ if (action === "address" || action === "wish") {
   if (bytes(value) > 2000 || bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
+  // The same wish or address sent again, for example after a run that stopped, changes nothing.
+  if (action === "wish" ? !redraw && (game.wishes[contact] ?? []).includes(value) : game.addresses[contact] === value) return { kept: true, already: true };
+  if (giver) await fence(giver);
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
   // The draw repeats every wish and address in a match, so the file has to hold them twice.
@@ -316,18 +335,23 @@ if (action === "address" || action === "wish") {
 }
 if (action === "ask") {
   if (!game.pairs) throw new Error("No draw yet");
-  return forward(pairOf(to === "giver" ? "recipient" : "giver", contact)[to]);
+  const other = pairOf(to === "giver" ? "recipient" : "giver", contact)[to];
+  await fence(other);
+  return forward(other);
 }
 if (action === "reveal") {
   // Each Ship gets the list once, recorded like a forward, so close waits until it has arrived.
   if (!game.pairs) throw new Error("No draw yet");
   if (!text) throw new Error("Write the list as text");
+  // A contact message holds at most 32 KiB; check before anything is kept.
+  if (new TextEncoder().encode(text).length > 32000) throw new Error("The list is too long to send: shorten it");
   if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
   // At the end, matches and forwards that arrived or whose records expired no longer need their
   // text, which makes room for the list.
   for (const f of [...Object.values(game.sent), ...game.forwards]) {
     if (f.message === undefined || f.to === "owner" || !f.deliveryId) continue;
-    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) delete f.message;
+    // Retired: nothing waits on it or sends it again after this.
+    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) { delete f.message; f.retired = true; }
   }
   // The list is stored once; each record keeps only where it goes and how it went.
   game.revealText = text;
@@ -356,10 +380,16 @@ if (action === "leave") {
   if (game.left.includes(contact)) {
     // Already gone: finish a relink that stopped before its new match went out or reached your owner.
     for (const record of Object.values(game.sent)) {
-      if (record.to === "owner" || record.who !== "a replaced match") continue;
+      if (record.to === "owner" || record.who !== "a replaced match" || record.abandoned) continue;
       if (!record.deliveryId) await deliver(record);
-      else if ((await statusOf(record.deliveryId)).state === "failed") await rotate(record);
+      else {
+        // A failed one goes again, and so does one whose record expired before anyone saw it arrive.
+        const { state } = await statusOf(record.deliveryId);
+        if (state === "delivered") record.arrived = true;
+        else if (state === "failed" || (state === "gone" && !record.arrived)) await rotate(record);
+      }
     }
+    await save(true);
     const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
     return { left: true, failed, yours: own ? matchOf(own, game.sent.owner.replaces) : null };
   }
