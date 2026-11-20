@@ -839,6 +839,10 @@ describe.sequential("secret-santa hat script", () => {
     }
     hat.states.clear();
     hat.defaultState = null;
+    // As if no check had ever seen them arrive before their records expired.
+    const unseen = <T extends { deliveryId?: string | null }>(r: T): T => ({ ...r, arrived: undefined });
+    const game = hat.game;
+    hat.file = JSON.stringify({ ...game, sent: Object.fromEntries(Object.entries(game.sent).map(([k, r]) => [k, unseen(r)])), forwards: game.forwards.map(unseen) });
     const before = hat.sent.length;
     await hat.run({ action: "resend", contact: giver });
     expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Tea, please.", "Socks too.", "Rua B 2."]);
@@ -846,8 +850,8 @@ describe.sequential("secret-santa hat script", () => {
 
   it("bounds one person's wishes and lets a summary replace them", async () => {
     const hat = new Hat();
-    for (let i = 0; i < 2; i++) await hat.run({ action: "wish", contact: "c:bob", value: "w".repeat(900) });
-    await expect(hat.run({ action: "wish", contact: "c:bob", value: "w".repeat(900) })).rejects.toThrow("Too many wishes from them");
+    for (const letter of ["a", "b"]) await hat.run({ action: "wish", contact: "c:bob", value: letter.repeat(900) });
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "c".repeat(900) })).rejects.toThrow("Too many wishes from them");
     expect(await hat.run({ action: "wish", contact: "c:bob", value: "Books or tea", redraw: true })).toEqual({ kept: true });
     expect(hat.game.wishes["c:bob"]).toEqual(["Books or tea"]);
   });
@@ -1026,6 +1030,46 @@ describe.sequential("secret-santa hat script", () => {
     const before = hat.sent.length;
     expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Thanks!" })).toEqual({ forwarded: true });
     expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Thanks!"]);
+  });
+
+  it("keeps the same wish once when it is sent again", async () => {
+    const hat = new Hat();
+    await hat.run({ action: "wish", contact: "c:bob", value: "Tea" });
+    expect(await hat.run({ action: "wish", contact: "c:bob", value: "Tea" })).toEqual({ kept: true, already: true });
+    expect(hat.game.wishes["c:bob"]).toEqual(["Tea"]);
+  });
+
+  it("refuses a reveal list too long for one contact message before keeping it", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await expect(hat.run({ action: "reveal", text: "x".repeat(32001) })).rejects.toThrow("too long");
+    expect(hat.game.forwards.some((f) => "reveal" in f)).toBe(false);
+  });
+
+  it("does not send again a message an earlier attempt already delivered", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "failed");
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("takes a Ship's word that expired messages arrived, without counting them back", async () => {
+    const hat = new Hat();
+    hat.defaultState = null;
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    expect(await hat.run({ action: "arrived", contact: pair?.giver.contact ?? "" })).toEqual({ confirmed: true });
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "address", contact: pair?.recipient.contact ?? "", value: "Rua N 2", text: "New address." })).toEqual({ forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["New address."]);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

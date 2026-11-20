@@ -77,10 +77,11 @@ Everything that touches the file goes through this one script, run with CodeMode
 
 - **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one. "No draw fits" means none exists; "No draw found yet" means the search ran out of time, so run it again before asking the organiser to drop an exclusion. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
-- **`address`** and **`wish`**: keep what `contact` sent, up to 2,000 bytes each and 2,000 for all of one person's wishes. With `redraw` set, a wish replaces that person's earlier ones, for when they sum up a long list. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
+- **`address`** and **`wish`**: keep what `contact` sent (the same value again changes nothing and returns `already`), up to 2,000 bytes each and 2,000 for all of one person's wishes. With `redraw` set, a wish replaces that person's earlier ones, for when they sum up a long list. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
+- **`arrived`**: when `contact`'s Ship confirms it has everything sent to it, records that, so expired messages to it are not sent again.
 - **`abandon`**: stops waiting for one message, named by the `ref` that `failed` gave it, set as `value`, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
@@ -202,13 +203,14 @@ const settled = async (record, arrived = false) => {
   if (record.abandoned || record.retired) return true;
   if (record.to === "owner") return record.told;
   if (!record.deliveryId && !(await ended(record.to))) return false;
-  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
-    const { state, retryable } = await statusOf(id);
-    const current = id === record.deliveryId;
-    // Seen delivered is remembered, since an expired record proves nothing about arrival.
-    if (current && state === "delivered") record.arrived = true;
-    if (arrived && current && state === "gone" && !record.arrived) return false;
-    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable && !(arrived && current)))) return false;
+  const attempts = [];
+  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) attempts.push({ id, ...(await statusOf(id)) });
+  // Any attempt seen delivered proves arrival, and is remembered, since an expired record
+  // proves nothing.
+  if (attempts.some((a) => a.state === "delivered")) record.arrived = true;
+  for (const { id, state, retryable } of attempts) {
+    if (arrived && id === record.deliveryId && !record.arrived && (state === "gone" || state === "failed")) return false;
+    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable))) return false;
   }
   return true;
 };
@@ -218,6 +220,7 @@ const deliver = async (record) => {
   const { id, state, error } = await send(record.to, record.reveal ? game.revealText : record.message, `${record.key}:${record.attempt}`);
   record.deliveryId = id;
   record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
+  if (state === "delivered") record.arrived = true;
   await save(true);
   if (!record.lastError) return true;
   failed.push(record.who.startsWith("a ") ? { who: record.who, ref: record.ref } : { who: record.who, error: record.lastError, ref: record.ref });
@@ -336,7 +339,8 @@ if (action === "resend") {
     // A replaced attempt that People can still retry holds up a redraw, a leave and close.
     for (const id of record.earlier ?? []) {
       const { state, retryable } = await statusOf(id);
-      if (state === "failed" && retryable) report.earlierRetryable++;
+      if (state === "delivered") record.arrived = true;
+      else if (state === "failed" && retryable) report.earlierRetryable++;
       else if (state === "queued") report.onTheWay++;
     }
     if (!record.deliveryId) { report.resent++; await deliver(record); continue; }
@@ -345,7 +349,8 @@ if (action === "resend") {
     // A confirmed-missing message goes again, unless it was an address a later one corrected;
     // wishes and questions add up, so each goes again.
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
-    if (state === "failed" || (state === "gone" && record.to === contact && !replaced)) { report.resent++; await rotate(record); }
+    // One that already arrived through an earlier attempt is not sent again.
+    if (!record.arrived && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
     else if (state === "delivered") { record.arrived = true; report.delivered++; }
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
@@ -354,6 +359,13 @@ if (action === "resend") {
   // Counts for one Ship's messages could show whom it drew or who wrote to it.
   if ([...Object.values(game.sent), ...game.forwards].some((r) => r.to === contact)) return { resent: true };
   return report;
+}
+if (action === "arrived") {
+  // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Nothing
+  // is counted back, since that could show who drew whom.
+  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact && record.deliveryId) record.arrived = true;
+  await save(true);
+  return { confirmed: true };
 }
 if (action === "abandon") {
   // Only on the organiser's word, for the one message `failed` named by `value`, once they know
@@ -389,6 +401,8 @@ if (action === "address" || action === "wish") {
   if (bytes(value) > 2000 || bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
+  // The same wish or address sent again, for example after a run that stopped, changes nothing.
+  if (action === "wish" ? !redraw && (game.wishes[contact] ?? []).includes(value) : game.addresses[contact] === value) return { kept: true, already: true };
   if (giver) await fence(giver);
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
@@ -409,6 +423,8 @@ if (action === "reveal") {
   // Each Ship gets the list once, recorded like a forward, so close waits until it has arrived.
   if (!game.pairs) throw new Error("No draw yet");
   if (!text) throw new Error("Write the list as text");
+  // A contact message holds at most 32 KiB; check before anything is kept.
+  if (new TextEncoder().encode(text).length > 32000) throw new Error("The list is too long to send: shorten it");
   if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
   // At the end, matches and forwards that arrived or whose records expired no longer need their
   // text, which makes room for the list.
