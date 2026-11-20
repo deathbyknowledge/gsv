@@ -3,7 +3,7 @@ import { createPortal, forwardRef } from "preact/compat";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
 import { AppLink } from "../navigation/appNavigation";
-import { installInputSounds } from "./inputSounds";
+import { installInputAudioUnlock } from "./inputSounds";
 import { voicePreparation } from "./nativePresentation";
 import { useComposerVoice, type ComposerVoiceOptions } from "./NativeVoiceSession";
 import { useNativeSpeech } from "./NativeSpeech";
@@ -40,7 +40,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   useEffect(() => { setPanel(false); }, [options.scope]);
   useEffect(() => { if (!options.enabled) { setPanel(false); } }, [options.enabled]);
   useEffect(() => {
-    if (control.available && options.enabled) return installInputSounds();
+    if (control.available && options.enabled) return installInputAudioUnlock();
   }, [control.available, options.enabled]);
 
   if (!control.available) return null;
