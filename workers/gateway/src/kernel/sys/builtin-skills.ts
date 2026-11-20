@@ -8,6 +8,7 @@ import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
 import processOrchestrationSkill from "../../../../../skills/process-orchestration/SKILL.md";
+import secretSantaHat from "../../../../../skills/secret-santa/hat.txt";
 import secretSantaSkill from "../../../../../skills/secret-santa/SKILL.md";
 import shoppingSkill from "../../../../../skills/shopping/SKILL.md";
 import skillAuthoringSkill from "../../../../../skills/skill-authoring/SKILL.md";
@@ -28,6 +29,7 @@ const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["memory/SKILL.md", memorySkill],
   ["process-orchestration/SKILL.md", processOrchestrationSkill],
   ["secret-santa/SKILL.md", secretSantaSkill],
+  ["secret-santa/hat.txt", secretSantaHat],
   ["shopping/SKILL.md", shoppingSkill],
   ["skill-authoring/SKILL.md", skillAuthoringSkill],
 ]);
