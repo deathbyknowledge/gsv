@@ -1218,6 +1218,33 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: "c:bob", message: expect.stringMatching(/^New match/) })]);
   });
 
+  it("sends a redraw's failed new match again when the redraw is run again", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    hat.failing.add("c:bob");
+    await hat.draw({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    hat.states.set(hat.sent.filter((s) => s.to === "c:bob").slice(-1)[0].id, "failed");
+    hat.failing.clear();
+    const before = hat.sent.length;
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: "c:bob", message: expect.stringMatching(/^New match/) })]);
+  });
+
+  it("sends the latest of two identical forwards when an address changes back", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const recipient = pair?.recipient.contact ?? "";
+    await hat.run({ action: "address", contact: recipient, value: "Rua A 1", text: "Their address: Rua A 1." });
+    await hat.run({ action: "address", contact: recipient, value: "Rua B 2", text: "Their address: Rua B 2." });
+    hat.timesOut.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "address", contact: recipient, value: "Rua A 1", text: "Their address: Rua A 1." });
+    hat.timesOut.clear();
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "address", contact: recipient, value: "Rua A 1", text: "Their address: Rua A 1." })).toEqual({ kept: true, already: true, forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Their address: Rua A 1."]);
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });
