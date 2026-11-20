@@ -1,10 +1,10 @@
 // The Secret Santa hat: everything that touches a game's file. Run it on gsv with
 //   codemode /sys/skills.d/secret-santa/hat.txt --args-json JSON
 // giving `action` and the arguments that action uses; SKILL.md says what each one is for.
-const defaults = { action: "", r12y: "", people: [], exclude: [], redraw: false, contact: "", value: "", to: "giver", text: "", note: "" };
+const defaults = { action: "", r12y: "", people: [], exclude: [], redraw: false, round: 0, contact: "", value: "", to: "giver", text: "", note: "" };
 const unknown = Object.keys(args).find((key) => !Object.hasOwn(defaults, key));
 if (unknown) throw new Error(`Unknown argument ${unknown}: use ${Object.keys(defaults).join(", ")}`);
-const { action, r12y, people, exclude, redraw, contact, value, to, text, note: template } = { ...defaults, ...args };
+const { action, r12y, people, exclude, redraw, round, contact, value, to, text, note: template } = { ...defaults, ...args };
 if (!r12y) throw new Error("Set r12y to the Secret Santa responsibility");
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
 if (!Array.isArray(people) || !Array.isArray(exclude)) throw new Error("people and exclude must be lists");
@@ -195,12 +195,16 @@ const resume = async (other) => {
   const earlier = game.forwards.find((f) => f.to === other.contact && f.about === contact && f.kind === action && f.sum === sum);
   if (!earlier) return null;
   if (earlier.to === "owner") return earlier.told ? { already: true } : { already: true, forYourOwner: earlier.id };
+  // Given up on, or retired at the reveal: never sent again.
+  if (earlier.abandoned) return { already: true, abandoned: true };
+  if (earlier.retired) return { already: true, forwarded: true };
   if (!earlier.deliveryId) return { already: true, forwarded: await deliver(earlier) };
   // A copy that failed goes again; one still on its way or delivered is left alone.
   // Any attempt delivered means it arrived, however the latest one went.
   for (const id of earlier.earlier ?? []) if ((await statusOf(id)).state === "delivered") earlier.arrived = true;
   const { state } = await statusOf(earlier.deliveryId);
-  if (state === "delivered") { earlier.arrived = true; await save(true); }
+  if (state === "delivered") earlier.arrived = true;
+  if (earlier.arrived) await save(true);
   if (state === "failed" && !earlier.arrived) return { already: true, forwarded: await rotate(earlier) };
   return { already: true, forwarded: true };
 };
@@ -224,6 +228,13 @@ const forward = async (other) => {
 
 if (action === "draw") {
   if (game.pairs && !redraw) throw new Error("Already drawn: use resend, or set redraw");
+  if (redraw) {
+    // A redraw names the round it replaces, so running it again after it went through returns that
+    // result instead of drawing everyone a second new match.
+    const owned = game.held ? null : game.pairs?.find((p) => p.giver.contact === "owner");
+    if (round < game.round) return { people: game.pairs.length, round: game.round, already: true, failed: [], yours: owned ? matchOf(owned, true) : null };
+    if (round !== game.round) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
+  }
   // A replaced match still on its way, or never confirmed, could arrive after its replacement.
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (!(await settled(record))) throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
@@ -280,11 +291,11 @@ if (action === "draw") {
   tooLong();
   await save();
   for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
-  return { people: pairs.length, failed, yours };
+  return { people: pairs.length, round: game.round, failed, yours };
 }
 if (action === "resend") {
   const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
+  const report = { round: game.round, delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (record.abandoned) continue;
     if (record.to === "owner") {
@@ -359,7 +370,9 @@ if (action === "address" || action === "wish") {
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
   // The same wish or address sent again, for example after a run that stopped, changes nothing.
-  if (action === "wish" ? !redraw && (game.wishes[contact] ?? []).includes(value) : game.addresses[contact] === value) {
+  // A replacement wish counts as a repeat when it already is the whole list.
+  const wishes = game.wishes[contact] ?? [];
+  if (action === "wish" ? (redraw ? wishes.length === 1 && wishes[0] === value : wishes.includes(value)) : game.addresses[contact] === value) {
     const resumed = giver ? await resume(giver) : null;
     return { kept: true, already: true, ...resumed };
   }
@@ -422,7 +435,7 @@ if (action === "leave") {
   if (game.left.includes(contact)) {
     // Already gone: finish a relink that stopped before its new match went out or reached your owner.
     for (const record of Object.values(game.sent)) {
-      if (record.to === "owner" || record.who !== "a replaced match" || record.abandoned) continue;
+      if (record.to === "owner" || record.who !== "a replaced match" || record.abandoned || record.retired) continue;
       if (!record.deliveryId) await deliver(record);
       else {
         // A failed one goes again, and so does one whose record expired before anyone saw it arrive.

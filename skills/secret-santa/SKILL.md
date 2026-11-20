@@ -101,6 +101,7 @@ The arguments, each for the actions named:
 - `people`, for `draw`: everyone in details.people, with `"owner"` as the contact only when the organiser plays.
 - `exclude`, for `draw`: pairs who must not draw each other.
 - `redraw`, for `draw`: replace an existing draw; for `wish`: replace their earlier wishes with this one.
+- `round`, for a redraw: the `round` the current draw returned, which this redraw replaces. Running the same redraw again after it went through returns `already` with its result, rather than drawing everyone again.
 - `contact`, for `address`, `wish`, `ask` and `leave`: who it is about; for `resend`: a Ship that confirmed nothing arrived; for `arrived`: a Ship that confirmed it has everything.
 - `value`, for `abandon`: a message's ref; for `start`: where gifts go in person; for `address` and `wish`: what they sent; for `told`: the `forYourOwner` number, or `"match"` for your owner's match.
 - `to`, for `ask`: `"giver"` or `"recipient"` of `contact`.

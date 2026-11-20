@@ -26,6 +26,7 @@ type Settings = {
   people?: Person[];
   exclude?: string[][];
   redraw?: boolean;
+  round?: number;
   contact?: string;
   value?: string;
   to?: string;
@@ -73,7 +74,10 @@ class Hat {
 
   async run(settings: Settings): Promise<JsonValue> {
     const note = settings.redraw === true || settings.action === "leave" ? NEW_NOTE : NOTE;
-    const args = { action: "draw", r12y: "RESPONSIBILITY_ID", note, ...settings };
+    // A redraw names the round it replaces; tests that don't say mean the current one.
+    const drawing = settings.action === undefined || settings.action === "draw";
+    const round = drawing && settings.redraw === true && settings.round === undefined && this.file ? { round: this.game.round } : {};
+    const args = { action: "draw", r12y: "RESPONSIBILITY_ID", note, ...round, ...settings };
     const run = await executeCodeMode(env, this.source, (call, callArgs) => this.syscall(call, callArgs), { args });
     if (run.status !== "completed") throw new Error(run.error);
     return run.result ?? null;
@@ -159,7 +163,7 @@ describe.sequential("secret-santa hat script", () => {
         expect([giver.contact, recipient.contact].sort()).not.toEqual(["c:bob", "c:carla"]);
       }
       expect(hat.sent).toHaveLength(PEOPLE.length - 1);
-      expect(result).toEqual({ people: PEOPLE.length, failed: [], yours: expect.objectContaining({ replaces: false }) });
+      expect(result).toEqual({ people: PEOPLE.length, round: 1, failed: [], yours: expect.objectContaining({ replaces: false }) });
       seen.add(pairs.map((p) => p.recipient.contact).join());
     }
     expect(seen.size).toBeGreaterThan(20);
@@ -303,7 +307,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(resent.map((s) => s.to).sort()).toEqual(["c:bob", lost.to].sort());
     expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2"), id: expect.any(String) });
     expect(report).toEqual({
-      delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [], forYourOwner: [],
+      round: 1, delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [], forYourOwner: [],
       yours: expect.objectContaining({ replaces: false }),
     });
   });
@@ -1189,6 +1193,43 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "STUCK-WISH" });
     await hat.run({ action: "abandon", value: hat.game.forwards[hat.game.forwards.length - 1].ref });
     expect(hat.file?.includes("STUCK-WISH")).toBe(false);
+  });
+
+  it("returns a redraw's result when it is run again after it went through", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.draw({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    const pairs = JSON.stringify(hat.game.pairs);
+    const before = hat.sent.length;
+    expect(await hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 1 })).toEqual(expect.objectContaining({ already: true, round: 2 }));
+    expect(hat.sent).toHaveLength(before);
+    expect(JSON.stringify(hat.game.pairs)).toBe(pairs);
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 7 })).rejects.toThrow("Set round to 2");
+  });
+
+  it("never sends an abandoned forward again when it is repeated", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.refuse.add(pair?.giver.contact ?? "");
+    const ask = { action: "ask", contact: pair?.recipient.contact ?? "", to: "giver", text: "Any allergies?" };
+    await hat.run(ask);
+    await hat.run({ action: "abandon", value: hat.game.forwards[hat.game.forwards.length - 1].ref });
+    hat.refuse.clear();
+    const before = hat.sent.length;
+    expect(await hat.run(ask)).toEqual({ already: true, abandoned: true });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("keeps a replacement wish once when it is sent again", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const wish = { action: "wish", contact: pair?.recipient.contact ?? "", value: "Books or tea", text: "Their list, summed up: books or tea.", redraw: true };
+    await hat.run(wish);
+    const before = hat.sent.length;
+    expect(await hat.run(wish)).toEqual({ kept: true, already: true, forwarded: true });
+    expect(hat.sent).toHaveLength(before);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
