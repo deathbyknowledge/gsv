@@ -117,6 +117,7 @@ class Hat {
       return { status: "completed", exitCode: 0, output: JSON.stringify({ contacts }) };
     }
     if (command.startsWith("test -e ")) return { status: "completed", exitCode: this.file === null ? 1 : 0, output: "" };
+    if (command.startsWith("mkdir -p ")) return { status: "completed", exitCode: 0, output: "" };
     if (command.startsWith("rm -f ")) {
       this.removed.push(command);
       this.file = null;
@@ -264,7 +265,7 @@ describe.sequential("secret-santa hat script", () => {
     const match = hat.sent.find((s) => s.to === giver);
     if (match) {
       hat.states.set(match.id, "queued");
-      await expect(hat.run({ action: "address", contact: "c:carla", value: "Rua X 9, Palma", text: "Their new address is Rua X 9." })).rejects.toThrow("earlier messages");
+      await expect(hat.run({ action: "address", contact: "c:carla", value: "Rua X 9, Palma", text: "Their new address is Rua X 9." })).rejects.toThrow("Earlier messages");
       expect(hat.game.addresses["c:carla"]).toBe("Rua X 1, Palma");
       hat.states.set(match.id, "delivered");
     }
@@ -355,7 +356,11 @@ describe.sequential("secret-santa hat script", () => {
     expect((firstWrite.pairs ?? []).some((p) => p.giver.contact === leaver || p.recipient.contact === leaver)).toBe(false);
     expect(hat.sent.slice(before)).toHaveLength(1);
     expect(hat.sent[before].message.startsWith("New match")).toBe(true);
-    await expect(hat.run({ action: "leave", contact: leaver })).rejects.toThrow("is not in the draw");
+    // Running it again is safe, and someone never in the draw is named as such.
+    const after = hat.sent.length;
+    expect(await hat.run({ action: "leave", contact: leaver })).toEqual({ left: true });
+    expect(hat.sent).toHaveLength(after);
+    expect(await hat.run({ action: "leave", contact: "c:nobody" })).toEqual({ left: true, notInDraw: true });
   });
 
   it("drops messages about a leaver so a resend can't pass them on", async () => {
@@ -621,6 +626,43 @@ describe.sequential("secret-santa hat script", () => {
     const record = Object.values(hat.game.sent).find((r) => r.to === first.to);
     expect(record).toEqual(expect.objectContaining({ deliveryId: null, earlier: [first.id] }));
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+  });
+
+  it("starts the file only when missing, through the same size check", async () => {
+    const hat = new Hat();
+    hat.file = null;
+    expect(await hat.run({ action: "start", value: "Office, Rua Q 7" })).toEqual({ started: true });
+    expect(hat.game).toEqual(expect.objectContaining({ round: 0, deliverTo: "Office, Rua Q 7", left: [] }));
+    await hat.run({ action: "address", contact: "c:bob", value: "Rua Z 3, Faro" });
+    expect(await hat.run({ action: "start", value: "Somewhere else" })).toEqual({ started: true });
+    expect(hat.game).toEqual(expect.objectContaining({ deliverTo: "Office, Rua Q 7", addresses: { "c:bob": "Rua Z 3, Faro" } }));
+
+    const big = new Hat();
+    big.file = null;
+    await expect(big.run({ action: "start", value: "x".repeat(61000) })).rejects.toThrow("Too much to keep");
+    expect(big.file).toBeNull();
+  });
+
+  it("holds a new answer until the earlier one to the same person has arrived", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    await hat.run({ action: "ask", contact: giver, to: "recipient", text: "Your Secret Santa asks your size." });
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "queued");
+    await expect(hat.run({ action: "ask", contact: giver, to: "recipient", text: "Sorry, they meant shoe size." })).rejects.toThrow("on their way");
+  });
+
+  it("records the reveal so close waits until every Ship has the list", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    expect(await hat.run({ action: "reveal", text: "Ana → Bob, …" })).toEqual({ revealed: PEOPLE.length - 1, failed: [] });
+    const reveal = hat.sent[hat.sent.length - 1];
+    hat.states.set(reveal.id, "queued");
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    await expect(hat.run({ action: "reveal", text: "again" })).rejects.toThrow("Already revealed");
+    hat.states.set(reveal.id, "delivered");
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
