@@ -170,6 +170,15 @@ const fence = async (other) => {
   }
   if (waiting) throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
 };
+// The same message sent again, for example after a run that stopped: finish what the first run
+// started instead of keeping or sending it twice.
+const resume = async (other) => {
+  const earlier = game.forwards.find((f) => f.to === other.contact && f.about === contact && f.kind === action && f.message === text);
+  if (!earlier) return null;
+  if (earlier.to === "owner") return earlier.told ? { already: true } : { already: true, forYourOwner: earlier.id };
+  if (!earlier.deliveryId) return { already: true, forwarded: await deliver(earlier) };
+  return { already: true, forwarded: true };
+};
 // After the draw, a wish, an address or a question goes on to the other side of that pair. The
 // change and its forward are saved together, then sent.
 const forward = async (other) => {
@@ -178,7 +187,7 @@ const forward = async (other) => {
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
     const id = ++game.forwardCount;
-    game.forwards.push({ to: "owner", about: contact, id, message: text, told: false });
+    game.forwards.push({ to: "owner", kind: action, about: contact, id, message: text, told: false });
     await save();
     return { forYourOwner: id };
   }
@@ -322,7 +331,10 @@ if (action === "address" || action === "wish") {
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
   // The same wish or address sent again, for example after a run that stopped, changes nothing.
-  if (action === "wish" ? !redraw && (game.wishes[contact] ?? []).includes(value) : game.addresses[contact] === value) return { kept: true, already: true };
+  if (action === "wish" ? !redraw && (game.wishes[contact] ?? []).includes(value) : game.addresses[contact] === value) {
+    const resumed = giver ? await resume(giver) : null;
+    return { kept: true, already: true, ...resumed };
+  }
   if (giver) await fence(giver);
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
@@ -336,6 +348,8 @@ if (action === "address" || action === "wish") {
 if (action === "ask") {
   if (!game.pairs) throw new Error("No draw yet");
   const other = pairOf(to === "giver" ? "recipient" : "giver", contact)[to];
+  const resumed = await resume(other);
+  if (resumed) return resumed;
   await fence(other);
   return forward(other);
 }
@@ -384,9 +398,10 @@ if (action === "leave") {
       if (!record.deliveryId) await deliver(record);
       else {
         // A failed one goes again, and so does one whose record expired before anyone saw it arrive.
+        // Any attempt delivered means it arrived, however the latest one went.
+        for (const id of [record.deliveryId, ...(record.earlier ?? [])]) if ((await statusOf(id)).state === "delivered") record.arrived = true;
         const { state } = await statusOf(record.deliveryId);
-        if (state === "delivered") record.arrived = true;
-        else if (state === "failed" || (state === "gone" && !record.arrived)) await rotate(record);
+        if (!record.arrived && (state === "failed" || state === "gone")) await rotate(record);
       }
     }
     await save(true);

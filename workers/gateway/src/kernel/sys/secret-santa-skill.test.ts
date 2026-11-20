@@ -1072,6 +1072,46 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["New address."]);
   });
 
+  it("finishes a forward a stopped run saved but never sent", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.timesOut.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." });
+    hat.timesOut.clear();
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." })).toEqual({ kept: true, already: true, forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Tea, please."]);
+  });
+
+  it("sends a repeated question once", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const ask = { action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "Your Secret Santa asks your size." };
+    await hat.run(ask);
+    const before = hat.sent.length;
+    expect(await hat.run(ask)).toEqual({ already: true, forwarded: true });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("does not send a relink again on a repeated leave once an earlier attempt arrived", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    const first = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "failed");
+    const before = hat.sent.length;
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    expect(hat.sent).toHaveLength(before);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();
