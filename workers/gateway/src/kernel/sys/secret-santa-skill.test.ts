@@ -675,7 +675,11 @@ describe.sequential("secret-santa hat script", () => {
     hat.refuse.add("c:bob");
     await hat.draw({ people: PEOPLE, exclude: [] });
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
-    expect(await hat.run({ action: "abandon" })).toEqual({ abandoned: 1 });
+    hat.states.set(hat.sent[0].id, "queued");
+    expect(await hat.run({ action: "abandon", contact: "c:bob" })).toEqual({ abandoned: 1 });
+    // Only Bob's message is given up on: another still on its way keeps holding close.
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    hat.states.set(hat.sent[0].id, "delivered");
     const before = hat.sent.length;
     await hat.run({ action: "resend" });
     expect(hat.sent).toHaveLength(before);
@@ -733,6 +737,32 @@ describe.sequential("secret-santa hat script", () => {
     await hat.draw({ people: PEOPLE, exclude: [] });
     await hat.run({ people: PEOPLE, exclude: [], redraw: true });
     expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ yours: expect.objectContaining({ replaces: true }) }));
+  });
+
+  it("never names the relinked giver when their new match fails", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    hat.refuse.add(giver);
+    expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match" }] }));
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match" }] }));
+  });
+
+  it("remembers a leaver whose leave put the draw on hold", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE.slice(0, 3), exclude: [] });
+    await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("on hold");
+    await hat.draw({ people: [PEOPLE[0], PEOPLE[2], PEOPLE[3]], exclude: [], redraw: true });
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "Tea" })).rejects.toThrow("have left");
+  });
+
+  it("stores the reveal list once, however many Ships get it", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.run({ action: "reveal", text: "THE-LIST" });
+    expect(hat.file?.split("THE-LIST")).toHaveLength(2);
+    expect(hat.sent.filter((s) => s.message === "THE-LIST")).toHaveLength(PEOPLE.length - 1);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
