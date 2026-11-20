@@ -8,6 +8,8 @@ const { action, r12y, people, exclude, redraw, round, contact, value, to, text, 
 if (!r12y) throw new Error("Set r12y to the Secret Santa responsibility");
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
 if (!Array.isArray(people) || !Array.isArray(exclude)) throw new Error("people and exclude must be lists");
+if (to !== "giver" && to !== "recipient") throw new Error('to must be "giver" or "recipient"');
+if (!Number.isInteger(round) || round < 0) throw new Error("round must be a whole number");
 // The match message: `note` with {name}, {address}, {wishes} and {deliverTo} filled in. A line whose
 // placeholder has nothing to fill, such as {wishes} before any arrived, is left out.
 const note = ({ name, address, wishes, deliverTo }) => {
@@ -253,6 +255,8 @@ if (action === "draw") {
     // A redraw names the round it replaces, so running it again after it went through returns that
     // result instead of drawing everyone a second new match.
     const owned = game.held ? null : game.pairs?.find((p) => p.giver.contact === "owner");
+    // Draws start at round 1, so a missing round is never taken for a finished one.
+    if (round < 1) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
     if (round < game.round) {
       // Finish sending any new match the earlier run saved but never sent, under its own key.
       for (const record of Object.values(game.sent)) if (record.to !== "owner") await recover(record);
@@ -263,7 +267,11 @@ if (action === "draw") {
   }
   // A replaced match still on its way, or never confirmed, could arrive after its replacement.
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (!(await settled(record))) throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
+    if (!(await settled(record))) {
+      // Keep any delivery the checks just saw before turning this away.
+      await save(true);
+      throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
+    }
   }
   if (people.length < 3) throw new Error("A draw needs at least 3 people");
   if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
@@ -379,7 +387,11 @@ if (action === "abandon") {
 if (action === "close") {
   // The file holds the only delivery ids: keep it until nothing more can arrive.
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (!(await settled(record))) throw new Error("Messages are unconfirmed or on their way: run resend, then close again once they arrive");
+    if (!(await settled(record))) {
+      // Keep any delivery the checks just saw before turning this away.
+      await save(true);
+      throw new Error("Messages are unconfirmed or on their way: run resend, then close again once they arrive");
+    }
   }
   const removed = await shell(`rm -f "$HOME"/${q(file)}`, { target: "gsv" });
   if (removed.exitCode !== 0) throw new Error(`Cannot delete ${file}: ${String(removed.error || removed.output).trim().slice(0, 200)}`);
@@ -459,7 +471,11 @@ if (action === "leave") {
   const giverOfLeaver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver.contact;
   const matches = [game.sent[contact], giverOfLeaver && game.sent[giverOfLeaver]].filter(Boolean);
   for (const record of [...affected, ...matches]) {
-    if (!(await settled(record))) throw new Error("A message to or about them is unconfirmed or on its way: run resend, then leave again once it arrives");
+    if (!(await settled(record))) {
+      // Keep any delivery the checks just saw before turning this away.
+      await save(true);
+      throw new Error("A message to or about them is unconfirmed or on its way: run resend, then leave again once it arrives");
+    }
   }
   // Each path below saves once, so the file never holds the leaver's removal without the hold or
   // the relink that goes with it. `left` remembers who has gone, so running it again is safe.

@@ -1339,6 +1339,25 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent).toHaveLength(before);
   });
 
+  it("refuses a redraw without its round, and an ask in an unknown direction", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 0 })).rejects.toThrow("Set round to 1");
+    expect(hat.game.round).toBe(1);
+    await expect(hat.run({ action: "ask", contact: "c:bob", to: "toString", text: "Hi" })).rejects.toThrow("to must be");
+    expect(hat.game.forwards).toEqual([]);
+  });
+
+  it("saves deliveries a refused redraw saw", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const records = Object.entries(hat.game.sent).filter(([, r]) => r.to !== "owner");
+    const last = hat.sent.find((s) => s.to === records[records.length - 1][1].to);
+    hat.states.set(last?.id ?? "", "queued");
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true })).rejects.toThrow("on their way");
+    expect(hat.game.sent[records[0][0]]).toEqual(expect.objectContaining({ arrived: true }));
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });
