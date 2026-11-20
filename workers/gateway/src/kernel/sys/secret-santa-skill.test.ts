@@ -63,6 +63,7 @@ class Hat {
   timesOut = new Set<string>();
   lookupFails = false;
   writes: string[] = [];
+  ended = new Set<string>();
   removed: string[] = [];
   private readonly source = hatScript();
 
@@ -103,6 +104,10 @@ class Hat {
       const state = this.states.get(id);
       const delivery = state ? { deliveryId: id, state, retryable: this.retryable.has(id) } : null;
       return { status: "completed", exitCode: 0, output: JSON.stringify({ delivery }) };
+    }
+    if (command === "contact list --json") {
+      const contacts = PEOPLE.filter((p) => p.contact !== "owner").map((p) => ({ id: p.contact, state: this.ended.has(p.contact) ? "revoked" : "active" }));
+      return { status: "completed", exitCode: 0, output: JSON.stringify({ contacts }) };
     }
     if (command.startsWith("test -e ")) return { status: "completed", exitCode: this.file === null ? 1 : 0, output: "" };
     if (command.startsWith("rm -f ")) {
@@ -500,10 +505,12 @@ describe.sequential("secret-santa hat script", () => {
     expect(await held.run({ action: "close" })).toEqual({ closed: true });
   });
 
-  it("lets a refused match settle, so a removed contact never blocks the end", async () => {
+  it("holds a refused match until it is resent, unless that contact has ended", async () => {
     const hat = new Hat();
     hat.refuse.add("c:bob");
     await hat.run({ people: PEOPLE, exclude: [] });
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    hat.ended.add("c:bob");
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
   });
 
