@@ -608,7 +608,7 @@ describe.sequential("secret-santa hat script", () => {
     const recipient = pair?.recipient.contact ?? "";
     await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Your recipient would like tea." });
     hat.states.set(hat.sent[hat.sent.length - 1].id, "queued");
-    await expect(hat.run({ action: "wish", contact: recipient, value: "Coffee", text: "Coffee instead of tea." })).rejects.toThrow("on their way");
+    await expect(hat.run({ action: "wish", contact: recipient, value: "Coffee", text: "Coffee instead of tea." })).rejects.toThrow("have not arrived");
     expect(hat.game.wishes[recipient]).toEqual(["Tea"]);
   });
 
@@ -618,7 +618,7 @@ describe.sequential("secret-santa hat script", () => {
     await hat.draw({ people: PEOPLE, exclude: [] });
     const before = hat.sent.length;
     expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ resent: 0, unknown: PEOPLE.length - 1 }));
-    expect(await hat.run({ action: "resend", contact: "c:bob" })).toEqual(expect.objectContaining({ resent: 1 }));
+    expect(await hat.run({ action: "resend", contact: "c:bob" })).toEqual({ resent: true });
     expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: "c:bob", key: expect.stringMatching(/:2$/) })]);
   });
 
@@ -652,7 +652,7 @@ describe.sequential("secret-santa hat script", () => {
     const giver = pair?.giver.contact ?? "";
     await hat.run({ action: "ask", contact: giver, to: "recipient", text: "Your Secret Santa asks your size." });
     hat.states.set(hat.sent[hat.sent.length - 1].id, "queued");
-    await expect(hat.run({ action: "ask", contact: giver, to: "recipient", text: "Sorry, they meant shoe size." })).rejects.toThrow("on their way");
+    await expect(hat.run({ action: "ask", contact: giver, to: "recipient", text: "Sorry, they meant shoe size." })).rejects.toThrow("have not arrived");
   });
 
   it("records the reveal so close waits until every Ship has the list", async () => {
@@ -787,7 +787,7 @@ describe.sequential("secret-santa hat script", () => {
     const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
     const match = hat.sent.find((s) => s.to === pair?.giver.contact);
     hat.states.set(match?.id ?? "", "failed");
-    await expect(hat.run({ action: "address", contact: pair?.recipient.contact ?? "", value: "Rua N 2", text: "New address: Rua N 2." })).rejects.toThrow("failed");
+    await expect(hat.run({ action: "address", contact: pair?.recipient.contact ?? "", value: "Rua N 2", text: "New address: Rua N 2." })).rejects.toThrow("have not arrived");
   });
 
   it("abandons an unnamed forward by the ref its failure gave, without naming who it was for", async () => {
@@ -920,16 +920,37 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: relink.message })]);
   });
 
-  it("holds a correction behind an expired match until its Ship confirms it", async () => {
+  it("sends an expired match again, tracked, before a correction follows it", async () => {
     const hat = new Hat();
     hat.defaultState = null;
     await hat.draw({ people: PEOPLE, exclude: [] });
     const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
     const recipient = pair?.recipient.contact ?? "";
-    const ref = hat.game.sent[pair?.giver.contact ?? ""]?.ref ?? "";
-    await expect(hat.run({ action: "address", contact: recipient, value: "Rua N 2", text: "New address." })).rejects.toThrow(ref);
-    expect(await hat.run({ action: "arrived", value: ref })).toEqual({ arrived: true });
+    const before = hat.sent.length;
+    const error = await hat.run({ action: "address", contact: recipient, value: "Rua N 2", text: "New address." }).catch((e: Error) => e.message);
+    expect(error).toMatch("have not arrived");
+    expect(error).not.toMatch(hat.game.sent[giver]?.ref ?? "none");
+    expect(hat.game.addresses[recipient]).toBeUndefined();
+    const resent = hat.sent.slice(before);
+    expect(resent).toEqual([expect.objectContaining({ to: giver, message: expect.stringMatching(/^Match/) })]);
+    hat.states.set(resent[0].id, "delivered");
     expect(await hat.run({ action: "address", contact: recipient, value: "Rua N 2", text: "New address." })).toEqual({ forwarded: true });
+  });
+
+  it("skips an abandoned relink when a leave is repeated", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.refuse.add(pair?.giver.contact ?? "");
+    const result = await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    // SAFETY: a refused relink reports one failure with its ref.
+    const ref = (result as { failed: Array<{ ref: string }> }).failed[0].ref;
+    await hat.run({ action: "abandon", value: ref });
+    hat.refuse.clear();
+    const before = hat.sent.length;
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    expect(hat.sent).toHaveLength(before);
   });
 
   it("refuses a question too long to keep before saving it", async () => {

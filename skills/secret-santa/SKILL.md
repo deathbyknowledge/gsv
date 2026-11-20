@@ -81,7 +81,6 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
-- **`arrived`**: records that a Ship confirmed it has the message named by `ref` (in `value`), when its delivery record has expired and a later message waits on it.
 - **`abandon`**: stops waiting for one message, named by the `ref` that `failed` gave it, set as `value`, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
@@ -96,7 +95,7 @@ const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in d
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw; wish: replace their earlier wishes with this one
 const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a Ship that confirmed nothing arrived
-const value = ""; // abandon, arrived: a message's ref; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
+const value = ""; // abandon: a message's ref; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
 const to = "giver"; // ask: "giver" or "recipient" of contact
 const text = ""; // address, wish, ask: your message to forward after the draw; reveal: the list
 const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw, leave: the match message
@@ -233,20 +232,26 @@ const rotate = async (record) => {
   await save(true);
   return deliver(record);
 };
+// A correction, a new wish or a new answer must not be overtaken by the match or an earlier
+// message about the same person still on its way, or sent again after it. It waits, before
+// anything changes, until those have arrived; one whose record expired unconfirmed is sent
+// again, so the new message follows a copy that is tracked. The error names nothing, since
+// which messages wait could show the pair.
+const fence = async (other) => {
+  const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
+  let waiting = false;
+  for (const record of earlier) {
+    if (await settled(record, true)) continue;
+    waiting = true;
+    if (record.deliveryId && !record.arrived && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
+  }
+  if (waiting) throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
+};
 // After the draw, a wish, an address or a question goes on to the other side of that pair. The
 // change and its forward are saved together, then sent.
 const forward = async (other) => {
   if (!text) throw new Error("Write text to forward");
   if (bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter message");
-  // A correction, a new wish or a new answer must not be overtaken by the match or an earlier
-  // message about the same person still on its way, or sent again after it. Nothing is saved
-  // until those have arrived.
-  const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
-  const waiting = [];
-  for (const record of earlier) if (!(await settled(record, true))) waiting.push(record.ref);
-  if (waiting.length) {
-    throw new Error(`Earlier messages to them are unconfirmed, failed, expired or on their way (${waiting.join(", ")}): run resend, then send this again once they arrive. If one expired, ask that Ship whether it has it: if so, run arrived with its ref; if not, resend with contact set to that Ship`);
-  }
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
     const id = ++game.forwardCount;
@@ -343,15 +348,9 @@ if (action === "resend") {
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
   }
+  // Counts for one Ship's messages could show whom it drew or who wrote to it.
+  if ([...Object.values(game.sent), ...game.forwards].some((r) => r.to === contact)) return { resent: true };
   return report;
-}
-if (action === "arrived") {
-  // That Ship confirmed it has this message, though its delivery record has expired.
-  const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
-  if (!record) throw new Error(`No message ${value}`);
-  record.arrived = true;
-  await save(true);
-  return { arrived: true };
 }
 if (action === "abandon") {
   // Only on the organiser's word, for the one message `failed` named by `value`, once they know
@@ -385,6 +384,7 @@ if (action === "address" || action === "wish") {
   if (bytes(value) > 2000 || bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
+  if (giver) await fence(giver);
   if (action === "address") game.addresses[contact] = value;
   else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
   // The draw repeats every wish and address in a match, so the file has to hold them twice.
@@ -396,7 +396,9 @@ if (action === "address" || action === "wish") {
 }
 if (action === "ask") {
   if (!game.pairs) throw new Error("No draw yet");
-  return forward(pairOf(to === "giver" ? "recipient" : "giver", contact)[to]);
+  const other = pairOf(to === "giver" ? "recipient" : "giver", contact)[to];
+  await fence(other);
+  return forward(other);
 }
 if (action === "reveal") {
   // Each Ship gets the list once, recorded like a forward, so close waits until it has arrived.
@@ -436,7 +438,7 @@ if (action === "leave") {
   if (game.left.includes(contact)) {
     // Already gone: finish a relink that stopped before its new match went out or reached your owner.
     for (const record of Object.values(game.sent)) {
-      if (record.to === "owner" || record.who !== "a replaced match") continue;
+      if (record.to === "owner" || record.who !== "a replaced match" || record.abandoned) continue;
       if (!record.deliveryId) await deliver(record);
       else if ((await statusOf(record.deliveryId)).state === "failed") await rotate(record);
     }
@@ -479,7 +481,7 @@ throw new Error(`Unknown action: ${action}`);
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else, then run `told` with `value` "match". Until then it holds up a redraw, a leave and `close`. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it, then run `told` with that number as `value`. Until then it holds up a redraw, a leave and `close`, and `resend` lists it again under `forYourOwner` with its text. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
 - A "Resolve contact delivery" responsibility for one of these messages: handle it with `resend`, or `abandon` with the organiser's OK, then resolve it, without saying which contact it names.
-- `failed` lists each giver whose match did not go out, with the reason and a `ref` for `abandon`; a forward that did not go out shows only as "a forwarded message", and a relinked giver's new match only as "a replaced match", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again, and if it confirms nothing arrived, run `resend` with `contact` set to that Ship's contact to send its match, the latest message about each person and the reveal once more. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
+- `failed` lists each giver whose match did not go out, with the reason and a `ref` for `abandon`; a forward that did not go out shows only as "a forwarded message", and a relinked giver's new match only as "a replaced match", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again, and if it confirms nothing arrived, run `resend` with `contact` set to that Ship's contact to send its match, the latest message about each person and the reveal once more; it answers only `resent`, without counts, since those could show whom that Ship drew, so run a plain `resend` afterwards for the totals. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
 - Update details with the people and exclusions, never with pairs or addresses.
 
 ### 4. Wishes and questions
