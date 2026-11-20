@@ -132,7 +132,7 @@ const statusOf = async (deliveryId) => {
 // left, or a last send without an id to a contact that has ended. An attempt replaced by a resend
 // still counts, since it can be retried from People for up to a week.
 const settled = async (record, arrived = false) => {
-  if (record.abandoned || record.retired) return true;
+  if (record.abandoned) return true;
   if (record.to === "owner") return record.told;
   if (!record.deliveryId && !(await ended(record.to))) return false;
   const attempts = [];
@@ -141,7 +141,8 @@ const settled = async (record, arrived = false) => {
   // proves nothing.
   if (attempts.some((a) => a.state === "delivered")) record.arrived = true;
   for (const { id, state, retryable } of attempts) {
-    if (arrived && id === record.deliveryId && !record.arrived && (state === "gone" || state === "failed")) return false;
+    // A retired record is never sent again, but its older attempts still count until they settle.
+    if (arrived && id === record.deliveryId && !record.arrived && !record.retired && (state === "gone" || state === "failed")) return false;
     if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable))) return false;
   }
   return true;
@@ -157,6 +158,11 @@ const deliver = async (record) => {
   if (!record.lastError) return true;
   failed.push(record.who.startsWith("a ") ? { who: record.who, ref: record.ref } : { who: record.who, error: record.lastError, ref: record.ref });
   return false;
+};
+// A contact message holds at most 32 KiB, so a match that long could never be sent: stop before
+// keeping it.
+const tooLong = () => {
+  for (const r of Object.values(game.sent)) if (r.message && new TextEncoder().encode(r.message).length > 32000) throw new Error("A match message is too long to send: shorten note");
 };
 // A new attempt is saved before it is sent, with the old id kept in `earlier`, so a run that stops
 // mid-send leaves the record unconfirmed rather than pointing at the old, settled attempt.
@@ -178,7 +184,7 @@ const fence = async (other) => {
   for (const record of earlier) {
     if (await settled(record, true)) continue;
     waiting = true;
-    if (record.deliveryId && !record.arrived && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
+    if (record.deliveryId && !record.arrived && !record.retired && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
   }
   if (waiting) throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
 };
@@ -191,6 +197,8 @@ const resume = async (other) => {
   if (earlier.to === "owner") return earlier.told ? { already: true } : { already: true, forYourOwner: earlier.id };
   if (!earlier.deliveryId) return { already: true, forwarded: await deliver(earlier) };
   // A copy that failed goes again; one still on its way or delivered is left alone.
+  // Any attempt delivered means it arrived, however the latest one went.
+  for (const id of earlier.earlier ?? []) if ((await statusOf(id)).state === "delivered") earlier.arrived = true;
   const { state } = await statusOf(earlier.deliveryId);
   if (state === "delivered") { earlier.arrived = true; await save(true); }
   if (state === "failed" && !earlier.arrived) return { already: true, forwarded: await rotate(earlier) };
@@ -269,6 +277,7 @@ if (action === "draw") {
   // Records are kept, sent and reported in contact order, never in the loop's order, which would
   // show who follows whom.
   for (const pair of [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1))) prepare(pair, redraw);
+  tooLong();
   await save();
   for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
   return { people: pairs.length, failed, yours };
@@ -319,6 +328,8 @@ if (action === "abandon") {
   const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
   if (!record) throw new Error(`No message ${value}`);
   record.abandoned = true;
+  // Never sent again, so its text can go.
+  if (record.to !== "owner") delete record.message;
   await save(true);
   return { abandoned: true };
 }
@@ -451,6 +462,7 @@ if (action === "leave") {
   delete game.sent[contact];
   game.left.push(contact);
   prepare(before, true, true);
+  tooLong();
   await save();
   if (before.giver.contact !== "owner") await deliver(game.sent[before.giver.contact]);
   return { people: game.pairs.length, failed, yours };

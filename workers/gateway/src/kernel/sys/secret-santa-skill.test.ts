@@ -18,7 +18,7 @@ type Game = {
   addresses: Record<string, string>;
   sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string; message?: string }>;
   held?: boolean;
-  forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null }>;
+  forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null; ref?: string }>;
 };
 type Settings = {
   action?: string;
@@ -1141,6 +1141,54 @@ describe.sequential("secret-santa hat script", () => {
     hat.file = JSON.stringify({ ...hat.game, forwards: old });
     expect(await hat.run({ action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "Your Secret Santa asks your size." })).toEqual({ forwarded: true });
     expect(hat.file?.includes("m".repeat(1900))).toBe(false);
+  });
+
+  it("keeps an older attempt People can retry in the fence after the reveal", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    await hat.run({ action: "reveal", text: "The list" });
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+  });
+
+  it("does not send a repeated forward a third time when an older attempt arrived", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const ask = { action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "Your Secret Santa asks your size." };
+    await hat.run(ask);
+    const first = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "failed");
+    const before = hat.sent.length;
+    expect(await hat.run(ask)).toEqual({ already: true, forwarded: true });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("refuses a relink whose note is too long to send, before changing anything", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const before = hat.file;
+    await expect(hat.run({ action: "leave", contact: pair?.recipient.contact ?? "", note: `{name}\n${"n".repeat(33000)}` })).rejects.toThrow("too long to send");
+    expect(hat.file).toBe(before);
+  });
+
+  it("drops an abandoned message's text from the file", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.refuse.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "STUCK-WISH" });
+    await hat.run({ action: "abandon", value: hat.game.forwards[hat.game.forwards.length - 1].ref });
+    expect(hat.file?.includes("STUCK-WISH")).toBe(false);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
