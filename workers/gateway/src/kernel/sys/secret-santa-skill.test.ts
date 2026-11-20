@@ -16,7 +16,7 @@ type Game = {
   pairs?: Pair[];
   wishes: Record<string, string[]>;
   addresses: Record<string, string>;
-  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean }>;
+  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string }>;
   held?: boolean;
   forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null }>;
 };
@@ -203,7 +203,7 @@ describe.sequential("secret-santa hat script", () => {
   it("counts a match accepted but already failed as failed", async () => {
     const hat = new Hat();
     hat.failing.add("c:bob");
-    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "delivery failed" }] }));
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "delivery failed", ref: expect.any(String) }] }));
   });
 
   it("refuses a redraw until a send that never answered is resent", async () => {
@@ -239,7 +239,7 @@ describe.sequential("secret-santa hat script", () => {
   it("keeps the shell's reason when a send never ran", async () => {
     const hat = new Hat();
     hat.timesOut.add("c:bob");
-    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "Command timed out after 30000ms" }] }));
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "Command timed out after 30000ms", ref: expect.any(String) }] }));
   });
 
   it("won't replace a match whose status can't be read or that can still be retried", async () => {
@@ -285,7 +285,7 @@ describe.sequential("secret-santa hat script", () => {
   it("resends only matches never accepted or failed, with the same text", async () => {
     const hat = new Hat();
     hat.refuse.add("c:bob");
-    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "refused" }] }));
+    expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "refused", ref: expect.any(String) }] }));
     expect(Object.keys(hat.game.sent)).toHaveLength(PEOPLE.length);
 
     const [delivered, lost, queued] = hat.sent;
@@ -675,8 +675,9 @@ describe.sequential("secret-santa hat script", () => {
     hat.refuse.add("c:bob");
     await hat.draw({ people: PEOPLE, exclude: [] });
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    const ref = Object.values(hat.game.sent).find((r) => r.to === "c:bob")?.ref ?? "";
     hat.states.set(hat.sent[0].id, "queued");
-    expect(await hat.run({ action: "abandon", contact: "c:bob" })).toEqual({ abandoned: 1 });
+    expect(await hat.run({ action: "abandon", value: ref })).toEqual({ abandoned: true });
     // Only Bob's message is given up on: another still on its way keeps holding close.
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
     hat.states.set(hat.sent[0].id, "delivered");
@@ -745,8 +746,8 @@ describe.sequential("secret-santa hat script", () => {
     const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
     const giver = pair?.giver.contact ?? "";
     hat.refuse.add(giver);
-    expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match" }] }));
-    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match" }] }));
+    expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match", ref: expect.any(String) }] }));
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ failed: [{ who: "a replaced match", ref: expect.any(String) }] }));
   });
 
   it("remembers a leaver whose leave put the draw on hold", async () => {
@@ -803,6 +804,22 @@ describe.sequential("secret-santa hat script", () => {
     const before = hat.sent.length;
     await hat.run({ action: "resend", contact: giver });
     expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Socks too."]);
+  });
+
+  it("abandons an unnamed forward by the ref its failure gave, without naming who it was for", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    for (const sent of hat.sent) hat.states.set(sent.id, "delivered");
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.refuse.add(pair?.giver.contact ?? "");
+    await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." });
+    const report = await hat.run({ action: "resend" });
+    expect(report).toEqual(expect.objectContaining({ failed: [{ who: "a forwarded message", ref: expect.any(String) }] }));
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    // SAFETY: the line above checked that failed holds one entry with a string ref.
+    const ref = (report as { failed: Array<{ ref: string }> }).failed[0].ref;
+    expect(await hat.run({ action: "abandon", value: ref })).toEqual({ abandoned: true });
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {

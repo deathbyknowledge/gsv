@@ -75,13 +75,13 @@ message send --to CONTACT_ID --message TEXT --responsibility ID --also
 
 Everything that touches the file goes through this one script, run with CodeMode: the draw, keeping addresses and wishes, forwarding them, questions, people leaving, resending and deleting the file at the end. Set `action` and the lines it uses, and leave the rest as they are. It never returns a pair, apart from your own owner's match when they play.
 
-- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one, and says so only when none exists. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
+- **`draw`**: draws one shuffled loop with `crypto.getRandomValues`, so everyone gives once, receives once and nobody draws themselves, and reshuffles until no excluded pair remains; when exclusions leave very few loops, it searches for one. "No draw fits" means none exists; "No draw found yet" means the search ran out of time, so run it again before asking the organiser to drop an exclusion. It saves the pairs and sends each Ship only its own match, with the recipient's address on the remote type and any wishes that arrived before the draw. Set `redraw` to replace an existing draw, for example when someone joins after it; say in `note` that this match replaces the old one. A redraw waits until every earlier message has arrived or failed, so an old match can't land after its replacement.
 - **`resend`**: when `failed` names someone, a forward was not `forwarded`, or a giver says nothing arrived. It sends again only the matches and forwarded messages that were never accepted or that failed, with the same text, and reports how many are delivered and still on their way.
 - **`address`** and **`wish`**: keep what `contact` sent, up to 2,000 characters each. After the draw, they also forward `text` to that person's giver. `notInDraw` means `contact` joined after the draw: what they sent is kept for the redraw that adds them, so check the contact is right and plan that redraw.
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
-- **`abandon`**: stops waiting for the messages to `contact` that are unconfirmed or still on their way, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
+- **`abandon`**: stops waiting for one message, named by the `ref` that `failed` gave it, set as `value`, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
 - **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Running it again for someone who already left returns `left` and changes nothing, and nothing new of theirs is kept until a draw adds them back; `notInDraw` means they were not in the current draw. Tell the leaver's Ship they are out.
@@ -94,8 +94,8 @@ const r12y = "RESPONSIBILITY_ID";
 const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in details.people, "owner" only when the organiser plays
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw
-const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a Ship that confirmed nothing arrived; abandon: whose messages to stop waiting for
-const value = ""; // start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
+const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a Ship that confirmed nothing arrived
+const value = ""; // abandon: the ref from failed; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
 const to = "giver"; // ask: "giver" or "recipient" of contact
 const text = ""; // address, wish, ask: your message to forward after the draw; reveal: the list
 const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw, leave: the match message
@@ -105,13 +105,13 @@ const path = `~/${file}`;
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
 let game = null;
 // CodeMode reads at most 64 KiB, so a file any larger could never be read again, not even to
-// close. Every write, the first included, goes through this check. New content leaves room for
-// the delivery id and error each message not yet sent will add; recording a delivery or a new
-// attempt (`delivery`) only adds that, so it may use the room up to just under the limit.
+// close. Every write, the first included, goes through this check, and always leaves room for
+// the delivery id and error each message not yet sent will add. New content stops well short;
+// recording a delivery, an attempt or a mark (`delivery`) may use the room up to just under it.
 const save = async (delivery = false) => {
   const content = JSON.stringify(game);
   const unsent = [...Object.values(game.sent), ...game.forwards].filter((r) => r.to !== "owner" && !r.deliveryId).length;
-  if (new TextEncoder().encode(content).length > (delivery ? 65000 : 60000 - 400 * unsent)) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
+  if (new TextEncoder().encode(content).length > (delivery ? 65000 : 60000) - 400 * unsent) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
   const written = await fs.write({ target: "gsv", path, content });
   if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
 };
@@ -158,6 +158,8 @@ const pairOf = (side, id) => {
 };
 const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces, deliverTo: game.deliverTo || null });
 const failed = [];
+// An opaque handle for each message, so a failure can be named without saying who it was for.
+const newRef = () => crypto.randomUUID().slice(0, 8);
 let yours = null;
 
 // Every match and forward is recorded with its exact text before it is sent, so a resend repeats
@@ -171,7 +173,7 @@ const prepare = (pair, replaces, unnamed = false) => {
     return;
   }
   const key = `santa:${r12y}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
-  game.sent[pair.giver.contact] = { to: pair.giver.contact, who: unnamed ? "a replaced match" : pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
+  game.sent[pair.giver.contact] = { ref: newRef(), to: pair.giver.contact, who: unnamed ? "a replaced match" : pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
 };
 // A delivery's state, "gone" once its record has expired. A lookup that fails throws, so
 // nothing is replaced on a guess.
@@ -203,7 +205,7 @@ const deliver = async (record) => {
   record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
   await save(true);
   if (!record.lastError) return true;
-  failed.push(record.who.startsWith("a ") ? { who: record.who } : { who: record.who, error: record.lastError });
+  failed.push(record.who.startsWith("a ") ? { who: record.who, ref: record.ref } : { who: record.who, error: record.lastError, ref: record.ref });
   return false;
 };
 // A new attempt is saved before it is sent, with the old id kept in `earlier`, so a run that stops
@@ -233,7 +235,7 @@ const forward = async (other) => {
     await save();
     return { forYourOwner: id };
   }
-  const record = { to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
+  const record = { ref: newRef(), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
   game.forwards.push(record);
   await save();
   return { forwarded: await deliver(record) };
@@ -276,7 +278,7 @@ if (action === "draw") {
     const path = [first];
     let steps = 0;
     const extend = (left) => {
-      if (++steps > 200000) throw new Error("No draw found for these exclusions: ask the organiser to drop one");
+      if (++steps > 200000) throw new Error("No draw found yet for these exclusions, though one may exist: run the draw again, as each search starts differently, and if it keeps failing ask the organiser to drop one");
       if (!left.length) return !banned(path[path.length - 1], first);
       for (const next of shuffled(left)) {
         if (banned(path[path.length - 1], next)) continue;
@@ -323,16 +325,13 @@ if (action === "resend") {
   return report;
 }
 if (action === "abandon") {
-  // Only on the organiser's word, for the one contact whose messages keep failing, once they know
-  // a message still on its way may yet arrive.
-  let abandoned = 0;
-  for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (record.to !== contact || (await settled(record))) continue;
-    record.abandoned = true;
-    abandoned++;
-  }
-  await save();
-  return { abandoned };
+  // Only on the organiser's word, for the one message `failed` named by `value`, once they know
+  // it may yet arrive.
+  const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
+  if (!record) throw new Error(`No message ${value}`);
+  record.abandoned = true;
+  await save(true);
+  return { abandoned: true };
 }
 if (action === "close") {
   // The file holds the only delivery ids: keep it until nothing more can arrive.
@@ -347,7 +346,7 @@ if (action === "told") {
   const record = value === "match" ? game.sent.owner : game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
   if (!record) throw new Error(`No message for your owner numbered ${value}`);
   record.told = true;
-  await save();
+  await save(true);
   return { told: true };
 }
 if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
@@ -373,7 +372,7 @@ if (action === "reveal") {
   if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
   // The list is stored once; each record keeps only where it goes and how it went.
   game.revealText = text;
-  const records = game.pairs.filter((p) => p.giver.contact !== "owner").map((p) => ({ to: p.giver.contact, reveal: true, who: "a forwarded message", key: `santa:${r12y}:${game.round}:reveal:${p.giver.contact}`, attempt: 1, deliveryId: null }));
+  const records = game.pairs.filter((p) => p.giver.contact !== "owner").map((p) => ({ ref: newRef(), to: p.giver.contact, reveal: true, who: "a forwarded message", key: `santa:${r12y}:${game.round}:reveal:${p.giver.contact}`, attempt: 1, deliveryId: null }));
   game.forwards.push(...records);
   // Your owner's copy waits, like any message for them, until you have told them.
   const plays = game.pairs.some((p) => p.giver.contact === "owner");
@@ -431,7 +430,7 @@ throw new Error(`Unknown action: ${action}`);
 
 - `yours` is your own owner's match, set only when they play: after a draw or a relink, tell them their match, the wishes and, on the remote type, the address for the order, and nothing else, then run `told` with `value` "match". Until then it holds up a redraw, a leave and `close`. A resend returns it again, so you can remind them.
 - `forYourOwner` means the message is for your owner: tell them in your conversation, without saying who sent it, then run `told` with that number as `value`. Until then it holds up a redraw, a leave and `close`, and `resend` lists it again under `forYourOwner` with its text. It also shows you who drew your owner or whom they drew; never let that show, to them or anyone else.
-- `failed` lists each giver whose match did not go out, with the reason; a forward that did not go out shows only as "a forwarded message", and a relinked giver's new match only as "a replaced match", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again, and if it confirms nothing arrived, run `resend` with `contact` set to that Ship's contact to send its match, the latest message about each person and the reveal once more. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
+- `failed` lists each giver whose match did not go out, with the reason and a `ref` for `abandon`; a forward that did not go out shows only as "a forwarded message", and a relinked giver's new match only as "a replaced match", never by who it was for or why. In a resend, `onTheWay` messages are still being delivered and failed ones are sent again. `unknown` means the delivery record is gone, as it is about a week after delivery; check with that Ship rather than sending again, and if it confirms nothing arrived, run `resend` with `contact` set to that Ship's contact to send its match, the latest message about each person and the reveal once more. `earlierRetryable` counts older failed attempts of messages that were sent again: People can still retry them for up to a week after they were first sent, so a redraw, a leave and `close` wait until that week is over; tell the organiser when that is. A match or forward that never got a delivery id holds up a redraw, a leave and `close` until it is resent, unless that contact has ended, since nothing reaches an ended contact.
 - Update details with the people and exclusions, never with pairs or addresses.
 
 ### 4. Wishes and questions
