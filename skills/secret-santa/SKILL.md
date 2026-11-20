@@ -48,7 +48,7 @@ Repeat the whole plan back to the organiser and wait for their OK. Then open one
 r12y create --dedupe "secret-santa:SLUG:SWAP_ISO" --title "Secret Santa: EVENT NAME" --due SWAP_ISO --check REMINDER_ISO --details '{"skill":"secret-santa","role":"hat","event":"EVENT NAME","type":"in person|remote","budget":"BUDGET","drawOn":"DRAW DATE","swap":"SWAP DATE AND PLACE","invited":["NAME"],"people":[],"exclude":[]}'
 ```
 
-Then create the Secret Santa file with the hat script's `start` action, `r12y` set to that id and `value` set to where gifts go on the in-person type (empty on the remote type). The file is named after the responsibility, so no two games share one, and `start` writes it only when missing, so running it again never replaces a game. The in-person address lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
+Then create the Secret Santa file with the hat script's `start` action, `r12y` set to that id and `value` set to where gifts go on the in-person type, up to 300 characters (empty on the remote type). The file is named after the responsibility, so no two games share one, and `start` writes it only when missing, so running it again never replaces a game. The in-person address lives only in the file, like every address, and each match message carries it. `people` starts empty. When the organiser plays, add them as `{"name":"NAME","contact":"owner"}`; when they don't, leave them out, so nobody draws them.
 
 `r12y update ID --json '{"details":{...}}'` replaces all details: always send the whole object.
 
@@ -84,7 +84,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`abandon`**: stops waiting for one message, named by the `ref` that `failed` gave it, set as `value`, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
-- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Running it again for someone who already left returns `left` and changes nothing, and nothing new of theirs is kept until a draw adds them back; `notInDraw` means they were not in the current draw. Tell the leaver's Ship they are out.
+- **`leave`**: removes `contact`'s address, wishes and any forwarded message to or about them, even when the relink is refused; it waits, changing nothing, while one of those messages or the matches it replaces is unconfirmed or still on its way. After the draw, their giver gets the leaver's recipient instead, with a new `note`; when that would break the loop it puts the draw on hold, so only `resend`, a redraw and `close` work, and you ask the organiser about the redraw. Running it again for someone who already left returns `left`, finishes sending a relinked match that had not gone out yet, and returns `yours` if your owner still has to hear theirs, and nothing new of theirs is kept until a draw adds them back; `notInDraw` means they were not in the current draw. Tell the leaver's Ship they are out.
 
 Write `note` and `text` yourself, in your own words. `note` gets the recipient's name, their delivery address (remote type only), their wishes and whether it replaces an earlier match, and must give the budget, the swap date and place, where to send the gift (on the in-person type, `deliverTo`), and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -121,6 +121,8 @@ if (!read.ok) {
   // A close that deleted the file but stopped before it could answer is already finished.
   if (missing && action === "close") return { closed: true };
   if (!missing || action !== "start") throw new Error(`Cannot read ${file}: ${read.error}`);
+  // Every match repeats this address, so it must stay short.
+  if (String(value).length > 300) throw new Error("That address is too long: ask for a shorter one");
   const made = await shell(`mkdir -p "$HOME/secret-santa"`, { target: "gsv" });
   if (made.exitCode !== 0) throw new Error(`Cannot create the folder: ${String(made.error || made.output).trim().slice(0, 200)}`);
   game = { round: 0, deliverTo: value, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [], forwardCount: 0, left: [] };
@@ -394,7 +396,12 @@ if (action === "leave") {
   // Each path below saves once, so the file never holds the leaver's removal without the hold or
   // the relink that goes with it. `left` remembers who has gone, so running it again is safe.
   game.left = game.left ?? [];
-  if (game.left.includes(contact)) return { left: true };
+  if (game.left.includes(contact)) {
+    // Already gone: finish a relink that stopped before its new match went out or reached your owner.
+    for (const record of Object.values(game.sent)) if (record.to !== "owner" && record.who === "a replaced match" && !record.deliveryId) await deliver(record);
+    const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
+    return { left: true, failed, yours: own ? matchOf(own, game.sent.owner.replaces) : null };
+  }
   delete game.addresses[contact];
   delete game.wishes[contact];
   game.forwards = game.forwards.filter((f) => !affected.includes(f));

@@ -358,7 +358,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent[before].message.startsWith("New match")).toBe(true);
     // Running it again is safe, and someone never in the draw is named as such.
     const after = hat.sent.length;
-    expect(await hat.run({ action: "leave", contact: leaver })).toEqual({ left: true });
+    expect(await hat.run({ action: "leave", contact: leaver })).toEqual({ left: true, failed: [], yours: null });
     expect(hat.sent).toHaveLength(after);
     expect(await hat.run({ action: "leave", contact: "c:nobody" })).toEqual({ left: true, notInDraw: true });
   });
@@ -630,7 +630,7 @@ describe.sequential("secret-santa hat script", () => {
     await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
   });
 
-  it("starts the file only when missing, through the same size check", async () => {
+  it("starts the file only when missing", async () => {
     const hat = new Hat();
     hat.file = null;
     expect(await hat.run({ action: "start", value: "Office, Rua Q 7" })).toEqual({ started: true });
@@ -639,10 +639,6 @@ describe.sequential("secret-santa hat script", () => {
     expect(await hat.run({ action: "start", value: "Somewhere else" })).toEqual({ started: true });
     expect(hat.game).toEqual(expect.objectContaining({ deliverTo: "Office, Rua Q 7", addresses: { "c:bob": "Rua Z 3, Faro" } }));
 
-    const big = new Hat();
-    big.file = null;
-    await expect(big.run({ action: "start", value: "x".repeat(61000) })).rejects.toThrow("Too much to keep");
-    expect(big.file).toBeNull();
   });
 
   it("holds a new answer until the earlier one to the same person has arrived", async () => {
@@ -820,6 +816,26 @@ describe.sequential("secret-santa hat script", () => {
     const ref = (report as { failed: Array<{ ref: string }> }).failed[0].ref;
     expect(await hat.run({ action: "abandon", value: ref })).toEqual({ abandoned: true });
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("finishes a relink that stopped before its new match went out", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    hat.timesOut.add(giver);
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    hat.timesOut.clear();
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" })).toEqual(expect.objectContaining({ left: true, failed: [] }));
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: expect.stringMatching(/^New match/) })]);
+  });
+
+  it("refuses an in-person address too long to repeat in every match", async () => {
+    const hat = new Hat();
+    hat.file = null;
+    await expect(hat.run({ action: "start", value: "x".repeat(301) })).rejects.toThrow("too long");
+    expect(hat.file).toBeNull();
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
