@@ -93,7 +93,7 @@ Run one hat action at a time, never two at once: two draws running together coul
 - **`draw`** reads the game file and draws one shuffled loop, so everyone gives once, receives once and nobody draws themselves, keeping excluded pairs apart. It saves the pairs and sends each Ship only its own match. "No draw fits" means none exists; "No draw found yet" means the search ran out of time, so run it again before asking the organiser to drop an exclusion.
 - **Running `draw` again** sends the same draw again, never a new one: a match that went out is not sent twice, and one that failed is sent again. Run it again when `failed` names someone, when a run stopped before it answered, or for a "Resolve contact delivery" responsibility about a match, which you then resolve without saying which contact it names.
 - **`draw` with `redraw` set to true** draws everyone again, for someone who joins or leaves after the draw: update the game file first, set `round` to the round the last draw returned, and tell the organiser everyone gets a new match. Running the same redraw again, with the same `round`, sends that redraw again rather than drawing a third time. Each match carries the next round; put `{round}` in the note and say this match replaces the earlier one, so each Ship keeps the newest.
-- **`ask`** forwards `text` to the giver or the recipient of `contact`, as `to` says (`"giver"` or `"recipient"`). Set `value` to the wish or question as the person sent it, so running it again is not sent twice however you word `text`. `forwarded: false` means it did not go out: if its `state` is `failed`, reword it and run it again; otherwise run it again later. When the other side is your own owner, it returns `forYourOwner` instead: tell them in your conversation, without saying who sent it.
+- **`ask`** forwards `text` to the giver or the recipient of `contact`, as `to` says (`"giver"` or `"recipient"`). Set `value` to the wish or question as the person sent it, so running it again is not sent twice however you word `text`; for a short answer such as "No", include the question it answers, so two answers are never taken for one. `forwarded: false` means it did not go out: run it again later with the same `value` and `text`, which never sends a copy twice. If it still says `failed`, that Ship can't be reached: tell the organiser, as for a "Resolve contact delivery" responsibility. When the other side is your own owner, it returns `forYourOwner` instead: tell them in your conversation, without saying who sent it.
 
 Write `note` and `text` yourself, in your own words. In `note`, put `{name}` where the recipient's name goes, `{wishes}` for their wishes, on the remote type `{address}` for their delivery address, on the in-person type `{deliverTo}` for where to bring the gift, and `{round}` for the draw's round. The script fills them in for each match and leaves out a line whose placeholder has nothing to fill, such as wishes nobody sent, so keep each placeholder on the line that introduces it. `note` must give the budget, the swap date and place, and that only the giver knows; say a recipient's address is only for the order. `text` never names the sender, and drops signatures, handles and anything else that could identify them.
 
@@ -106,13 +106,13 @@ A participant's Ship may send a wish or a question at any time, also before the 
 
 ### 5. Close
 
-After the swap, ask the organiser whether they want a reveal. Reveal only if every participant agreed through their Ship: then read the draw file, write the list with everyone's names, and send it to each Ship; when your owner plays, tell them too. Otherwise nobody ever sees it. Delete the game file and the draw file, which hold the wishes, addresses and pairs:
+After the swap, ask the organiser whether they want a reveal. Reveal only if every participant agreed through their Ship: then read the draw file, write the list with everyone's names, and send it to each Ship; when your owner plays, tell them too. Otherwise nobody ever sees it. Tell each Ship in the game file the Secret Santa is closed, then delete the game file and the draw file, which hold the wishes, addresses and pairs; deleting last means a run that stops partway still has everyone to tell:
 
 ```bash
 rm -f ~/secret-santa/ID.json ~/secret-santa/ID.draw.json
 ```
 
-Then tell each Ship the Secret Santa is closed and resolve, with `reveal` set to whether the list went out:
+Then resolve, with `reveal` set to whether the list went out:
 
 ```bash
 r12y resolve ID --json '{"outcome":"swapped","reveal":true|false}'

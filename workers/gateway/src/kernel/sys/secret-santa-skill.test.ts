@@ -105,7 +105,7 @@ class Hat {
     const key = option(command, "delivery-id") ?? "";
     if (this.timesOut.has(to)) return { status: "failed", output: "", error: "Command timed out after 30000ms" };
     const existing = this.deliveries.get(key);
-    if (existing && existing.message !== message) return { status: "completed", exitCode: 1, output: "Contact delivery key was used with different input" };
+    if (existing && existing.message !== message) return { status: "completed", exitCode: 1, output: "Contact delivery idempotency key payload changed" };
     const delivery = existing ?? { id: `delivery:${this.deliveries.size + 1}`, to, message, state: this.failing.has(to) ? "failed" : "queued" };
     this.deliveries.set(key, delivery);
     return { status: "completed", exitCode: 0, output: `accepted=true\ndelivery_id=${delivery.id}\ndelivery_state=${delivery.state}\n` };
@@ -252,6 +252,14 @@ describe("secret santa hat script", () => {
     await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient asks: tea?" });
     await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient wonders whether you like tea." });
     expect(hat.received(bobsGiver).filter((m) => m.includes("tea"))).toHaveLength(1);
+  });
+
+  it("refuses an old round once the people changed since that redraw", async () => {
+    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
+    await hat.run({});
+    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
+    hat.game = { people: PEOPLE.slice(0, 5) };
+    await expect(hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).rejects.toThrow("set round to 2");
   });
 
   it("refuses a person whose contact is not a name, before saving a draw", async () => {

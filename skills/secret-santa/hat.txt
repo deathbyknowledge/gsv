@@ -60,7 +60,9 @@ if (action === "ask") {
   // words `text`. If that copy failed for good, a reworded `text` goes under its own key.
   const key = `santa:${id}:${draw.round}:ask:${await fingerprint(value || text)}`;
   let state = await send(other, text, key);
-  if (state === "failed" && value) state = await send(other, text, `${key}:${await fingerprint(text)}`);
+  // A copy that failed for good goes again under a key of its own wording. A rerun keeps the same
+  // `text`: under the same key, new wording is refused rather than sent as a second copy.
+  if (value && state === "failed") state = await send(other, text, `${key}:${await fingerprint(text)}`);
   return { forwarded: sentOk(state), state };
 }
 
@@ -68,6 +70,9 @@ const previous = await readJson(`${id}.draw.json`);
 if (redraw && previous && (from < 1 || (from !== previous.round && from !== previous.round - 1))) throw new Error(`Set round to ${previous.round}, the round this redraw replaces`);
 // A redraw run again, naming the round it already replaced, sends that redraw again rather than
 // drawing everyone a third time.
+// What a redraw drew from, so a rerun naming an old round is accepted only for the same people.
+const inputOf = async (game) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([game?.people, game?.exclude ?? []]))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+if (redraw && previous && from === previous.round - 1 && previous.input !== await inputOf(await readJson(`${id}.json`))) throw new Error(`Round ${from} was already replaced and the people or exclusions changed since: set round to ${previous.round}`);
 if (previous && (!redraw || from === previous.round - 1)) {
   // Sending the same draw again: a match already accepted comes back as it is, and one that failed
   // goes again under its next key, saved first so a later run reuses that key.
@@ -160,6 +165,7 @@ const ordered = [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -
 const owned = ordered.find((p) => p.giver.contact === "owner");
 const draw = {
   round,
+  input: await inputOf(game),
   pairs: ordered.map((p) => ({ giver: p.giver.contact, recipient: p.recipient.contact })),
   matches: ordered.filter((p) => p !== owned).map((p) => ({ name: p.giver.name, to: p.giver.contact, key: `santa:${id}:${round}:${p.giver.contact}`, attempt: 1, message: render(p.recipient) })),
   yours: owned ? render(owned.recipient) : null,
