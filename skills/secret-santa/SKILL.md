@@ -88,7 +88,7 @@ EOF
 )"
 ```
 
-It never returns a pair, apart from your own owner's match when they play.
+Run one hat action at a time, never two at once: two draws running together could each save their own pairs. It never returns a pair, apart from your own owner's match when they play.
 
 - **`draw`** reads the game file and draws one shuffled loop, so everyone gives once, receives once and nobody draws themselves, keeping excluded pairs apart. It saves the pairs and sends each Ship only its own match. "No draw fits" means none exists; "No draw found yet" means the search ran out of time, so run it again before asking the organiser to drop an exclusion.
 - **Running `draw` again** sends the same draw again, never a new one: a match that went out is not sent twice, and one that failed is sent again. Run it again when `failed` names someone, when a run stopped before it answered, or for a "Resolve contact delivery" responsibility about a match, which you then resolve without saying which contact it names.
