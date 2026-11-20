@@ -68,6 +68,8 @@ class Hat {
   timesOut = new Set<string>();
   lookupFails = false;
   writes: string[] = [];
+  // Set to have another run write the file during the next send, as two runs at once would.
+  interfere = false;
   ended = new Set<string>();
   removed: string[] = [];
   private readonly source = hatScript();
@@ -131,6 +133,11 @@ class Hat {
     }
     if (!command.startsWith("message send ")) throw new Error(`unexpected command: ${command}`);
     const to = option(command, "to") ?? "";
+    if (this.interfere && this.file) {
+      this.interfere = false;
+      const other = JSON.parse(this.file);
+      this.file = JSON.stringify({ ...other, version: (other.version ?? 0) + 1 });
+    }
     if (this.timesOut.has(to)) return { status: "failed", output: "", error: "Command timed out after 30000ms" };
     if (this.refuse.has(to)) return { status: "completed", exitCode: 1, output: "refused" };
     const sent = { to, message: option(command, "message") ?? "", key: option(command, "delivery-id"), id: `delivery:${this.sent.length + 1}` };
@@ -307,7 +314,7 @@ describe.sequential("secret-santa hat script", () => {
     expect(resent.map((s) => s.to).sort()).toEqual(["c:bob", lost.to].sort());
     expect(resent.find((s) => s.to === lost.to)).toEqual({ ...lost, key: (lost.key ?? "").replace(/:1$/, ":2"), id: expect.any(String) });
     expect(report).toEqual({
-      round: 1, delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, earlierRetryable: 0, failed: [], forYourOwner: [],
+      round: 1, delivered: 1, onTheWay: 1, unknown: PEOPLE.length - 5, resent: 2, retryable: 0, earlierRetryable: 0, failed: [], forYourOwner: [],
       yours: expect.objectContaining({ replaces: false }),
     });
   });
@@ -1403,6 +1410,46 @@ describe.sequential("secret-santa hat script", () => {
     const before = hat.sent.length;
     expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Your recipient wishes for tea." })).toEqual({ kept: true, already: true, forwarded: true });
     expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["They'd love tea."]);
+  });
+
+  it("stops instead of overwriting a file another run changed", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    hat.interfere = true;
+    await expect(hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." })).rejects.toThrow("changed while this ran");
+  });
+
+  it("recognises a repeated question by what the person asked, however Ship words it", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const ask = { action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", value: "what size are you?" };
+    await hat.run({ ...ask, text: "Your Secret Santa asks your size." });
+    const before = hat.sent.length;
+    expect(await hat.run({ ...ask, text: "Your Secret Santa would like to know your size." })).toEqual({ already: true, forwarded: true });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("refuses an old round with different people instead of calling it done", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE.slice(0, 5), exclude: [] });
+    await hat.draw({ people: PEOPLE.slice(0, 5), exclude: [], redraw: true, round: 1 });
+    await expect(hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 1 })).rejects.toThrow("set round to 2");
+  });
+
+  it("counts a failed latest copy that can still be retried", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "failed");
+    hat.retryable.add(second.id);
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ retryable: 1 }));
   });
 
   it("never sends an abandoned forward again when it is repeated", async () => {

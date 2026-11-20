@@ -49,6 +49,11 @@ const save = async (delivery = false) => {
     }
     for (const r of records()) if (r.arrived && r.to !== "owner" && r.message !== undefined) delete r.message;
   }
+  // Two runs at once would overwrite each other, so a save checks the file still holds the version
+  // this run last read or wrote.
+  const current = await fs.read({ target: "gsv", path });
+  if (current.ok && JSON.parse(current.content).version !== game.version) throw new Error("The Secret Santa file changed while this ran: run one hat action at a time, then run this again");
+  game.version = (game.version ?? 0) + 1;
   const content = JSON.stringify(game);
   if (new TextEncoder().encode(content).length > limit()) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
   const written = await fs.write({ target: "gsv", path, content });
@@ -187,11 +192,10 @@ const recover = async (record, expired = false) => {
   let olderOnTheWay = false;
   for (const id of record.earlier ?? []) {
     const { state } = await statusOf(id);
-    if (state === "delivered") record.arrived = true;
+    // Keep an arrival before the next lookup, which may fail.
+    if (state === "delivered" && !record.arrived) { record.arrived = true; await save(true); }
     else if (state === "queued") olderOnTheWay = true;
   }
-  // Keep an arrival before the next lookup, which may fail.
-  if (record.arrived) await save(true);
   if (!record.deliveryId) {
     // Sent only when no earlier copy arrived or is on its way again.
     if (!record.arrived && !olderOnTheWay) await deliver(record);
@@ -220,9 +224,9 @@ const fence = async (other) => {
     throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
   }
 };
-// What identifies a forward when it is sent again: the wish or address itself, since Ship may word
-// its text differently each time, or a question's own text.
-const source = () => digest(action === "ask" ? text : value);
+// What identifies a forward when it is sent again: the wish, address or question as the person
+// sent it (`value`), since Ship may word its text differently each time.
+const source = () => digest(action === "ask" ? value || text : value);
 // The same message sent again, for example after a run that stopped: finish what the first run
 // started instead of keeping or sending it twice.
 const resume = async (other) => {
@@ -267,6 +271,9 @@ if (action === "draw") {
     // Draws start at round 1, so a missing round is never taken for a finished one.
     if (round < 1) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
     if (round < game.round) {
+      // Only the same redraw run again counts; different people or exclusions are a new redraw.
+      const sum = await digest(JSON.stringify([people, exclude]));
+      if (game.redrawn?.from !== round || game.redrawn.sum !== sum) throw new Error(`Round ${round} was already replaced: set round to ${game.round} for a new redraw`);
       // Finish sending any new match the earlier run saved but never sent, under its own key.
       for (const record of Object.values(game.sent)) if (record.to !== "owner") await recover(record);
       await save(true);
@@ -331,6 +338,7 @@ if (action === "draw") {
     pairs = loop(path);
   }
   // Someone who left stays out, so nothing late of theirs is kept, unless this draw adds them back.
+  if (redraw) game.redrawn = { from: game.round, sum: await digest(JSON.stringify([people, exclude])) };
   Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: (game.left ?? []).filter((c) => !people.some((p) => p.contact === c)) });
   // Records are kept, sent and reported in contact order, never in the loop's order, which would
   // show who follows whom.
@@ -342,7 +350,7 @@ if (action === "draw") {
 }
 if (action === "resend") {
   const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { round: game.round, delivered: 0, onTheWay: 0, unknown: 0, resent: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
+  const report = { round: game.round, delivered: 0, onTheWay: 0, unknown: 0, resent: 0, retryable: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
   for (const record of [...Object.values(game.sent), ...game.forwards]) {
     if (record.abandoned) continue;
     if (record.to === "owner") {
@@ -362,7 +370,7 @@ if (action === "resend") {
       if (!record.arrived && !olderOnTheWay) { report.resent++; await deliver(record); }
       continue;
     }
-    const { state } = await statusOf(record.deliveryId);
+    const { state, retryable } = await statusOf(record.deliveryId);
     if (!record.reveal && record.message === undefined) { report.delivered++; continue; }
     // A confirmed-missing message goes again, unless it was an address a later one corrected;
     // wishes and questions add up, so each goes again.
@@ -371,6 +379,8 @@ if (action === "resend") {
     if (!record.arrived && !olderOnTheWay && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
     // A latest copy still on its way holds things up even when an older one arrived, so show it.
     else if (state === "queued") report.onTheWay++;
+    // A failed latest copy People can still retry also holds things up for its week.
+    else if (state === "failed" && retryable) report.retryable++;
     else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
     else report.unknown++;
   }
