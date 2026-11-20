@@ -25,6 +25,7 @@
  *   /think     Ship starts the first step and holds it, with no words yet, until /reply or /stream
  *   /stream    a multi-paragraph answer streams in, word by word (finishing an open step first)
  *   /reply     a plain reply is committed (finishing an open step first)
+ *   /table     a reply with a table, linking a note that has one too
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
@@ -185,6 +186,11 @@ const WELCOME = "Hi, I'm Ship. I'm here to do the things you'd rather not deal w
 const FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. I know nothing about them yet, so the brief says to introduce myself briefly, ask them to introduce themselves, then yield and wait for the reply.";
 const SHORT_REPLY = "Done. The action items are in your notes under Mara, and the reminder is set for Wednesday evening.";
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
+const TABLE_REPLY = [
+  "Here are the plans from the pricing call, side by side.",
+  "| Plan | Monthly | Seats | Support |\n| --- | ---: | ---: | --- |\n| Starter | €12 | 3 | Email |\n| Studio | €29 | 10 | Email and chat |\n| Agency | €79 | 50 | A named contact |\n| Enterprise | On request | Unlimited | A named contact, around the clock |",
+  "Studio covers the team you have now; Agency only pays off past twelve people. Mara's notes from the call are in /home/esteve/notes/calls/mara-pricing.md.",
+].join("\n\n");
 
 /*
  * The starters sketch: the welcome offers two things Ship can start right now and a way to get to know
@@ -463,6 +469,7 @@ type Step = {
 };
 
 const MARA_NOTES = "# Mara\n\n- Deck for Thursday (reminder Wednesday evening)\n- Intro to Lena\n- Follow up on pricing\n";
+const PRICING_NOTES = "# Pricing call with Mara\n\nThree options for the studio licence, as Mara described them.\n\n| Option | Monthly | Annual | Includes |\n| --- | ---: | ---: | --- |\n| Studio | €29 | €290 | 10 seats, email and chat support |\n| Agency | €79 | €790 | 50 seats, a named contact |\n| Agency plus | €119 | €1,190 | 50 seats, a named contact, onboarding sessions |\n\nShe can hold the annual price until the end of the month.\n";
 const NOTES = "# Backups\n\nStudio drive: /Volumes/Studio, 1.8 TB.\nNightly rsync to /Volumes/Backups at 02:00 (launchd).\nKeep 30 days; caches under Library/Caches/Builds are not backed up.\n\nFailing since Monday: drive at 95%, rsync exits before finishing.\n";
 
 const BACKUP_SCRIPT = `#!/bin/zsh
@@ -549,6 +556,7 @@ function mockFile(path: string): MockFile {
   const text = (content: string, contentType = "text/markdown"): MockFile => ({ contentType, bytes: () => new TextEncoder().encode(content) });
   switch (path) {
     case "/home/esteve/notes/mara.md": return text(MARA_NOTES);
+    case "/home/esteve/notes/calls/mara-pricing.md": return text(PRICING_NOTES);
     case "/home/esteve/notes/backup.sh": return text(BACKUP_SCRIPT, "text/x-shellscript");
     case "/home/esteve/notes/sync.log": return text(syncLog(), "text/plain");
     case "/home/esteve/notes/drive.png": return { contentType: "image/png", bytes: () => Uint8Array.from(atob(DRIVE_PNG), (char) => char.charCodeAt(0)) };
@@ -1136,9 +1144,9 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     if (!run.superseded) starters = move.next;
     return;
   }
-  await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
+  await wait(jitter(trigger === "/stream" || trigger === "/reply" || trigger === "/table" ? 600 : 1000));
   if (!live(run)) return;
-  await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
+  await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : trigger === "/table" ? TABLE_REPLY : ECHO_REPLY, trigger === "/stream");
 }
 
 /** What the person answered in the message that opened this run, as they wrote or tapped it. */
