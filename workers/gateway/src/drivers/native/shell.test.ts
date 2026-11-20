@@ -3649,6 +3649,30 @@ describe("native administration shell commands", () => {
     expect(cancel).toHaveBeenCalledWith("CodeMode response completed");
   });
 
+  it("runs a built-in skill's script with JSON arguments from a quoted heredoc", async () => {
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "fs.read") return { type: "res", id: frame.id, ok: true, data: { ok: false, error: "not found" } };
+      if (frame.call === "shell.exec") return { type: "res", id: frame.id, ok: true, data: { status: "completed", exitCode: 1, output: "" } };
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec({
+      input: [
+        `codemode /sys/skills.d/secret-santa/hat.txt --args-json "$(cat <<'EOF'`,
+        `{"action": "close", "r12y": "r12y:one", "note": "You're {name}'s Secret Santa: $20"}`,
+        "EOF",
+        ')"',
+      ].join("\n"),
+    }, ctx, { request });
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain('"closed": true');
+    expect(request.mock.calls.map(([frame]) => frame.call)).toEqual(["sys.mcp.list", "fs.read", "shell.exec"]);
+    expect(request.mock.calls[1][0].args).toMatchObject({ path: "~/secret-santa/one.json" });
+  });
+
   it("shows mcp command usage", async () => {
     const result = await handleShellExec(
       { input: "mcp --help" },

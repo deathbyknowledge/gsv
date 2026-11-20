@@ -4,8 +4,8 @@ import { executeCodeMode } from "../../process/codemode";
 import type { JsonObject, JsonValue } from "@humansandmachines/gsv/protocol";
 import { readSystemSkillPath } from "./builtin-skills";
 
-// Runs the hat script from the built-in Secret Santa skill in the real CodeMode runtime,
-// with stand-ins for shell and fs, so the draw, privacy and resend promises stay true.
+// Runs the built-in Secret Santa skill's hat script in the real CodeMode runtime, with stand-ins
+// for shell and fs, so the draw, privacy and resend promises stay true.
 
 type Person = { name: string; contact: string };
 type Sent = { to: string; message: string; key: string | null; id: string };
@@ -30,17 +30,19 @@ type Settings = {
   value?: string;
   to?: string;
   text?: string;
+  note?: string;
 };
 
 const PEOPLE: Person[] = ["owner", "c:bob", "c:carla", "c:dev", "c:eva", "c:fei"]
   .map((contact, index) => ({ name: ["Ana", "Bob", "Carla", "Dev", "Eva", "Fei"][index], contact }));
-const NOTE = "const note = ({ name, address, wishes, replaces }) => [replaces ? \"New match\" : \"Match\", name, address ?? \"\", wishes.join(\"/\")].join(\"|\");";
+// A redraw and a leave send matches that replace earlier ones, so Ship says so in their note.
+const NOTE = "Match\n{name}\n{address}\n{wishes}";
+const NEW_NOTE = "New match\n{name}\n{address}\n{wishes}";
 
 function hatScript(): string {
-  const skill = readSystemSkillPath("/sys/skills.d/secret-santa/SKILL.md");
-  if (skill.kind !== "file") throw new Error("missing secret-santa skill");
-  const start = skill.content.indexOf("```js\n") + "```js\n".length;
-  return skill.content.slice(start, skill.content.indexOf("```", start));
+  const script = readSystemSkillPath("/sys/skills.d/secret-santa/hat.txt");
+  if (script.kind !== "file") throw new Error("missing secret-santa hat script");
+  return script.content;
 }
 
 function unquote(value: string): string {
@@ -70,11 +72,9 @@ class Hat {
   private readonly source = hatScript();
 
   async run(settings: Settings): Promise<JsonValue> {
-    let body = this.source.replace(/^const note = .*$/m, NOTE);
-    for (const [name, value] of Object.entries(settings)) {
-      body = body.replace(new RegExp(`^const ${name} = .*$`, "m"), `const ${name} = ${JSON.stringify(value)};`);
-    }
-    const run = await executeCodeMode(env, body, (call, args) => this.syscall(call, args));
+    const note = settings.redraw === true || settings.action === "leave" ? NEW_NOTE : NOTE;
+    const args = { action: "draw", r12y: "RESPONSIBILITY_ID", note, ...settings };
+    const run = await executeCodeMode(env, this.source, (call, callArgs) => this.syscall(call, callArgs), { args });
     if (run.status !== "completed") throw new Error(run.error);
     return run.result ?? null;
   }
@@ -176,7 +176,7 @@ describe.sequential("secret-santa hat script", () => {
       expect(sent.message.includes("Palma")).toBe(sent.to === giver?.contact);
     }
     if (giver?.contact !== "owner") {
-      expect(hat.sent.find((s) => s.to === giver?.contact)?.message).toBe("Match|Carla|Rua X 1, Palma|A dotted notebook");
+      expect(hat.sent.find((s) => s.to === giver?.contact)?.message).toBe("Match\nCarla\nRua X 1, Palma\nA dotted notebook");
     }
   });
 
@@ -566,7 +566,7 @@ describe.sequential("secret-santa hat script", () => {
     await hat.draw({ people: PEOPLE, exclude: [], redraw: true });
     const giver = (hat.game.pairs ?? []).find((p) => p.recipient.contact === "c:fei")?.giver.contact;
     if (giver !== "owner") {
-      expect(hat.sent.find((s) => s.to === giver && s.message.startsWith("New match"))?.message).toBe("New match|Fei|Rua V 5, Lagos|Jam");
+      expect(hat.sent.find((s) => s.to === giver && s.message.startsWith("New match"))?.message).toBe("New match\nFei\nRua V 5, Lagos\nJam");
     }
   });
 
@@ -1085,5 +1085,36 @@ describe.sequential("secret-santa hat script", () => {
     const hat = new Hat();
     hat.file = null;
     await expect(hat.run({ people: PEOPLE, exclude: [] })).rejects.toThrow("Cannot read secret-santa/RESPONSIBILITY_ID.json: not found");
+  });
+
+  it("fills Ship's note for each match, leaving out a line with nothing to fill", async () => {
+    const hat = new Hat();
+    await hat.run({ action: "address", contact: "c:bob", value: "Rua X 1, Palma" });
+    await hat.run({ action: "wish", contact: "c:bob", value: "Jam" });
+    await hat.run({ action: "wish", contact: "c:bob", value: "Socks" });
+    const note = "You have {name}, it's a secret.\nSend it to {address}.\nThey'd like: {wishes}\nBring it to {deliverTo}.";
+    await hat.draw({ people: PEOPLE.filter((p) => p.contact !== "owner"), exclude: [], note });
+    const giverOf = (contact: string) => hat.game.pairs?.find((p) => p.recipient.contact === contact)?.giver.contact;
+    const matchFor = (contact: string) => hat.sent.find((s) => s.to === giverOf(contact))?.message;
+    expect(matchFor("c:bob")).toBe("You have Bob, it's a secret.\nSend it to Rua X 1, Palma.\nThey'd like: Jam\nSocks");
+    expect(matchFor("c:carla")).toBe("You have Carla, it's a secret.");
+  });
+
+  it("refuses a note without the name or with an unknown placeholder, before keeping or sending anything", async () => {
+    const hat = new Hat();
+    const before = hat.file;
+    await expect(hat.draw({ people: PEOPLE, exclude: [], note: "You have a match!" })).rejects.toThrow("Set note to the match message, with {name}");
+    await expect(hat.draw({ people: PEOPLE, exclude: [], note: "You have {name}. Budget: {budget}" })).rejects.toThrow("note has no {budget}");
+    expect([hat.file, hat.writes, hat.sent]).toEqual([before, [], []]);
+  });
+
+  it("refuses an argument it does not take, before any call", async () => {
+    const calls: string[] = [];
+    const run = await executeCodeMode(env, hatScript(), async (call) => {
+      calls.push(call);
+      return null;
+    }, { args: { action: "draw", r12y: "r12y:one", people: PEOPLE, recipient: "c:bob" } });
+    expect(run).toEqual(expect.objectContaining({ status: "failed", error: expect.stringContaining("Unknown argument recipient") }));
+    expect(calls).toEqual([]);
   });
 });

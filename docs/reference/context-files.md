@@ -178,7 +178,10 @@ agent-specific skills.
 The gateway serves the built-in skills from the bundled `skills/` directory at
 `/sys/skills.d`. They are read-only and change only with a deployment. Their
 names are reserved: `skills create` refuses one, and a home skill that claims a
-built-in name is not listed or resolved.
+built-in name is not listed or resolved. A built-in skill can ship a CodeMode
+script beside its `SKILL.md` as a plain-text file, which a process runs on `gsv`
+with `codemode /sys/skills.d/<skill>/<script>.txt --args-json '<json>'`, so a long
+procedure is not copied into each run.
 
 Homes used to receive copies of the built-in skills. The first time a process
 loads its prompt after an upgrade, the gateway removes those copies from the
