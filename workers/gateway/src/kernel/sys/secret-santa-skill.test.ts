@@ -1358,6 +1358,35 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.game.sent[records[0][0]]).toEqual(expect.objectContaining({ arrived: true }));
   });
 
+  it("refuses a person with no contact before drawing", async () => {
+    const hat = new Hat();
+    await expect(hat.run({ people: [...PEOPLE.slice(0, 3), { name: "Nobody", contact: "" }], exclude: [] })).rejects.toThrow("needs a name and a contact");
+    expect(hat.sent).toHaveLength(0);
+  });
+
+  it("leaves expired matches waiting when a finished redraw is run again", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.draw({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    hat.defaultState = null;
+    const before = hat.sent.length;
+    await hat.run({ people: PEOPLE, exclude: [], redraw: true, round: 1 });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("shows a latest copy still on its way even when an older one arrived", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "queued");
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ onTheWay: 1 }));
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });

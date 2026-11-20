@@ -8,6 +8,7 @@ const { action, r12y, people, exclude, redraw, round, contact, value, to, text, 
 if (!r12y) throw new Error("Set r12y to the Secret Santa responsibility");
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
 if (!Array.isArray(people) || !Array.isArray(exclude)) throw new Error("people and exclude must be lists");
+if (!people.every((p) => p && typeof p.name === "string" && p.name && typeof p.contact === "string" && p.contact)) throw new Error("Each person needs a name and a contact");
 if (to !== "giver" && to !== "recipient") throw new Error('to must be "giver" or "recipient"');
 if (!Number.isInteger(round) || round < 0) throw new Error("round must be a whole number");
 // The match message: `note` with {name}, {address}, {wishes} and {deliverTo} filled in. A line whose
@@ -178,7 +179,9 @@ const rotate = async (record) => {
 };
 // Finish a message a stopped run left behind: send it if it never went, send it again if its
 // latest attempt failed or expired unseen, and leave it if any attempt arrived.
-const recover = async (record) => {
+// An expired latest attempt proves nothing, so it waits for that Ship's word unless `expired` says
+// to send it again (a relink, where the giver must not keep the leaver's match).
+const recover = async (record, expired = false) => {
   if (record.abandoned || record.retired) return;
   let olderOnTheWay = false;
   for (const id of record.earlier ?? []) {
@@ -186,6 +189,8 @@ const recover = async (record) => {
     if (state === "delivered") record.arrived = true;
     else if (state === "queued") olderOnTheWay = true;
   }
+  // Keep an arrival before the next lookup, which may fail.
+  if (record.arrived) await save(true);
   if (!record.deliveryId) {
     // Sent only when no earlier copy arrived or is on its way again.
     if (!record.arrived && !olderOnTheWay) await deliver(record);
@@ -193,7 +198,7 @@ const recover = async (record) => {
   }
   const { state } = await statusOf(record.deliveryId);
   if (state === "delivered") record.arrived = true;
-  else if (!record.arrived && !olderOnTheWay && (state === "failed" || state === "gone")) await rotate(record);
+  else if (!record.arrived && !olderOnTheWay && (state === "failed" || (expired && state === "gone"))) await rotate(record);
 };
 // A correction, a new wish or a new answer must not be overtaken by the match or an earlier
 // message about the same person still on its way, or sent again after it. It waits, before
@@ -356,8 +361,9 @@ if (action === "resend") {
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
     // One that already arrived through an earlier attempt is not sent again.
     if (!record.arrived && !olderOnTheWay && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
-    else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
+    // A latest copy still on its way holds things up even when an older one arrived, so show it.
     else if (state === "queued") report.onTheWay++;
+    else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
     else report.unknown++;
   }
   await save(true);
@@ -483,7 +489,7 @@ if (action === "leave") {
   if (game.left.includes(contact)) {
     // Already gone: finish a relink that stopped before its new match went out or reached your owner.
     for (const record of Object.values(game.sent)) {
-      if (record.to !== "owner" && record.who === "a replaced match") await recover(record);
+      if (record.to !== "owner" && record.who === "a replaced match") await recover(record, true);
     }
     await save(true);
     const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
