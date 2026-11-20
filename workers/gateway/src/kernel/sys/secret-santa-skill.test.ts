@@ -1311,6 +1311,34 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.game.sent[pair?.giver.contact ?? ""]).toEqual(expect.objectContaining({ arrived: true }));
   });
 
+  it("still sends a message a stopped run saved but never sent after a Ship confirms the rest", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const giver = Object.values(hat.game.sent).find((r) => r.to && r.to !== "owner")?.to ?? "";
+    const game = hat.game;
+    const pending = { ref: "rp", kind: "ask", to: giver, about: "c:z", who: "a forwarded message", key: "kp", message: "Saved, never sent.", attempt: 1, deliveryId: null };
+    hat.file = JSON.stringify({ ...game, forwards: [...game.forwards, pending] });
+    await hat.run({ action: "arrived", contact: giver });
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Saved, never sent."]);
+  });
+
+  it("holds a failed latest attempt while an older copy is on its way again", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "queued");
+    hat.states.set(second.id, "failed");
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent).toHaveLength(before);
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });

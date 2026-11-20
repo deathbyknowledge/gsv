@@ -191,7 +191,7 @@ const recover = async (record) => {
   }
   const { state } = await statusOf(record.deliveryId);
   if (state === "delivered") record.arrived = true;
-  else if (!record.arrived && (state === "failed" || state === "gone")) await rotate(record);
+  else if (!record.arrived && !olderOnTheWay && (state === "failed" || state === "gone")) await rotate(record);
 };
 // A correction, a new wish or a new answer must not be overtaken by the match or an earlier
 // message about the same person still on its way, or sent again after it. It waits, before
@@ -347,7 +347,7 @@ if (action === "resend") {
     // wishes and questions add up, so each goes again.
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
     // One that already arrived through an earlier attempt is not sent again.
-    if (!record.arrived && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
+    if (!record.arrived && !olderOnTheWay && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
     else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
@@ -358,9 +358,10 @@ if (action === "resend") {
   return report;
 }
 if (action === "arrived") {
-  // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Nothing
+  // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Only messages
+  // that were sent at least once count; one a stopped run saved but never sent still goes. Nothing
   // is counted back, since that could show who drew whom.
-  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact) record.arrived = true;
+  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact && (record.deliveryId || record.lastError || record.earlier?.length)) record.arrived = true;
   await save(true);
   return { confirmed: true };
 }
