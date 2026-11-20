@@ -16,7 +16,7 @@ type Game = {
   pairs?: Pair[];
   wishes: Record<string, string[]>;
   addresses: Record<string, string>;
-  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string; message?: string }>;
+  sent: Record<string, { deliveryId?: string | null; key?: string; to?: string; match?: boolean; told?: boolean; ref?: string; message?: string; arrived?: boolean }>;
   held?: boolean;
   forwards: Array<{ to: string; who: string; key: string; deliveryId: string | null; ref?: string }>;
 };
@@ -1259,6 +1259,56 @@ describe.sequential("secret-santa hat script", () => {
     await hat.run({ action: "resend" });
     expect(hat.sent).toHaveLength(before);
     expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("takes a Ship's word for a message that never got an id", async () => {
+    const hat = new Hat();
+    hat.timesOut.add("c:bob");
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    hat.timesOut.clear();
+    await expect(hat.run({ action: "close" })).rejects.toThrow("on their way");
+    await hat.run({ action: "arrived", contact: "c:bob" });
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
+  it("holds an unsent retry while the older copy is on its way again", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    hat.timesOut.add(first.to);
+    await hat.run({ action: "resend" });
+    hat.timesOut.clear();
+    hat.states.set(first.id, "queued");
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent).toHaveLength(before);
+  });
+
+  it("counts a message whose older copy arrived as delivered", async () => {
+    const hat = new Hat();
+    hat.defaultState = null;
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    await hat.run({ action: "resend" });
+    const second = hat.sent[hat.sent.length - 1];
+    hat.states.set(first.id, "delivered");
+    hat.states.set(second.id, "failed");
+    expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ delivered: 1, resent: 0 }));
+  });
+
+  it("saves what a refused correction learned about earlier copies", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const recipient = pair?.recipient.contact ?? "";
+    await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Tea, please." });
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "queued");
+    await expect(hat.run({ action: "wish", contact: recipient, value: "Socks", text: "Socks too." })).rejects.toThrow("have not arrived");
+    expect(hat.game.sent[pair?.giver.contact ?? ""]).toEqual(expect.objectContaining({ arrived: true }));
   });
 
   it("never sends an abandoned forward again when it is repeated", async () => {

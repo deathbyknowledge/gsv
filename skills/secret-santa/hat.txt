@@ -178,9 +178,15 @@ const rotate = async (record) => {
 // latest attempt failed or expired unseen, and leave it if any attempt arrived.
 const recover = async (record) => {
   if (record.abandoned || record.retired) return;
-  for (const id of record.earlier ?? []) if ((await statusOf(id)).state === "delivered") record.arrived = true;
+  let olderOnTheWay = false;
+  for (const id of record.earlier ?? []) {
+    const { state } = await statusOf(id);
+    if (state === "delivered") record.arrived = true;
+    else if (state === "queued") olderOnTheWay = true;
+  }
   if (!record.deliveryId) {
-    if (!record.arrived) await deliver(record);
+    // Sent only when no earlier copy arrived or is on its way again.
+    if (!record.arrived && !olderOnTheWay) await deliver(record);
     return;
   }
   const { state } = await statusOf(record.deliveryId);
@@ -200,7 +206,11 @@ const fence = async (other) => {
     waiting = true;
     if (record.deliveryId && !record.arrived && !record.retired && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
   }
-  if (waiting) throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
+  if (waiting) {
+    // Keep what the checks learned, such as a copy seen delivered, before turning this away.
+    await save(true);
+    throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
+  }
 };
 // The same message sent again, for example after a run that stopped: finish what the first run
 // started instead of keeping or sending it twice.
@@ -319,15 +329,16 @@ if (action === "resend") {
       continue;
     }
     // A replaced attempt that People can still retry holds up a redraw, a leave and close.
+    let olderOnTheWay = false;
     for (const id of record.earlier ?? []) {
       const { state, retryable } = await statusOf(id);
       if (state === "delivered") record.arrived = true;
       else if (state === "failed" && retryable) report.earlierRetryable++;
-      else if (state === "queued") report.onTheWay++;
+      else if (state === "queued") { olderOnTheWay = true; report.onTheWay++; }
     }
     if (!record.deliveryId) {
-      // An earlier attempt that arrived means this unsent one is not needed.
-      if (!record.arrived) { report.resent++; await deliver(record); }
+      // An earlier attempt that arrived, or is on its way again, means this unsent one waits.
+      if (!record.arrived && !olderOnTheWay) { report.resent++; await deliver(record); }
       continue;
     }
     const { state } = await statusOf(record.deliveryId);
@@ -337,7 +348,7 @@ if (action === "resend") {
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
     // One that already arrived through an earlier attempt is not sent again.
     if (!record.arrived && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
-    else if (state === "delivered") { record.arrived = true; report.delivered++; }
+    else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
   }
@@ -349,7 +360,7 @@ if (action === "resend") {
 if (action === "arrived") {
   // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Nothing
   // is counted back, since that could show who drew whom.
-  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact && record.deliveryId) record.arrived = true;
+  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact) record.arrived = true;
   await save(true);
   return { confirmed: true };
 }
