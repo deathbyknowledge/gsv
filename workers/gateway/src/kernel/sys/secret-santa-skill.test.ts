@@ -986,6 +986,48 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: expect.stringMatching(/^New match/) })]);
   });
 
+  it("reports failed matches in contact order, never in the loop's order", async () => {
+    for (let i = 0; i < 5; i++) {
+      const hat = new Hat();
+      for (const p of PEOPLE.slice(1)) hat.refuse.add(p.contact);
+      const result = await hat.run({ people: PEOPLE, exclude: [] });
+      // SAFETY: a draw always reports failed as a list of named givers.
+      expect((result as { failed: Array<{ who: string }> }).failed.map((f) => f.who)).toEqual(["Bob", "Carla", "Dev", "Eva", "Fei"]);
+    }
+  });
+
+  it("remembers deliveries a resend saw, so a later expiry isn't taken for a loss", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.run({ action: "resend" });
+    hat.defaultState = null;
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Tea, please." })).toEqual({ forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Tea, please."]);
+  });
+
+  it("drops a message for your owner from the file once told", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const recipient = (hat.game.pairs ?? []).find((p) => p.giver.contact === "owner")?.recipient.contact ?? "";
+    const result = await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "OWNER-NOTE" });
+    // SAFETY: a wish for your owner's recipient returns its number.
+    await hat.run({ action: "told", value: String((result as { forYourOwner: number }).forYourOwner) });
+    expect(hat.file?.includes("OWNER-NOTE")).toBe(false);
+  });
+
+  it("lets a message through after the reveal retired expired ones", async () => {
+    const hat = new Hat();
+    hat.defaultState = null;
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.run({ action: "reveal", text: "The list" });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const before = hat.sent.length;
+    expect(await hat.run({ action: "wish", contact: pair?.recipient.contact ?? "", value: "Tea", text: "Thanks!" })).toEqual({ forwarded: true });
+    expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Thanks!"]);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();

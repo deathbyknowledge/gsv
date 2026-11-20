@@ -199,7 +199,7 @@ const statusOf = async (deliveryId) => {
 // left, or a last send without an id to a contact that has ended. An attempt replaced by a resend
 // still counts, since it can be retried from People for up to a week.
 const settled = async (record, arrived = false) => {
-  if (record.abandoned) return true;
+  if (record.abandoned || record.retired) return true;
   if (record.to === "owner") return record.told;
   if (!record.deliveryId && !(await ended(record.to))) return false;
   for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
@@ -317,7 +317,9 @@ if (action === "draw") {
   }
   // Someone who left stays out, so nothing late of theirs is kept, unless this draw adds them back.
   Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: (game.left ?? []).filter((c) => !people.some((p) => p.contact === c)) });
-  for (const pair of pairs) prepare(pair, redraw);
+  // Records are kept, sent and reported in contact order, never in the loop's order, which would
+  // show who follows whom.
+  for (const pair of [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1))) prepare(pair, redraw);
   await save();
   for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
   return { people: pairs.length, failed, yours };
@@ -344,10 +346,11 @@ if (action === "resend") {
     // wishes and questions add up, so each goes again.
     const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
     if (state === "failed" || (state === "gone" && record.to === contact && !replaced)) { report.resent++; await rotate(record); }
-    else if (state === "delivered") report.delivered++;
+    else if (state === "delivered") { record.arrived = true; report.delivered++; }
     else if (state === "queued") report.onTheWay++;
     else report.unknown++;
   }
+  await save(true);
   // Counts for one Ship's messages could show whom it drew or who wrote to it.
   if ([...Object.values(game.sent), ...game.forwards].some((r) => r.to === contact)) return { resent: true };
   return report;
@@ -374,6 +377,8 @@ if (action === "told") {
   const record = value === "match" ? game.sent.owner : game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
   if (!record) throw new Error(`No message for your owner numbered ${value}`);
   record.told = true;
+  // Once told, the text is no longer needed in the file.
+  if (!record.match) delete record.message;
   await save(true);
   return { told: true };
 }
@@ -409,7 +414,8 @@ if (action === "reveal") {
   // text, which makes room for the list.
   for (const f of [...Object.values(game.sent), ...game.forwards]) {
     if (f.message === undefined || f.to === "owner" || !f.deliveryId) continue;
-    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) delete f.message;
+    // Retired: nothing waits on it or sends it again after this.
+    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) { delete f.message; f.retired = true; }
   }
   // The list is stored once; each record keeps only where it goes and how it went.
   game.revealText = text;
