@@ -765,6 +765,46 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.filter((s) => s.message === "THE-LIST")).toHaveLength(PEOPLE.length - 1);
   });
 
+  it("drops your owner's untold match when a leave puts the draw on hold", async () => {
+    const hat = new Hat();
+    const [ana, bob, carla] = PEOPLE;
+    const loop = [ana, carla, bob];
+    hat.file = JSON.stringify({
+      ...hat.game, round: 1, left: [],
+      pairs: loop.map((giver, i) => ({ giver, recipient: loop[(i + 1) % loop.length] })),
+      sent: { owner: { to: "owner", match: true, told: false, replaces: false } },
+    });
+    await expect(hat.run({ action: "leave", contact: "c:bob" })).rejects.toThrow("on hold");
+    expect(hat.game.sent.owner).toBeUndefined();
+    await hat.draw({ people: [PEOPLE[0], PEOPLE[2], PEOPLE[3]], exclude: [], redraw: true });
+    expect(hat.game.round).toBe(2);
+  });
+
+  it("resends a match that failed for good before a correction goes after it", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const match = hat.sent.find((s) => s.to === pair?.giver.contact);
+    hat.states.set(match?.id ?? "", "failed");
+    await expect(hat.run({ action: "address", contact: pair?.recipient.contact ?? "", value: "Rua N 2", text: "New address: Rua N 2." })).rejects.toThrow("failed");
+  });
+
+  it("sends a confirmed-missing forward again, but not one a later message replaced", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    const recipient = pair?.recipient.contact ?? "";
+    for (const s of hat.sent) hat.states.set(s.id, "delivered");
+    await hat.run({ action: "wish", contact: recipient, value: "Tea", text: "Tea, please." });
+    hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
+    await hat.run({ action: "wish", contact: recipient, value: "Socks", text: "Socks too." });
+    hat.states.clear();
+    const before = hat.sent.length;
+    await hat.run({ action: "resend", contact: giver });
+    expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Socks too."]);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();
