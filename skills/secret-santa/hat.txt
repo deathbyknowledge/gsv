@@ -1,547 +1,168 @@
-// The Secret Santa hat: everything that touches a game's file. Run it on gsv with
+// The Secret Santa hat script. Ship keeps the game file, ~/secret-santa/ID.json, with each person's
+// name, contact, wishes and address. This script draws from it and keeps who drew whom in
+// ~/secret-santa/ID.draw.json, which only it reads, so the pairs stay out of Ship's context. Run it on
+// gsv with
 //   codemode /sys/skills.d/secret-santa/hat.txt --args-json JSON
-// giving `action` and the arguments that action uses; SKILL.md says what each one is for.
-const defaults = { action: "", r12y: "", people: [], exclude: [], redraw: false, round: 0, contact: "", value: "", to: "giver", text: "", note: "" };
+// giving `action` ("draw" or "ask") and the arguments that action uses; SKILL.md says what each is for.
+const defaults = { action: "", r12y: "", redraw: false, note: "", contact: "", to: "", text: "" };
 const unknown = Object.keys(args).find((key) => !Object.hasOwn(defaults, key));
 if (unknown) throw new Error(`Unknown argument ${unknown}: use ${Object.keys(defaults).join(", ")}`);
-const { action, r12y, people, exclude, redraw, round, contact, value, to, text, note: template } = { ...defaults, ...args };
-if (!r12y) throw new Error("Set r12y to the Secret Santa responsibility");
+const { action, r12y, redraw, note, contact, to, text } = { ...defaults, ...args };
+if (action !== "draw" && action !== "ask") throw new Error('Set action to "draw" or "ask"');
 if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
-if (!Array.isArray(people) || !Array.isArray(exclude)) throw new Error("people and exclude must be lists");
-if (!people.every((p) => p && typeof p.name === "string" && p.name && typeof p.contact === "string" && p.contact)) throw new Error("Each person needs a name and a contact");
-if (!exclude.every((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((c) => typeof c === "string" && c))) throw new Error("Each exclusion must be a pair of contact IDs, like [[\"CONTACT_ID\", \"CONTACT_ID\"]]");
-if (to !== "giver" && to !== "recipient") throw new Error('to must be "giver" or "recipient"');
-if (!Number.isInteger(round) || round < 0) throw new Error("round must be a whole number");
-// The match message: `note` with {name}, {address}, {wishes} and {deliverTo} filled in. A line whose
-// placeholder has nothing to fill, such as {wishes} before any arrived, is left out.
-const note = ({ name, address, wishes, deliverTo }) => {
-  if (!String(template).includes("{name}")) throw new Error("Set note to the match message, with {name} where the recipient's name goes");
-  const values = { name, address: address ?? "", wishes: wishes.join("\n"), deliverTo: deliverTo ?? "" };
-  return String(template).split("\n").flatMap((line) => {
+const id = String(r12y).replace(/^r12y:/, "");
+if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Set r12y to the Secret Santa responsibility");
+
+const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
+const bytes = (s) => new TextEncoder().encode(s).length;
+// A file that is missing reads as null; any other failure throws, so a draw is never repeated
+// because its file could not be read.
+const readJson = async (name) => {
+  const path = `~/secret-santa/${name}`;
+  const read = await fs.read({ target: "gsv", path });
+  if (!read.ok) {
+    const exists = await shell(`test -e "$HOME"/secret-santa/${q(name)}`, { target: "gsv" });
+    if (exists.exitCode === 1) return null;
+    throw new Error(`Cannot read ${path}: ${read.error}`);
+  }
+  if (read.truncated) throw new Error(`${path} is too large to read in one go`);
+  return JSON.parse(read.content);
+};
+const saveDraw = async (draw) => {
+  const content = JSON.stringify(draw);
+  // CodeMode reads at most 64 KiB, so a larger file could not be read back to resend or forward.
+  if (bytes(content) > 60000) throw new Error("Too much to send: ask the people with the longest wishes to sum them up");
+  const written = await fs.write({ target: "gsv", path: `~/secret-santa/${id}.draw.json`, content });
+  if (!written.ok) throw new Error(`Cannot save the draw: ${written.error}`);
+};
+// One contact message under a fixed key: the same key and text again returns the same delivery
+// instead of sending a second message, so running this script again never sends anything twice.
+const send = async (destination, message, key) => {
+  const sent = await shell(`message send --to ${q(destination)} --message ${q(message)} --delivery-id ${q(key)} --responsibility ${q(r12y)} --also`, { target: "gsv" });
+  const state = sent.exitCode === 0 ? /delivery_state=(\w+)/.exec(sent.output)?.[1] : undefined;
+  return state ?? `unsent: ${String(sent.error || sent.output || "no delivery").trim().slice(0, 200)}`;
+};
+const sentOk = (state) => state === "queued" || state === "delivered";
+
+if (action === "ask") {
+  const draw = await readJson(`${id}.draw.json`);
+  if (!draw) throw new Error("No draw yet");
+  if (to !== "giver" && to !== "recipient") throw new Error('Set to to "giver" or "recipient"');
+  if (!text) throw new Error("Write text to forward");
+  if (bytes(text) > 2000) throw new Error("Too long to forward: shorten it");
+  const pair = draw.pairs.find((p) => (to === "giver" ? p.recipient : p.giver) === contact);
+  if (!pair) throw new Error(`${contact} is not in the draw`);
+  const other = pair[to];
+  if (other === "owner") return { forYourOwner: text };
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${contact}\n${to}\n${text}`));
+  const sum = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const state = await send(other, text, `santa:${id}:${draw.round}:ask:${sum}`);
+  return { forwarded: sentOk(state), state };
+}
+
+const previous = await readJson(`${id}.draw.json`);
+if (previous && !redraw) {
+  // Sending the same draw again: a match already accepted comes back as it is, and one that failed
+  // goes again under its next key, saved first so a later run reuses that key.
+  const failed = [];
+  for (const match of previous.matches) {
+    let state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+    if (state === "failed") {
+      match.attempt += 1;
+      await saveDraw(previous);
+      state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+    }
+    if (!sentOk(state)) failed.push({ name: match.name, state });
+  }
+  return { round: previous.round, people: previous.pairs.length, resent: true, failed, yours: previous.yours };
+}
+
+const game = await readJson(`${id}.json`);
+if (!game) throw new Error(`Write the game file ~/secret-santa/${id}.json first`);
+const people = game.people;
+if (!Array.isArray(people) || people.some((p) => !p?.name || !p?.contact)) throw new Error("Give each person in the game file a name and a contact");
+if (people.length < 3) throw new Error("A draw needs at least 3 people");
+if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
+const exclude = game.exclude ?? [];
+// An exclusion naming someone not in the draw, such as a mistyped contact, would be silently ignored.
+const inDraw = (c) => people.some((p) => p.contact === c);
+if (!Array.isArray(exclude) || exclude.some((pair) => !Array.isArray(pair) || pair.length !== 2 || !pair.every(inDraw))) throw new Error("Each exclusion must be a pair of contacts of people in the game file");
+if (!String(note).includes("{name}")) throw new Error("Set note to the match message, with {name} where the recipient's name goes");
+if (redraw && !String(note).includes("{round}")) throw new Error("Put {round} in a redraw's note, so each Ship keeps the newest match");
+const banned = (a, b) => exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
+
+const rand = (n) => {
+  const a = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(a);
+  } while (a[0] >= 2 ** 32 - (2 ** 32 % n));
+  return a[0] % n;
+};
+const shuffled = (list) => {
+  const order = [...list];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = rand(i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+};
+// One loop, so everyone gives once, receives once and nobody draws themselves. Reshuffling keeps
+// every allowed loop equally likely; when exclusions leave few, a randomised search finds one or
+// shows that none exists.
+const loop = (order) => order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
+let pairs = null;
+for (let tries = 0; !pairs && tries < 1000; tries++) {
+  const candidate = loop(shuffled(people));
+  if (!candidate.some((p) => banned(p.giver, p.recipient))) pairs = candidate;
+}
+if (!pairs) {
+  const [first, ...rest] = shuffled(people);
+  const path = [first];
+  let steps = 0;
+  const extend = (left) => {
+    if (++steps > 200000) throw new Error("No draw found yet for these exclusions, though one may exist: run the draw again, and if it keeps failing ask the organiser to drop one");
+    if (!left.length) return !banned(path[path.length - 1], first);
+    for (const next of shuffled(left)) {
+      if (banned(path[path.length - 1], next)) continue;
+      path.push(next);
+      if (extend(left.filter((p) => p !== next))) return true;
+      path.pop();
+    }
+    return false;
+  };
+  if (!extend(rest)) throw new Error("No draw fits these exclusions");
+  pairs = loop(path);
+}
+
+const round = (previous?.round ?? 0) + 1;
+// The match message: `note` with {name}, {address}, {wishes}, {deliverTo} and {round} filled in. A
+// line whose placeholder has nothing to fill, such as {address} on the in-person type, is left out.
+const render = (recipient) => {
+  const wishes = Array.isArray(recipient.wishes) ? recipient.wishes.join("\n") : String(recipient.wishes ?? "");
+  const values = { name: recipient.name, address: recipient.address ?? "", wishes, deliverTo: game.deliverTo ?? "", round: String(round) };
+  return String(note).split("\n").flatMap((line) => {
     const names = [...line.matchAll(/\{(\w+)\}/g)].map(([, placeholder]) => placeholder);
     const missing = names.find((placeholder) => !Object.hasOwn(values, placeholder));
-    if (missing) throw new Error(`note has no {${missing}}: use {name}, {address}, {wishes} or {deliverTo}`);
+    if (missing) throw new Error(`note has no {${missing}}: use {name}, {address}, {wishes}, {deliverTo} or {round}`);
     return names.some((placeholder) => !values[placeholder]) ? [] : [line.replace(/\{(\w+)\}/g, (_, placeholder) => values[placeholder])];
   }).join("\n");
 };
-
-const file = `secret-santa/${r12y.replace(/^r12y:/, "")}.json`;
-const path = `~/${file}`;
-const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
-// Size as the file stores it: UTF-8, with JSON escaping.
-const size = (v) => new TextEncoder().encode(JSON.stringify(v)).length;
-const bytes = (v) => size(String(v));
-// A short fingerprint of a message, so a repeat can be recognised after its text is dropped.
-const digest = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t))))].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
-let game = null;
-// CodeMode reads at most 64 KiB, so a file any larger could never be read again, not even to
-// close. Every write, the first included, goes through this check, and always leaves room for
-// the delivery id and error each message not yet sent will add. New content stops well short;
-// recording a delivery, an attempt or a mark (`delivery`) may use the room up to just under it.
-const save = async (delivery = false) => {
-  const records = () => [...Object.values(game.sent), ...game.forwards];
-  const limit = () => (delivery ? 65000 : 60000) - 400 * records().filter((r) => r.to !== "owner" && !r.deliveryId).length;
-  if (size(game) > limit()) {
-    // Messages that arrived are never sent again, so their text can go to make room.
-    for (const r of records()) {
-      if (r.message === undefined || r.to === "owner" || !r.deliveryId || r.arrived) continue;
-      if ((await statusOf(r.deliveryId)).state === "delivered") r.arrived = true;
-    }
-    for (const r of records()) if (r.arrived && r.to !== "owner" && r.message !== undefined) delete r.message;
-  }
-  // Two runs at once would overwrite each other, so a save checks the file still holds the version
-  // this run last read or wrote.
-  const current = await fs.read({ target: "gsv", path });
-  if (current.ok && JSON.parse(current.content).version !== game.version) throw new Error("The Secret Santa file changed while this ran: run one hat action at a time, then run this again");
-  game.version = (game.version ?? 0) + 1;
-  const content = JSON.stringify(game);
-  if (new TextEncoder().encode(content).length > limit()) throw new Error("Too much to keep in the file: ask for shorter wishes and messages");
-  const written = await fs.write({ target: "gsv", path, content });
-  if (!written.ok) throw new Error(`Cannot save ${file}: ${written.error}`);
+// Matches are kept and sent in contact order, never in the loop's order, which would show who
+// follows whom. Your own owner's match is returned for you to tell them, never sent.
+const ordered = [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1));
+const owned = ordered.find((p) => p.giver.contact === "owner");
+const draw = {
+  round,
+  pairs: ordered.map((p) => ({ giver: p.giver.contact, recipient: p.recipient.contact })),
+  matches: ordered.filter((p) => p !== owned).map((p) => ({ name: p.giver.name, to: p.giver.contact, key: `santa:${id}:${round}:${p.giver.contact}`, attempt: 1, message: render(p.recipient) })),
+  yours: owned ? render(owned.recipient) : null,
 };
-// Every match repeats the in-person address, so it must stay short.
-if (action === "start" && new TextEncoder().encode(String(value)).length > 300) throw new Error("That address is too long: ask for a shorter one");
-const read = await fs.read({ target: "gsv", path });
-if (!read.ok) {
-  const missing = (await shell(`test -e "$HOME"/${q(file)}`, { target: "gsv" })).exitCode === 1;
-  // A close that deleted the file but stopped before it could answer is already finished.
-  if (missing && action === "close") return { closed: true };
-  if (!missing || action !== "start") throw new Error(`Cannot read ${file}: ${read.error}`);
-  const made = await shell(`mkdir -p "$HOME/secret-santa"`, { target: "gsv" });
-  if (made.exitCode !== 0) throw new Error(`Cannot create the folder: ${String(made.error || made.output).trim().slice(0, 200)}`);
-  game = { round: 0, deliverTo: value, exclude: [], wishes: {}, addresses: {}, sent: {}, forwards: [], forwardCount: 0, left: [] };
-  await save();
-  return { started: true };
-}
-if (read.truncated) throw new Error(`${file} is too large to read in one go`);
-game = JSON.parse(read.content);
-if (action === "start") {
-  // Running it again only replaces the in-person address, and only with `redraw` set and before the draw.
-  if (!redraw) return { started: true };
-  if (game.pairs) throw new Error("Already drawn: the address went out in the matches");
-  game.deliverTo = value;
-  await save();
-  return { started: true };
-}
-// The delivery id and state `message send` prints. Without an id it was not accepted, and the
-// error keeps why, from the shell or the command.
-const send = async (to, message, key) => {
-  const id = key ? ` --delivery-id ${q(key)}` : "";
-  const sent = await shell(`message send --to ${q(to)} --message ${q(message)}${id} --responsibility ${q(r12y)} --also`, { target: "gsv" });
-  const deliveryId = sent.exitCode === 0 ? /delivery_id=(\S+)/.exec(sent.output)?.[1] ?? null : null;
-  if (!deliveryId) return { id: null, state: null, error: String(sent.error || sent.output || "no delivery id").trim().slice(0, 200) };
-  return { id: deliveryId, state: /delivery_state=(\w+)/.exec(sent.output)?.[1] ?? null, error: null };
-};
-// A send without an id may still have been queued, but nothing reaches a contact that has ended,
-// so only that settles it.
-let active = null;
-const ended = async (contactId) => {
-  if (!active) {
-    const listed = await shell("contact list --json", { target: "gsv" });
-    if (listed.exitCode !== 0) throw new Error(`Cannot list contacts: ${String(listed.error || listed.output).trim().slice(0, 200)}`);
-    active = new Set(JSON.parse(listed.output).contacts.filter((c) => c.state === "active").map((c) => c.id));
-  }
-  return !active.has(contactId);
-};
-const banned = (a, b) => game.exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
-const pairOf = (side, id) => {
-  const pair = game.pairs.find((p) => p[side].contact === id);
-  if (!pair) throw new Error(`${id} is not in the draw`);
-  return pair;
-};
-const matchOf = ({ recipient }, replaces) => ({ name: recipient.name, address: game.addresses[recipient.contact] ?? null, wishes: game.wishes[recipient.contact] ?? [], replaces, deliverTo: game.deliverTo || null });
+if (draw.matches.some((match) => bytes(match.message) > 32000)) throw new Error("A match message is too long to send: ask for shorter wishes");
+// Saved before anything is sent, so a run that stops partway sends the same matches when run again.
+await saveDraw(draw);
 const failed = [];
-// An opaque handle for each message, so a failure can be named without saying who it was for.
-const newRef = () => crypto.randomUUID().slice(0, 8);
-let yours = null;
-
-// Every match and forward is recorded with its exact text before it is sent, so a resend repeats
-// the same message. Keys carry the responsibility id, so a new game never reuses an old one's. `who` names a giver for a match, never the person a forward went to.
-// A relink's giver stays unnamed, since naming them beside the leaver would show the old pair.
-const prepare = (pair, replaces, unnamed = false) => {
-  if (pair.giver.contact === "owner") {
-    // Kept until you have told your owner, like a message for them.
-    yours = matchOf(pair, replaces);
-    game.sent.owner = { to: "owner", match: true, told: false, replaces };
-    return;
-  }
-  const key = `santa:${r12y}:${game.round}:${pair.giver.contact}:${pair.recipient.contact}`;
-  game.sent[pair.giver.contact] = { ref: newRef(), to: pair.giver.contact, who: unnamed ? "a replaced match" : pair.giver.name, key, message: note(matchOf(pair, replaces)), attempt: 1, deliveryId: null };
-};
-// A delivery's state, "gone" once its record has expired. A lookup that fails throws, so
-// nothing is replaced on a guess.
-const statusOf = async (deliveryId) => {
-  const shown = await shell(`message delivery show ${q(deliveryId)} --json`, { target: "gsv" });
-  if (shown.exitCode !== 0) throw new Error(`Cannot read a delivery: ${String(shown.error || shown.output).trim().slice(0, 200)}`);
-  const { delivery } = JSON.parse(shown.output);
-  return delivery ? { state: delivery.state, retryable: delivery.retryable } : { state: "gone", retryable: false };
-};
-// With `arrived`, a message that failed for good does not count: it has to be resent first.
-// Settled means nothing more can arrive: every attempt delivered, expired, or failed with no retry
-// left, or a last send without an id to a contact that has ended. An attempt replaced by a resend
-// still counts, since it can be retried from People for up to a week.
-const settled = async (record, arrived = false) => {
-  if (record.abandoned) return true;
-  if (record.to === "owner") return record.told;
-  const attempts = [];
-  for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) attempts.push({ id, ...(await statusOf(id)) });
-  // Any attempt seen delivered proves arrival, and is remembered, since an expired record
-  // proves nothing.
-  if (attempts.some((a) => a.state === "delivered")) record.arrived = true;
-  // An unsent retry is needed only while nothing has arrived, and never for an ended contact.
-  if (!record.deliveryId && !record.arrived && !(await ended(record.to))) return false;
-  for (const { id, state, retryable } of attempts) {
-    // A retired record is never sent again, but its older attempts still count until they settle.
-    if (arrived && id === record.deliveryId && !record.arrived && !record.retired && (state === "gone" || state === "failed")) return false;
-    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable))) return false;
-  }
-  return true;
-};
-// A failure keeps its reason in the file; the report shows it only for a match, since a
-// forward's reason could name who it was for.
-const deliver = async (record) => {
-  const { id, state, error } = await send(record.to, record.reveal ? game.revealText : record.message, `${record.key}:${record.attempt}`);
-  record.deliveryId = id;
-  record.lastError = id && state !== "failed" ? null : error ?? `delivery ${state}`;
-  if (state === "delivered") record.arrived = true;
-  await save(true);
-  if (!record.lastError) return true;
-  failed.push(record.who.startsWith("a ") ? { who: record.who, ref: record.ref } : { who: record.who, error: record.lastError, ref: record.ref });
-  return false;
-};
-// A contact message holds at most 32 KiB, so a match that long could never be sent: stop before
-// keeping it.
-const tooLong = () => {
-  for (const r of Object.values(game.sent)) if (r.message && new TextEncoder().encode(r.message).length > 32000) throw new Error("A match message is too long to send: shorten note");
-};
-// A new attempt is saved before it is sent, with the old id kept in `earlier`, so a run that stops
-// mid-send leaves the record unconfirmed rather than pointing at the old, settled attempt.
-const rotate = async (record) => {
-  record.earlier = [...(record.earlier ?? []), record.deliveryId];
-  record.deliveryId = null;
-  record.attempt++;
-  await save(true);
-  return deliver(record);
-};
-// Finish a message a stopped run left behind: send it if it never went, send it again if its
-// latest attempt failed or expired unseen, and leave it if any attempt arrived.
-// An expired latest attempt proves nothing, so it waits for that Ship's word unless `expired` says
-// to send it again (a relink, where the giver must not keep the leaver's match).
-const recover = async (record, expired = false) => {
-  if (record.abandoned || record.retired) return;
-  let olderOnTheWay = false;
-  for (const id of record.earlier ?? []) {
-    const { state } = await statusOf(id);
-    // Keep an arrival before the next lookup, which may fail.
-    if (state === "delivered" && !record.arrived) { record.arrived = true; await save(true); }
-    else if (state === "queued") olderOnTheWay = true;
-  }
-  if (!record.deliveryId) {
-    // Sent only when no earlier copy arrived or is on its way again.
-    if (!record.arrived && !olderOnTheWay) await deliver(record);
-    return;
-  }
-  const { state } = await statusOf(record.deliveryId);
-  if (state === "delivered") record.arrived = true;
-  else if (!record.arrived && !olderOnTheWay && (state === "failed" || (expired && state === "gone"))) await rotate(record);
-};
-// A correction, a new wish or a new answer must not be overtaken by the match or an earlier
-// message about the same person still on its way, or sent again after it. It waits, before
-// anything changes, until those have arrived; one whose record expired unconfirmed is sent
-// again, so the new message follows a copy that is tracked. The error names nothing, since
-// which messages wait could show the pair.
-const fence = async (other) => {
-  const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
-  let waiting = false;
-  for (const record of earlier) {
-    if (await settled(record, true)) continue;
-    waiting = true;
-    if (record.deliveryId && !record.arrived && !record.retired && (await statusOf(record.deliveryId)).state === "gone") await rotate(record);
-  }
-  if (waiting) {
-    // Keep what the checks learned, such as a copy seen delivered, before turning this away.
-    await save(true);
-    throw new Error("Earlier messages to them have not arrived yet: run resend, then send this again once they have");
-  }
-};
-// What identifies a forward when it is sent again: the wish, address or question as the person
-// sent it (`value`), since Ship may word its text differently each time.
-const source = () => digest(action === "ask" ? value || text : value);
-// The same message sent again, for example after a run that stopped: finish what the first run
-// started instead of keeping or sending it twice.
-const resume = async (other) => {
-  const sum = await source();
-  // The latest matching one: the same text may have gone before, for example an address changed and changed back.
-  const earlier = game.forwards.findLast((f) => f.to === other.contact && f.about === contact && f.kind === action && f.sum === sum);
-  if (!earlier) return null;
-  if (earlier.to === "owner") return earlier.told ? { already: true } : { already: true, forYourOwner: earlier.id };
-  // Given up on, or retired at the reveal: never sent again.
-  if (earlier.abandoned) return { already: true, abandoned: true };
-  if (earlier.retired) return { already: true, forwarded: true };
-  // A copy never sent, or that failed, goes now; one on its way or that arrived is left alone.
-  await recover(earlier);
-  await save(true);
-  if (earlier.lastError && !earlier.arrived) return { already: true, forwarded: false };
-  return { already: true, forwarded: true };
-};
-// After the draw, a wish, an address or a question goes on to the other side of that pair. The
-// change and its forward are saved together, then sent.
-const forward = async (other) => {
-  if (!text) throw new Error("Write text to forward");
-  if (bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter message");
-  if (other.contact === "owner") {
-    // Kept until you have told your owner, so a run that stops first can still pass it on.
-    const id = ++game.forwardCount;
-    game.forwards.push({ to: "owner", kind: action, about: contact, id, sum: await source(), message: text, told: false });
-    await save();
-    return { forYourOwner: id };
-  }
-  const record = { ref: newRef(), kind: action, sum: await source(), to: other.contact, about: contact, who: "a forwarded message", key: `santa:${r12y}:${game.round}:forward:${++game.forwardCount}`, message: text, attempt: 1, deliveryId: null };
-  game.forwards.push(record);
-  await save();
-  return { forwarded: await deliver(record) };
-};
-
-if (action === "draw") {
-  if (game.pairs && !redraw) throw new Error("Already drawn: use resend, or set redraw");
-  if (redraw) {
-    // A redraw names the round it replaces, so running it again after it went through returns that
-    // result instead of drawing everyone a second new match.
-    const owned = game.held ? null : game.pairs?.find((p) => p.giver.contact === "owner");
-    // Draws start at round 1, so a missing round is never taken for a finished one.
-    if (round < 1) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
-    if (round < game.round) {
-      // Only the same redraw run again counts; different people or exclusions are a new redraw.
-      const sum = await digest(JSON.stringify([people, exclude]));
-      if (game.redrawn?.from !== round || game.redrawn.sum !== sum) throw new Error(`Round ${round} was already replaced: set round to ${game.round} for a new redraw`);
-      // Finish sending any new match the earlier run saved but never sent, under its own key.
-      for (const record of Object.values(game.sent)) if (record.to !== "owner") await recover(record);
-      await save(true);
-      return { people: game.pairs.length, round: game.round, already: true, failed, yours: owned ? matchOf(owned, true) : null };
-    }
-    if (round !== game.round) throw new Error(`Set round to ${game.round}, the round this redraw replaces`);
-  }
-  // Check the input before looking at any delivery.
-  if (people.length < 3) throw new Error("A draw needs at least 3 people");
-  if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
-  // A replaced match still on its way, or never confirmed, could arrive after its replacement.
-  const knownArrived = new Set([...Object.values(game.sent), ...game.forwards].filter((r) => r.arrived));
-  for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (!(await settled(record))) {
-      // Keep any delivery the checks just saw before turning this away.
-      await save(true);
-      throw new Error("Earlier messages are unconfirmed or on their way: run resend, then redraw once they arrive");
-    }
-  }
-  // Keep deliveries the checks just saw, in case this draw is refused below.
-  if ([...Object.values(game.sent), ...game.forwards].some((r) => r.arrived && !knownArrived.has(r))) await save(true);
-  const rand = (n) => {
-    const a = new Uint32Array(1);
-    do {
-      crypto.getRandomValues(a);
-    } while (a[0] >= 2 ** 32 - (2 ** 32 % n));
-    return a[0] % n;
-  };
-  const shuffled = (list) => {
-    const order = [...list];
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = rand(i + 1);
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    return order;
-  };
-  const loop = (order) => order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
-  game.exclude = exclude;
-  // Reshuffling keeps every allowed loop equally likely. When exclusions leave few loops, a
-  // randomised search finds one instead, or shows that none exists.
-  let pairs = null;
-  for (let tries = 0; !pairs && tries < 1000; tries++) {
-    const candidate = loop(shuffled(people));
-    if (!candidate.some((p) => banned(p.giver, p.recipient))) pairs = candidate;
-  }
-  if (!pairs) {
-    const [first, ...rest] = shuffled(people);
-    const path = [first];
-    let steps = 0;
-    const extend = (left) => {
-      if (++steps > 200000) throw new Error("No draw found yet for these exclusions, though one may exist: run the draw again, as each search starts differently, and if it keeps failing ask the organiser to drop one");
-      if (!left.length) return !banned(path[path.length - 1], first);
-      for (const next of shuffled(left)) {
-        if (banned(path[path.length - 1], next)) continue;
-        path.push(next);
-        if (extend(left.filter((p) => p !== next))) return true;
-        path.pop();
-      }
-      return false;
-    };
-    if (!extend(rest)) throw new Error("No draw fits these exclusions");
-    pairs = loop(path);
-  }
-  // Someone who left stays out, so nothing late of theirs is kept, unless this draw adds them back.
-  if (redraw) game.redrawn = { from: game.round, sum: await digest(JSON.stringify([people, exclude])) };
-  Object.assign(game, { round: game.round + 1, pairs, sent: {}, forwards: [], held: false, left: (game.left ?? []).filter((c) => !people.some((p) => p.contact === c)) });
-  // Records are kept, sent and reported in contact order, never in the loop's order, which would
-  // show who follows whom.
-  for (const pair of [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1))) prepare(pair, redraw);
-  tooLong();
-  await save();
-  for (const record of Object.values(game.sent)) if (record.to !== "owner") await deliver(record);
-  return { people: pairs.length, round: game.round, failed, yours };
+for (const match of draw.matches) {
+  const state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+  if (!sentOk(state)) failed.push({ name: match.name, state });
 }
-if (action === "resend") {
-  const owned = game.held ? null : game.pairs.find((p) => p.giver.contact === "owner");
-  const report = { round: game.round, delivered: 0, onTheWay: 0, unknown: 0, resent: 0, retryable: 0, earlierRetryable: 0, failed, yours: owned ? matchOf(owned, game.sent.owner?.replaces ?? false) : null, forYourOwner: [] };
-  for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (record.abandoned) continue;
-    if (record.to === "owner") {
-      if (!record.told && !record.match) report.forYourOwner.push({ id: record.id, text: record.reveal ? game.revealText : record.message });
-      continue;
-    }
-    // A replaced attempt that People can still retry holds up a redraw, a leave and close.
-    let olderOnTheWay = false;
-    for (const id of record.earlier ?? []) {
-      const { state, retryable } = await statusOf(id);
-      if (state === "delivered") record.arrived = true;
-      else if (state === "failed" && retryable) report.earlierRetryable++;
-      else if (state === "queued") { olderOnTheWay = true; report.onTheWay++; }
-    }
-    if (!record.deliveryId) {
-      // An earlier attempt that arrived, or is on its way again, means this unsent one waits.
-      if (!record.arrived && !olderOnTheWay) { report.resent++; await deliver(record); }
-      continue;
-    }
-    const { state, retryable } = await statusOf(record.deliveryId);
-    if (!record.reveal && record.message === undefined) { report.delivered++; continue; }
-    // A confirmed-missing message goes again, unless it was an address a later one corrected;
-    // wishes and questions add up, so each goes again.
-    const replaced = record.kind === "address" && game.forwards.some((f, i) => i > game.forwards.indexOf(record) && f.kind === "address" && f.to === record.to && f.about === record.about);
-    // One that already arrived through an earlier attempt is not sent again.
-    if (!record.arrived && !olderOnTheWay && (state === "failed" || (state === "gone" && record.to === contact && !replaced))) { report.resent++; await rotate(record); }
-    // A latest copy still on its way holds things up even when an older one arrived, so show it.
-    else if (state === "queued") report.onTheWay++;
-    // A failed latest copy People can still retry also holds things up for its week.
-    else if (state === "failed" && retryable) report.retryable++;
-    else if (state === "delivered" || record.arrived) { record.arrived = true; report.delivered++; }
-    else report.unknown++;
-  }
-  await save(true);
-  // Counts for one Ship's messages could show whom it drew or who wrote to it.
-  if ([...Object.values(game.sent), ...game.forwards].some((r) => r.to === contact)) return { resent: true };
-  return report;
-}
-if (action === "arrived") {
-  // `contact`'s Ship confirmed it has what was sent to it, though the records expired. Only messages
-  // that were sent at least once count; one a stopped run saved but never sent still goes. Nothing
-  // is counted back, since that could show who drew whom.
-  for (const record of [...Object.values(game.sent), ...game.forwards]) if (record.to === contact && (record.deliveryId || record.lastError || record.earlier?.length)) record.arrived = true;
-  await save(true);
-  return { confirmed: true };
-}
-if (action === "abandon") {
-  // Only on the organiser's word, for the one message `failed` named by `value`, once they know
-  // it may yet arrive.
-  const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
-  if (!record) throw new Error(`No message ${value}`);
-  record.abandoned = true;
-  // Never sent again, so its text can go.
-  if (record.to !== "owner") delete record.message;
-  await save(true);
-  return { abandoned: true };
-}
-if (action === "close") {
-  // The file holds the only delivery ids: keep it until nothing more can arrive.
-  for (const record of [...Object.values(game.sent), ...game.forwards]) {
-    if (!(await settled(record))) {
-      // Keep any delivery the checks just saw before turning this away.
-      await save(true);
-      throw new Error("Messages are unconfirmed or on their way: run resend, then close again once they arrive");
-    }
-  }
-  const removed = await shell(`rm -f "$HOME"/${q(file)}`, { target: "gsv" });
-  if (removed.exitCode !== 0) throw new Error(`Cannot delete ${file}: ${String(removed.error || removed.output).trim().slice(0, 200)}`);
-  return { closed: true };
-}
-if (action === "told") {
-  const record = value === "match" ? game.sent.owner : game.forwards.find((f) => f.to === "owner" && f.id === Number(value));
-  if (!record) throw new Error(`No message for your owner numbered ${value}`);
-  record.told = true;
-  // Once told, the text is no longer needed in the file.
-  if (!record.match) delete record.message;
-  await save(true);
-  return { told: true };
-}
-if (game.held && action !== "draw" && action !== "resend") throw new Error("This draw is on hold after someone left: run a redraw first");
-if (action === "address" || action === "wish") {
-  if (game.left?.includes(contact)) throw new Error("They have left this Secret Santa: nothing of theirs is kept");
-  // Each wish or address is stored and repeated in a match, so keep it short enough for the file.
-  if (bytes(value) > 2000 || bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
-  // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
-  const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
-  // The same wish or address sent again, for example after a run that stopped, changes nothing.
-  // A replacement wish counts as a repeat when it already is the whole list.
-  const wishes = game.wishes[contact] ?? [];
-  if (action === "wish" ? (redraw ? wishes.length === 1 && wishes[0] === value : wishes.includes(value)) : game.addresses[contact] === value) {
-    const resumed = giver ? await resume(giver) : null;
-    return { kept: true, already: true, ...resumed };
-  }
-  if (giver) await fence(giver);
-  if (action === "address") game.addresses[contact] = value;
-  else game.wishes[contact] = [...(redraw ? [] : game.wishes[contact] ?? []), value];
-  // The draw repeats every wish and address in a match, so the file has to hold them twice.
-  // Sized as stored, delimiters included.
-  if (size(game.wishes[contact] ?? []) > 2000) throw new Error("Too many wishes from them to keep: ask them to sum up, and send it with redraw set to replace the rest");
-  if (size(game.wishes) + size(game.addresses) > 15000) throw new Error("Too many wishes to keep for this group: ask the people with the longest lists to sum up, sent with redraw set");
-  if (!giver) { await save(); return game.pairs ? { kept: true, notInDraw: true } : { kept: true }; }
-  return forward(giver);
-}
-if (action === "ask") {
-  if (!game.pairs) throw new Error("No draw yet");
-  const other = pairOf(to === "giver" ? "recipient" : "giver", contact)[to];
-  const resumed = await resume(other);
-  if (resumed) return resumed;
-  await fence(other);
-  return forward(other);
-}
-if (action === "reveal") {
-  // Each Ship gets the list once, recorded like a forward, so close waits until it has arrived.
-  if (!game.pairs) throw new Error("No draw yet");
-  if (!text) throw new Error("Write the list as text");
-  // A contact message holds at most 32 KiB; check before anything is kept.
-  if (new TextEncoder().encode(text).length > 32000) throw new Error("The list is too long to send: shorten it");
-  if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
-  // At the end, matches and forwards that arrived or whose records expired no longer need their
-  // text, which makes room for the list.
-  for (const f of [...Object.values(game.sent), ...game.forwards]) {
-    if (f.message === undefined || f.to === "owner" || !f.deliveryId) continue;
-    // Retired: nothing waits on it or sends it again after this.
-    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) { delete f.message; f.retired = true; }
-  }
-  // The list is stored once; each record keeps only where it goes and how it went.
-  game.revealText = text;
-  const records = game.pairs.filter((p) => p.giver.contact !== "owner").map((p) => ({ ref: newRef(), to: p.giver.contact, reveal: true, who: "a forwarded message", key: `santa:${r12y}:${game.round}:reveal:${p.giver.contact}`, attempt: 1, deliveryId: null }));
-  game.forwards.push(...records);
-  // Your owner's copy waits, like any message for them, until you have told them.
-  const plays = game.pairs.some((p) => p.giver.contact === "owner");
-  const id = plays ? ++game.forwardCount : null;
-  if (plays) game.forwards.push({ to: "owner", reveal: true, id, told: false });
-  await save();
-  for (const record of records) await deliver(record);
-  return plays ? { revealed: records.length, failed, forYourOwner: id } : { revealed: records.length, failed };
-}
-if (action === "leave") {
-  // Nothing changes while a message to, about or replaced for them is unconfirmed or on its way.
-  // Then their data and those messages go, even if the relink is refused.
-  const affected = game.forwards.filter((f) => f.to === contact || f.about === contact);
-  const giverOfLeaver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver.contact;
-  const matches = [game.sent[contact], giverOfLeaver && game.sent[giverOfLeaver]].filter(Boolean);
-  for (const record of [...affected, ...matches]) {
-    if (!(await settled(record))) {
-      // Keep any delivery the checks just saw before turning this away.
-      await save(true);
-      throw new Error("A message to or about them is unconfirmed or on its way: run resend, then leave again once it arrives");
-    }
-  }
-  // Each path below saves once, so the file never holds the leaver's removal without the hold or
-  // the relink that goes with it. `left` remembers who has gone, so running it again is safe.
-  game.left = game.left ?? [];
-  if (game.left.includes(contact)) {
-    // Already gone: finish a relink that stopped before its new match went out or reached your owner.
-    for (const record of Object.values(game.sent)) {
-      if (record.to !== "owner" && record.who === "a replaced match") await recover(record, true);
-    }
-    await save(true);
-    const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
-    return { left: true, failed, yours: own ? matchOf(own, game.sent.owner.replaces) : null };
-  }
-  delete game.addresses[contact];
-  delete game.wishes[contact];
-  game.forwards = game.forwards.filter((f) => !affected.includes(f));
-  const out = game.pairs?.find((p) => p.giver.contact === contact);
-  if (!out) {
-    game.left.push(contact);
-    await save();
-    return game.pairs ? { left: true, notInDraw: true } : { left: true };
-  }
-  const before = pairOf("recipient", contact);
-  if (game.pairs.length < 4 || banned(before.giver, out.recipient)) {
-    // The loop can't close without them: hold the draw so nothing more follows it until a redraw.
-    delete game.sent[contact];
-    delete game.sent[before.giver.contact];
-    game.held = true;
-    game.left.push(contact);
-    // Your owner's match belongs to the loop on hold too; the redraw gives a new one.
-    delete game.sent.owner;
-    await save();
-    throw new Error("Re-linking breaks the draw: it is on hold, ask for a full redraw");
-  }
-  before.recipient = out.recipient;
-  game.pairs = game.pairs.filter((p) => p !== out);
-  delete game.sent[contact];
-  game.left.push(contact);
-  prepare(before, true, true);
-  tooLong();
-  await save();
-  if (before.giver.contact !== "owner") await deliver(game.sent[before.giver.contact]);
-  return { people: game.pairs.length, failed, yours };
-}
-throw new Error(`Unknown action: ${action}`);
+return { round, people: pairs.length, failed, yours: draw.yours };
