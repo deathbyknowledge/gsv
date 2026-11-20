@@ -134,12 +134,13 @@ const statusOf = async (deliveryId) => {
 const settled = async (record, arrived = false) => {
   if (record.abandoned) return true;
   if (record.to === "owner") return record.told;
-  if (!record.deliveryId && !(await ended(record.to))) return false;
   const attempts = [];
   for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) attempts.push({ id, ...(await statusOf(id)) });
   // Any attempt seen delivered proves arrival, and is remembered, since an expired record
   // proves nothing.
   if (attempts.some((a) => a.state === "delivered")) record.arrived = true;
+  // An unsent retry is needed only while nothing has arrived, and never for an ended contact.
+  if (!record.deliveryId && !record.arrived && !(await ended(record.to))) return false;
   for (const { id, state, retryable } of attempts) {
     // A retired record is never sent again, but its older attempts still count until they settle.
     if (arrived && id === record.deliveryId && !record.arrived && !record.retired && (state === "gone" || state === "failed")) return false;

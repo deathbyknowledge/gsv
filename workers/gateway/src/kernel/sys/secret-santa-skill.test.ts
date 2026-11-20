@@ -1245,6 +1245,22 @@ describe.sequential("secret-santa hat script", () => {
     expect(hat.sent.slice(before).map((s) => s.message)).toEqual(["Their address: Rua A 1."]);
   });
 
+  it("settles an unsent retry once an older copy arrived", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const [first] = hat.sent;
+    hat.states.set(first.id, "failed");
+    hat.retryable.add(first.id);
+    hat.timesOut.add(first.to);
+    await hat.run({ action: "resend" });
+    hat.timesOut.clear();
+    hat.states.set(first.id, "delivered");
+    const before = hat.sent.length;
+    await hat.run({ action: "resend" });
+    expect(hat.sent).toHaveLength(before);
+    expect(await hat.run({ action: "close" })).toEqual({ closed: true });
+  });
+
   it("never sends an abandoned forward again when it is repeated", async () => {
     const hat = new Hat();
     await hat.draw({ people: PEOPLE, exclude: [] });
