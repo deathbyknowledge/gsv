@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   answerWhatsAppVerification,
@@ -290,6 +290,25 @@ describe("WhatsApp webhook normalization", () => {
       ["wamid.poll", true, "message"],
       ["wamid.unnamed", true, "message"],
     ]);
+  });
+
+  it("logs the name Meta gives what it withheld, never the message, so an unfamiliar one can be found", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const errors = [{ code: 131051, title: "Message type unknown" }];
+      const withheld = (id: string, type: string) => ({ from: "34611111189", id, type: "unsupported", errors, unsupported: { type } });
+      normalizeWhatsAppWebhook(notification([
+        withheld("wamid.photo", "image"),
+        withheld("wamid.edit", "edit"),
+        { from: "34611111189", id: "wamid.unnamed", type: "unsupported", errors },
+        withheld("wamid.odd", "Not a type name"),
+        textMessage(),
+      ]), PHONE_NUMBER_ID);
+      expect(info.mock.calls.map(([line]) => JSON.parse(String(line)))).toEqual(["image", "edit", "none", "other"]
+        .map((type) => ({ component: "managed_whatsapp", event: "inbound_withheld", type })));
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("ignores statuses, other numbers on the account, other fields and group traffic", () => {
