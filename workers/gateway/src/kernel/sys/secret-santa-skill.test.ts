@@ -974,6 +974,18 @@ describe.sequential("secret-santa hat script", () => {
     expect(Object.values(hat.game.sent).filter((r) => r.to !== "owner").every((r) => !("message" in r))).toBe(true);
   });
 
+  it("sends an expired, unconfirmed relink again on a repeated leave", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const giver = pair?.giver.contact ?? "";
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    hat.defaultState = null;
+    const before = hat.sent.length;
+    await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
+    expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: expect.stringMatching(/^New match/) })]);
+  });
+
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
     const first = new Hat();
     const second = new Hat();

@@ -440,8 +440,14 @@ if (action === "leave") {
     for (const record of Object.values(game.sent)) {
       if (record.to === "owner" || record.who !== "a replaced match" || record.abandoned) continue;
       if (!record.deliveryId) await deliver(record);
-      else if ((await statusOf(record.deliveryId)).state === "failed") await rotate(record);
+      else {
+        // A failed one goes again, and so does one whose record expired before anyone saw it arrive.
+        const { state } = await statusOf(record.deliveryId);
+        if (state === "delivered") record.arrived = true;
+        else if (state === "failed" || (state === "gone" && !record.arrived)) await rotate(record);
+      }
     }
+    await save(true);
     const own = game.sent.owner && !game.sent.owner.told ? game.pairs?.find((p) => p.giver.contact === "owner") : null;
     return { left: true, failed, yours: own ? matchOf(own, game.sent.owner.replaces) : null };
   }
