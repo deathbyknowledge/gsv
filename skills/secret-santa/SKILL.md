@@ -81,6 +81,7 @@ Everything that touches the file goes through this one script, run with CodeMode
 - **`start`**: creates the file at setup.
 - **`told`**: marks a message for your owner as passed on.
 - **`reveal`**: at Close, sends every other Ship the list, when everyone agreed.
+- **`arrived`**: records that a Ship confirmed it has the message named by `ref` (in `value`), when its delivery record has expired and a later message waits on it.
 - **`abandon`**: stops waiting for one message, named by the `ref` that `failed` gave it, set as `value`, so a redraw, a leave or `close` can go ahead. Use it only when a message keeps failing for a reason that won't change, and only after the organiser agrees, knowing such a message may still arrive later.
 - **`ask`**: forwards `text` to the giver or the recipient of `contact`, as `to` says.
 - **`close`**: after the swap, deletes the file once every match and forwarded message has arrived or failed for good; until then it changes nothing, and you run `resend` and close again later.
@@ -95,7 +96,7 @@ const people = [{ name: "NAME", contact: "CONTACT_ID" }]; // draw: everyone in d
 const exclude = [["CONTACT_ID", "CONTACT_ID"]]; // draw: pairs who must not draw each other
 const redraw = false; // draw: replace an existing draw; wish: replace their earlier wishes with this one
 const contact = "CONTACT_ID"; // address, wish, ask, leave: who it is about; resend: a Ship that confirmed nothing arrived
-const value = ""; // abandon: the ref from failed; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
+const value = ""; // abandon, arrived: a message's ref; start: where gifts go in person; address, wish: what they sent; told: the forYourOwner number, or "match" for your owner's match
 const to = "giver"; // ask: "giver" or "recipient" of contact
 const text = ""; // address, wish, ask: your message to forward after the draw; reveal: the list
 const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw, leave: the match message
@@ -103,6 +104,8 @@ const note = ({ name, address, wishes, replaces, deliverTo }) => `...`; // draw,
 const file = `secret-santa/${r12y.replace(/^r12y:/, "")}.json`;
 const path = `~/${file}`;
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
+// Size as the file stores it: UTF-8, with JSON escaping.
+const bytes = (v) => new TextEncoder().encode(JSON.stringify(String(v))).length;
 let game = null;
 // CodeMode reads at most 64 KiB, so a file any larger could never be read again, not even to
 // close. Every write, the first included, goes through this check, and always leaves room for
@@ -202,7 +205,11 @@ const settled = async (record, arrived = false) => {
   if (!record.deliveryId && !(await ended(record.to))) return false;
   for (const id of [record.deliveryId, ...(record.earlier ?? [])].filter(Boolean)) {
     const { state, retryable } = await statusOf(id);
-    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable && !(arrived && id === record.deliveryId)))) return false;
+    const current = id === record.deliveryId;
+    // Seen delivered is remembered, since an expired record proves nothing about arrival.
+    if (current && state === "delivered") record.arrived = true;
+    if (arrived && current && state === "gone" && !record.arrived) return false;
+    if (!(state === "delivered" || state === "gone" || (state === "failed" && !retryable && !(arrived && current)))) return false;
   }
   return true;
 };
@@ -230,12 +237,15 @@ const rotate = async (record) => {
 // change and its forward are saved together, then sent.
 const forward = async (other) => {
   if (!text) throw new Error("Write text to forward");
+  if (bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter message");
   // A correction, a new wish or a new answer must not be overtaken by the match or an earlier
   // message about the same person still on its way, or sent again after it. Nothing is saved
   // until those have arrived.
   const earlier = [game.sent[other.contact], ...game.forwards.filter((f) => f.to === other.contact && f.about === contact)].filter(Boolean);
-  for (const record of earlier) {
-    if (!(await settled(record, true))) throw new Error("Earlier messages to them are unconfirmed, failed or on their way: run resend, then send this again once they arrive");
+  const waiting = [];
+  for (const record of earlier) if (!(await settled(record, true))) waiting.push(record.ref);
+  if (waiting.length) {
+    throw new Error(`Earlier messages to them are unconfirmed, failed, expired or on their way (${waiting.join(", ")}): run resend, then send this again once they arrive. If one expired, ask that Ship whether it has it: if so, run arrived with its ref; if not, resend with contact set to that Ship`);
   }
   if (other.contact === "owner") {
     // Kept until you have told your owner, so a run that stops first can still pass it on.
@@ -335,6 +345,14 @@ if (action === "resend") {
   }
   return report;
 }
+if (action === "arrived") {
+  // That Ship confirmed it has this message, though its delivery record has expired.
+  const record = [...Object.values(game.sent), ...game.forwards].find((r) => r.ref && r.ref === value);
+  if (!record) throw new Error(`No message ${value}`);
+  record.arrived = true;
+  await save(true);
+  return { arrived: true };
+}
 if (action === "abandon") {
   // Only on the organiser's word, for the one message `failed` named by `value`, once they know
   // it may yet arrive.
@@ -364,7 +382,6 @@ if (game.held && action !== "draw" && action !== "resend") throw new Error("This
 if (action === "address" || action === "wish") {
   if (game.left?.includes(contact)) throw new Error("They have left this Secret Santa: nothing of theirs is kept");
   // Each wish or address is stored and repeated in a match, so keep it short enough for the file.
-  const bytes = (v) => new TextEncoder().encode(String(v)).length;
   if (bytes(value) > 2000 || bytes(text) > 2000) throw new Error("Too long to keep: ask for a shorter wish or address");
   // Someone who joined after the draw has no giver yet: keep what they sent for the redraw.
   const giver = game.pairs?.find((p) => p.recipient.contact === contact)?.giver ?? null;
@@ -386,9 +403,11 @@ if (action === "reveal") {
   if (!game.pairs) throw new Error("No draw yet");
   if (!text) throw new Error("Write the list as text");
   if (game.forwards.some((f) => f.reveal)) throw new Error("Already revealed: use resend");
-  // Delivered matches and forwards no longer need their text, which makes room for the list.
+  // At the end, matches and forwards that arrived or whose records expired no longer need their
+  // text, which makes room for the list.
   for (const f of [...Object.values(game.sent), ...game.forwards]) {
-    if (f.message !== undefined && f.to !== "owner" && f.deliveryId && (await statusOf(f.deliveryId)).state === "delivered") delete f.message;
+    if (f.message === undefined || f.to === "owner" || !f.deliveryId) continue;
+    if (f.arrived || ["delivered", "gone"].includes((await statusOf(f.deliveryId)).state)) delete f.message;
   }
   // The list is stored once; each record keeps only where it goes and how it went.
   game.revealText = text;

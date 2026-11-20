@@ -57,6 +57,8 @@ class Hat {
   sent: Sent[] = [];
   refuse = new Set<string>();
   states = new Map<string, string>();
+  // A sent message reads as delivered unless set otherwise; null makes every record expired.
+  defaultState: string | null = "delivered";
   writeFails = false;
   failing = new Set<string>();
   retryable = new Set<string>();
@@ -108,7 +110,7 @@ class Hat {
       const id = unquote(command.slice("message delivery show ".length).replace(/ --json$/, ""));
       if (this.lookupFails) return { status: "failed", output: "", error: "lookup failed" };
       if (!id.startsWith("delivery:")) return { status: "completed", exitCode: 1, output: "Contact delivery id is invalid" };
-      const state = this.states.get(id);
+      const state = this.states.get(id) ?? (this.sent.some((s) => s.id === id) ? this.defaultState : null);
       const delivery = state ? { deliveryId: id, state, retryable: this.retryable.has(id) } : null;
       return { status: "completed", exitCode: 0, output: JSON.stringify({ delivery }) };
     }
@@ -284,6 +286,7 @@ describe.sequential("secret-santa hat script", () => {
 
   it("resends only matches never accepted or failed, with the same text", async () => {
     const hat = new Hat();
+    hat.defaultState = null;
     hat.refuse.add("c:bob");
     expect(await hat.run({ people: PEOPLE, exclude: [] })).toEqual(expect.objectContaining({ failed: [{ who: "Bob", error: "refused", ref: expect.any(String) }] }));
     expect(Object.keys(hat.game.sent)).toHaveLength(PEOPLE.length);
@@ -611,6 +614,7 @@ describe.sequential("secret-santa hat script", () => {
 
   it("sends a match again once its Ship confirms an expired one never arrived", async () => {
     const hat = new Hat();
+    hat.defaultState = null;
     await hat.draw({ people: PEOPLE, exclude: [] });
     const before = hat.sent.length;
     expect(await hat.run({ action: "resend" })).toEqual(expect.objectContaining({ resent: 0, unknown: PEOPLE.length - 1 }));
@@ -834,6 +838,7 @@ describe.sequential("secret-santa hat script", () => {
       hat.states.set(hat.sent[hat.sent.length - 1].id, "delivered");
     }
     hat.states.clear();
+    hat.defaultState = null;
     const before = hat.sent.length;
     await hat.run({ action: "resend", contact: giver });
     expect(hat.sent.slice(before).map((s) => s.message.startsWith("Match") ? "match" : s.message)).toEqual(["match", "Tea, please.", "Socks too.", "Rua B 2."]);
@@ -913,6 +918,39 @@ describe.sequential("secret-santa hat script", () => {
     const before = hat.sent.length;
     await hat.run({ action: "leave", contact: pair?.recipient.contact ?? "" });
     expect(hat.sent.slice(before)).toEqual([expect.objectContaining({ to: giver, message: relink.message })]);
+  });
+
+  it("holds a correction behind an expired match until its Ship confirms it", async () => {
+    const hat = new Hat();
+    hat.defaultState = null;
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    const recipient = pair?.recipient.contact ?? "";
+    const ref = hat.game.sent[pair?.giver.contact ?? ""]?.ref ?? "";
+    await expect(hat.run({ action: "address", contact: recipient, value: "Rua N 2", text: "New address." })).rejects.toThrow(ref);
+    expect(await hat.run({ action: "arrived", value: ref })).toEqual({ arrived: true });
+    expect(await hat.run({ action: "address", contact: recipient, value: "Rua N 2", text: "New address." })).toEqual({ forwarded: true });
+  });
+
+  it("refuses a question too long to keep before saving it", async () => {
+    const hat = new Hat();
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    const pair = (hat.game.pairs ?? []).find((p) => p.giver.contact !== "owner" && p.recipient.contact !== "owner");
+    await expect(hat.run({ action: "ask", contact: pair?.giver.contact ?? "", to: "recipient", text: "q".repeat(2001) })).rejects.toThrow("Too long");
+    expect(hat.game.forwards).toEqual([]);
+  });
+
+  it("counts escaped characters as the file stores them", async () => {
+    const hat = new Hat();
+    await expect(hat.run({ action: "wish", contact: "c:bob", value: "\\".repeat(1000) })).rejects.toThrow("Too long");
+  });
+
+  it("drops expired messages' text too before the reveal", async () => {
+    const hat = new Hat();
+    hat.defaultState = null;
+    await hat.draw({ people: PEOPLE, exclude: [] });
+    await hat.run({ action: "reveal", text: "The list" });
+    expect(Object.values(hat.game.sent).filter((r) => r.to !== "owner").every((r) => !("message" in r))).toBe(true);
   });
 
   it("keys each game's messages by its responsibility, so a new game never replays an old one", async () => {
