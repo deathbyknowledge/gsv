@@ -1,7 +1,6 @@
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
   getCurrentTools,
   normalizeContext,
   type Api,
@@ -44,7 +43,6 @@ type OpenAiCodexRequestBody = {
   model: string;
   store: boolean;
   stream: boolean;
-  instructions: string;
   input: ReturnType<typeof convertResponsesMessages>;
   text: { verbosity: NonNullable<OpenAiCodexFetchOptions["textVerbosity"]> };
   include: string[];
@@ -201,10 +199,9 @@ function buildRequestBody(
     model: model.id,
     store: false,
     stream: true,
-    instructions: getCurrentSystemPrompt(transcript.messages) || "You are a helpful assistant.",
-    input: convertResponsesMessages(model, transcript, CODEX_TOOL_CALL_PROVIDERS, {
-      includeSystemPrompt: false,
-    }),
+    // The system prompt leads the input as a developer item, as in Codex: the backend places a
+    // top-level `instructions` after the conversation, so every turn would miss the prompt cache.
+    input: convertResponsesMessages(model, transcript, CODEX_TOOL_CALL_PROVIDERS),
     text: { verbosity: options?.textVerbosity ?? "low" },
     include: ["reasoning.encrypted_content"],
     tool_choice: "auto",

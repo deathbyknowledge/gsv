@@ -99,7 +99,7 @@ describe("public inference executor RPC", () => {
     const id = `space_connection_failure_${streaming}`;
     const executor = await service.getExecutor(id);
     expect(await generate(executor, request(id), streaming)).toMatchObject({
-      stopReason: "error", errorMessage: "Connection error.\nTransport cause: Fixture transport unavailable",
+      stopReason: "error", errorMessage: "Connection error.: Fixture transport unavailable",
     });
     expect(bindingFetch).toHaveBeenCalledTimes(3);
     expect((await rows(id)).requests).toMatchObject([{ state: "error", reserved_tokens: 0 }]);

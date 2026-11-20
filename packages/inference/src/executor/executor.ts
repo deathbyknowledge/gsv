@@ -15,7 +15,7 @@ import { executionEvent, executionResult } from "./projection";
 import { executeMedia } from "./media";
 import { requestBinding } from "./bodies";
 import * as z from "zod/mini";
-import { errorMessageFromUnknown, formatProviderErrorDiagnostic, formatProviderErrorMessage } from "../text/errors";
+import { errorMessageFromUnknown, formatProviderErrorMessage } from "../text/errors";
 
 import { InferenceRetirement } from "./retirement";
 import type { InstallationDeletionRequest, InstallationDeletionReceipt, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
@@ -30,7 +30,6 @@ type ActiveRequest = {
   state?: TerminalState;
   transport?: InferenceTransport;
   errorMessage?: string;
-  transportError?: string;
   providerStarted?: boolean;
 };
 
@@ -76,7 +75,6 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
       this.checkDeadline(request);
       if (request.state) return terminalResult(input, request.state);
       const result = executionResult(response);
-      this.retainTransportFailure(request, result);
       this.finish(request, result.stopReason === "aborted" ? "cancelled" : result.stopReason === "error" ? "error" : "completed", result.usage.output);
       return result;
     } catch (error) {
@@ -129,7 +127,6 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
             const projected = executionEvent(event.value);
             if (projected.type === "done" || projected.type === "error") {
               const result = projected.type === "done" ? projected.message : projected.error;
-              this.retainTransportFailure(request, result);
               const encoded = encodeManagedInferenceStreamEvent(projected);
               closed = true;
               cleanup();
@@ -300,18 +297,9 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
 
   private service(request: ActiveRequest) {
     return createGenerationService({
-      workersAi: requestBinding(this.env.AI, request.controller.signal, (diagnostic) => {
-        request.transportError = diagnostic;
-      }),
+      workersAi: requestBinding(this.env.AI, request.controller.signal),
       providers: this.providerFactories(),
     });
-  }
-
-  private retainTransportFailure(request: ActiveRequest, result: ManagedInferenceResult): void {
-    // The SDK replaces fetch exceptions with APIConnectionError and drops its cause.
-    if (result.stopReason === "error" && result.errorMessage === "Connection error." && request.transportError) {
-      result.errorMessage = formatProviderErrorDiagnostic(`Connection error.\nTransport cause: ${request.transportError}`);
-    }
   }
 
   private open(input: RequestIdentity, transport?: InferenceTransport): ActiveRequest {

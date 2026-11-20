@@ -13,7 +13,6 @@ import type {
   InferenceTarget as ManagedInferenceTarget,
 } from "@humansandmachines/gsv/services/inference";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Type } from "typebox";
 import {
   createGsvInferenceProviderFactory,
 } from "../../src/text/gsv-provider";
@@ -128,7 +127,7 @@ describe("GSV inference provider", () => {
     const { service } = managedService(generateStream);
     const models = createModels();
     models.setProvider(createGsvInferenceProviderFactory(service).create(ATTRIBUTION));
-    const tools = [{ name: "Read", description: "Read a fixture", parameters: Type.Object({ path: Type.String() }) }];
+    const tools = [{ name: "Read", description: "Read a fixture", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
     const context: Context = { ...CONTEXT, systemPrompt: "Synthetic system policy.", tools };
 
     await models.completeSimple(models.getModel("gsv", GSV_INFERENCE_MODEL)!, context);
