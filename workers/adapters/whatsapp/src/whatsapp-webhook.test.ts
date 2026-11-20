@@ -267,7 +267,7 @@ describe("WhatsApp webhook normalization", () => {
     expect(result.events.every((event) => event.kind === "message" && event.inbound.unsupportedContent && event.inbound.text === "")).toBe(true);
   });
 
-  it("tells what WhatsApp withheld: a photo of an album, a message it does not pass on, or nothing to answer", () => {
+  it("tells what WhatsApp withheld: a photo, a message it does not pass on, or nothing to answer", () => {
     // Meta's shape for a message the Cloud API does not deliver; `unsupported.type` names what it was.
     const errors = [{ code: 131051, title: "Message type unknown" }];
     const withheld = (id: string, type: string) => ({ from: "34611111189", id, type: "unsupported", errors, unsupported: { type } });
@@ -281,6 +281,8 @@ describe("WhatsApp webhook normalization", () => {
       withheld("wamid.pin", "pin"),
       withheld("wamid.reaction", "reaction"),
       withheld("wamid.kept", "keep_in_chat"),
+      // An album arrives as its photos, each delivered, after one withheld message marking them as an album.
+      withheld("wamid.marker", "album"),
     ]), PHONE_NUMBER_ID);
     if (result.kind !== "accepted") throw new Error("expected accepted events");
     expect(result.events.map((event) => event.kind === "message" ? [event.inbound.messageId, event.inbound.unsupportedContent, event.inbound.withheld] : event.kind)).toEqual([
