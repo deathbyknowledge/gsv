@@ -3649,6 +3649,36 @@ describe("native administration shell commands", () => {
     expect(cancel).toHaveBeenCalledWith("CodeMode response completed");
   });
 
+  it("runs a built-in skill's script with JSON arguments from a quoted heredoc", async () => {
+    const draw = { round: 1, pairs: [{ giver: "contact:a", recipient: "contact:b" }], matches: [], yours: null };
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "fs.read") {
+        const content = JSON.stringify(draw);
+        const data = { ok: true, kind: "text", path: "~/secret-santa/one.draw.json", size: content.length, contentType: "application/json" };
+        return { type: "res", id: frame.id, ok: true, data, body: bodyFromText(content) };
+      }
+      if (frame.call === "shell.exec") return { type: "res", id: frame.id, ok: true, data: { status: "completed", exitCode: 0, output: "delivery_id=delivery:1\ndelivery_state=queued\n" } };
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec({
+      input: [
+        `codemode /sys/skills.d/secret-santa/hat.txt --args-json "$(cat <<'EOF'`,
+        `{"action": "ask", "r12y": "r12y:one", "contact": "contact:b", "to": "giver", "text": "It's a scarf, under $20"}`,
+        "EOF",
+        ')"',
+      ].join("\n"),
+    }, ctx, { request });
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain('"forwarded": true');
+    expect(request.mock.calls.map(([frame]) => frame.call)).toEqual(["sys.mcp.list", "fs.read", "shell.exec"]);
+    expect(request.mock.calls[1][0].args).toMatchObject({ path: "~/secret-santa/one.draw.json" });
+    expect(request.mock.calls[2][0].args).toMatchObject({ input: expect.stringContaining("--to 'contact:a' --message 'It'\\''s a scarf, under $20'") });
+  });
+
   it("shows mcp command usage", async () => {
     const result = await handleShellExec(
       { input: "mcp --help" },

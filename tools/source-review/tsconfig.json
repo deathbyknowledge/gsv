@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "../../workers/gateway/worker-configuration.d.ts"]
   },
-  "include": ["./prompt-preview.ts"]
+  "include": ["./prompt-preview.ts", "../../workers/gateway/src/text-modules.d.ts"]
 }

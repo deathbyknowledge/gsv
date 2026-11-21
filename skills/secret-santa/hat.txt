@@ -1,0 +1,176 @@
+// The Secret Santa hat script. Ship keeps the game file, ~/secret-santa/ID.json, with each person's
+// name, contact, wishes and address. This script draws from it and keeps who drew whom in
+// ~/secret-santa/ID.draw.json, which only it reads, so the pairs stay out of Ship's context. Run it on
+// gsv with
+//   codemode /sys/skills.d/secret-santa/hat.txt --args-json JSON
+// giving `action` ("draw" or "ask") and the arguments that action uses; SKILL.md says what each is for.
+const defaults = { action: "", r12y: "", redraw: false, round: 0, note: "", contact: "", to: "", text: "" };
+const unknown = Object.keys(args).find((key) => !Object.hasOwn(defaults, key));
+if (unknown) throw new Error(`Unknown argument ${unknown}: use ${Object.keys(defaults).join(", ")}`);
+const { action, r12y, redraw, round: from, note, contact, to, text } = { ...defaults, ...args };
+if (action !== "draw" && action !== "ask") throw new Error('Set action to "draw" or "ask"');
+if (redraw !== true && redraw !== false) throw new Error("redraw must be true or false");
+if (!Number.isInteger(from) || from < 0) throw new Error("round must be a whole number");
+const id = String(r12y).replace(/^r12y:/, "");
+if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Set r12y to the Secret Santa responsibility");
+
+const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
+const bytes = (s) => new TextEncoder().encode(s).length;
+// A file that is missing reads as null; any other failure throws, so a draw is never repeated
+// because its file could not be read.
+const readJson = async (name) => {
+  const path = `~/secret-santa/${name}`;
+  const read = await fs.read({ target: "gsv", path });
+  if (!read.ok) {
+    const exists = await shell(`test -e "$HOME"/secret-santa/${q(name)}`, { target: "gsv" });
+    if (exists.exitCode === 1) return null;
+    throw new Error(`Cannot read ${path}: ${read.error}`);
+  }
+  if (read.truncated) throw new Error(`${path} is too large to read in one go`);
+  return JSON.parse(read.content);
+};
+const saveDraw = async (draw) => {
+  const content = JSON.stringify(draw);
+  // CodeMode reads at most 64 KiB, so a larger file could not be read back to resend or forward.
+  if (bytes(content) > 60000) throw new Error("Too much to send: ask the people with the longest wishes to sum them up");
+  const written = await fs.write({ target: "gsv", path: `~/secret-santa/${id}.draw.json`, content });
+  if (!written.ok) throw new Error(`Cannot save the draw: ${written.error}`);
+};
+// One contact message under a fixed key: the same key and text again returns the same delivery
+// instead of sending a second message, so running this script again never sends anything twice.
+const send = async (destination, message, key) => {
+  const sent = await shell(`message send --to ${q(destination)} --message ${q(message)} --delivery-id ${q(key)} --responsibility ${q(`r12y:${id}`)} --also`, { target: "gsv" });
+  const state = sent.exitCode === 0 ? /delivery_state=(\w+)/.exec(sent.output)?.[1] : undefined;
+  return state ?? `unsent: ${String(sent.error || sent.output || "no delivery").trim().slice(0, 200)}`;
+};
+const sentOk = (state) => state === "queued" || state === "delivered";
+
+if (action === "ask") {
+  const draw = await readJson(`${id}.draw.json`);
+  if (!draw) throw new Error("No draw yet");
+  if (to !== "giver" && to !== "recipient") throw new Error('Set to to "giver" or "recipient"');
+  if (!text) throw new Error("Write text to forward");
+  if (bytes(text) > 2000) throw new Error("Too long to forward: shorten it");
+  const pair = draw.pairs.find((p) => (to === "giver" ? p.recipient : p.giver) === contact);
+  if (!pair) throw new Error(`${contact} is not in the draw`);
+  const other = pair[to];
+  if (other === "owner") return { forYourOwner: text };
+  // Keyed by the text, so the same text again is not sent twice; a reworded text is a new message.
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${contact}\n${to}\n${text}`));
+  const sum = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const state = await send(other, text, `santa:${id}:${draw.round}:ask:${sum}`);
+  return { forwarded: sentOk(state), state };
+}
+
+const previous = await readJson(`${id}.draw.json`);
+if (redraw && previous && (from < 1 || (from !== previous.round && from !== previous.round - 1))) throw new Error(`Set round to ${previous.round}, the round this redraw replaces`);
+// A redraw run again, naming the round it already replaced, sends that redraw again rather than
+// drawing everyone a third time.
+if (previous && (!redraw || from === previous.round - 1)) {
+  // Sending the same draw again: a match already accepted comes back as it is, and one that failed
+  // goes again under its next key, saved first so a later run reuses that key.
+  const failed = [];
+  for (const match of previous.matches) {
+    let state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+    if (state === "failed") {
+      match.attempt += 1;
+      await saveDraw(previous);
+      state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+    }
+    if (!sentOk(state)) failed.push({ name: match.name, state });
+  }
+  return { round: previous.round, people: previous.pairs.length, resent: true, failed, yours: previous.yours };
+}
+
+const game = await readJson(`${id}.json`);
+if (!game) throw new Error(`Write the game file ~/secret-santa/${id}.json first`);
+const people = game.people;
+if (!Array.isArray(people) || people.some((p) => typeof p?.name !== "string" || !p.name.trim() || typeof p?.contact !== "string" || !p.contact || p.contact !== p.contact.trim())) throw new Error("Give each person in the game file a name and a contact");
+if (people.length < 3) throw new Error("A draw needs at least 3 people");
+if (new Set(people.map((p) => p.contact)).size !== people.length) throw new Error("Each person must appear once");
+const exclude = game.exclude ?? [];
+// An exclusion naming someone not in the draw, such as a mistyped contact, would be silently ignored.
+const inDraw = (c) => people.some((p) => p.contact === c);
+if (!Array.isArray(exclude) || exclude.some((pair) => !Array.isArray(pair) || pair.length !== 2 || !pair.every(inDraw))) throw new Error("Each exclusion must be a pair of contacts of people in the game file");
+if (!String(note).includes("{name}")) throw new Error("Set note to the match message, with {name} where the recipient's name goes");
+if (redraw && !String(note).includes("{round}")) throw new Error("Put {round} in a redraw's note, so each Ship keeps the newest match");
+const banned = (a, b) => exclude.some(([x, y]) => (x === a.contact && y === b.contact) || (x === b.contact && y === a.contact));
+
+const rand = (n) => {
+  const a = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(a);
+  } while (a[0] >= 2 ** 32 - (2 ** 32 % n));
+  return a[0] % n;
+};
+const shuffled = (list) => {
+  const order = [...list];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = rand(i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+};
+// One loop, so everyone gives once, receives once and nobody draws themselves. Reshuffling keeps
+// every allowed loop equally likely; when exclusions leave few, a randomised search finds one or
+// shows that none exists.
+const loop = (order) => order.map((giver, i) => ({ giver, recipient: order[(i + 1) % order.length] }));
+let pairs = null;
+for (let tries = 0; !pairs && tries < 1000; tries++) {
+  const candidate = loop(shuffled(people));
+  if (!candidate.some((p) => banned(p.giver, p.recipient))) pairs = candidate;
+}
+if (!pairs) {
+  const [first, ...rest] = shuffled(people);
+  const path = [first];
+  let steps = 0;
+  const extend = (left) => {
+    if (++steps > 200000) throw new Error("No draw found yet for these exclusions, though one may exist: run the draw again, and if it keeps failing ask the organiser to drop one");
+    if (!left.length) return !banned(path[path.length - 1], first);
+    for (const next of shuffled(left)) {
+      if (banned(path[path.length - 1], next)) continue;
+      path.push(next);
+      if (extend(left.filter((p) => p !== next))) return true;
+      path.pop();
+    }
+    return false;
+  };
+  if (!extend(rest)) throw new Error("No draw fits these exclusions");
+  pairs = loop(path);
+}
+
+const round = (previous?.round ?? 0) + 1;
+// The match message: `note` with {name}, {address}, {wishes}, {deliverTo} and {round} filled in. A
+// line whose placeholder has nothing to fill, such as {address} on the in-person type, is left out.
+const render = (recipient) => {
+  const wishes = Array.isArray(recipient.wishes) ? recipient.wishes.join("\n") : String(recipient.wishes ?? "");
+  const values = { name: recipient.name, address: recipient.address ?? "", wishes, deliverTo: game.deliverTo ?? "", round: String(round) };
+  return String(note).split("\n").flatMap((line) => {
+    const names = [...line.matchAll(/\{(\w+)\}/g)].map(([, placeholder]) => placeholder);
+    const missing = names.find((placeholder) => !Object.hasOwn(values, placeholder));
+    if (missing) throw new Error(`note has no {${missing}}: use {name}, {address}, {wishes}, {deliverTo} or {round}`);
+    return names.some((placeholder) => !values[placeholder]) ? [] : [line.replace(/\{(\w+)\}/g, (_, placeholder) => values[placeholder])];
+  }).join("\n");
+};
+// Matches are kept and sent in contact order, never in the loop's order, which would show who
+// follows whom. Your own owner's match is returned for you to tell them, never sent.
+const ordered = [...pairs].sort((a, b) => (a.giver.contact < b.giver.contact ? -1 : 1));
+const owned = ordered.find((p) => p.giver.contact === "owner");
+const draw = {
+  round,
+  pairs: ordered.map((p) => ({ giver: p.giver.contact, recipient: p.recipient.contact })),
+  matches: ordered.filter((p) => p !== owned).map((p) => ({ name: p.giver.name, to: p.giver.contact, key: `santa:${id}:${round}:${p.giver.contact}`, attempt: 1, message: render(p.recipient) })),
+  yours: owned ? render(owned.recipient) : null,
+};
+if (draw.matches.some((match) => bytes(match.message) > 32000)) throw new Error("A match message is too long to send: ask for shorter wishes");
+// Two draws at once would each save their own pairs: stop if another run saved one meanwhile.
+const latest = await readJson(`${id}.draw.json`);
+if ((latest?.round ?? 0) !== (previous?.round ?? 0)) throw new Error("Another draw was saved while this ran: run one hat action at a time, then send the draw again");
+// Saved before anything is sent, so a run that stops partway sends the same matches when run again.
+await saveDraw(draw);
+const failed = [];
+for (const match of draw.matches) {
+  const state = await send(match.to, match.message, `${match.key}:${match.attempt}`);
+  if (!sentOk(state)) failed.push({ name: match.name, state });
+}
+return { round, people: pairs.length, failed, yours: draw.yours };
