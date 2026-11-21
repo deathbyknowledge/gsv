@@ -1008,7 +1008,7 @@ the operator's signup address with `?invite=` naming the Ship: its handle on the
 operator's domain, or its full hostname otherwise. Someone new creates a Ship and
 lands in People with a request to the inviter ready to send; someone with a Ship
 signs in and gets the same. Without a signup site, the link is the Ship's
-`/profile` page. Either way the request works only while the inviter's profile is
+address, which shows its profile. Either way the request works only while the inviter's profile is
 public and takes requests. `contact invite` in Shell prints the link.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
@@ -1227,7 +1227,8 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 Each space has one owner-authenticated profile, published as the Ship's `space.ship.profile` record
 (record key `self`) in its [open-network repository](#open-network-atproto). The Gateway renders that
-record as the page at `https://SPACE/profile`, and older `/@name` links redirect there. Nothing is public
+record as the page at the Ship's address, `https://SPACE`, which `profile.get` and `profile.resolve` return as
+`url`; `/profile` shows the same page, and older `/@name` links redirect to the address. Nothing is public
 until the owner chooses: `sys.setup` takes `profile: "public" | "private"` where `setupFeatures` lists
 `profile`, which it does only with the `PDS` service. Either choice saves a draft named by the Ship's handle
 with `contactPolicy: "requests"`; a public choice is published, as the owner has since edited it, at the next

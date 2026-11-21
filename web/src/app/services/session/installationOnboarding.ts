@@ -86,7 +86,8 @@ export function takeFirstRunInvite(): string | null {
 function isProfilePage(value: string): boolean {
   try {
     const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password && url.pathname === "/profile";
+    // A Ship's address is its profile page; links from before it was say `/profile`.
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password && (url.pathname === "/" || url.pathname === "/profile");
   } catch {
     return false;
   }

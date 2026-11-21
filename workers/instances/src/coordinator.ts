@@ -43,7 +43,7 @@ const humanInputSchema = z.discriminatedUnion("kind", [
 ]);
 type OwnedOperation = { abort: AbortController; done: Promise<unknown> };
 const liveHandoff = (value: BrowserHandoff): boolean => value.state === "pending" || value.state === "active";
-const actionPath = (value: BrowserHandoff): string => `/?browserInstance=${encodeURIComponent(value.instanceId)}&browserHandoff=${encodeURIComponent(value.requestId)}`;
+const actionPath = (value: BrowserHandoff): string => `/chat?browserInstance=${encodeURIComponent(value.instanceId)}&browserHandoff=${encodeURIComponent(value.requestId)}`;
 
 function isBrowserRequest(frame: InstanceTargetRequest): frame is Extract<InstanceTargetRequest, { call: typeof IMPLEMENTATIONS[number] }> {
   return IMPLEMENTATIONS.some(call => call === frame.call);

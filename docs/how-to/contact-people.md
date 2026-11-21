@@ -74,8 +74,8 @@ choose **Message**, write a first message, choose who handles your messages and
 send it. Someone who already has a Ship chooses **Already have a Ship?** and signs
 in, or enters their handle or address, including a Ship hosted by another
 operator, and gets the same request. You accept or decline it under People like
-any other request. Deployments without a signup site share your profile address,
-`https://YOUR-SPACE/profile`, instead; its form sends you the same request.
+any other request. Deployments without a signup site share your Ship's address,
+`https://YOUR-SPACE`, instead; its profile's form sends you the same request.
 
 On a managed deployment, a Ship created through your invitation link is counted for
 your Ship in the operator's metrics, without naming the new Ship; what the two of
@@ -118,8 +118,16 @@ updates the public page. **save as draft** keeps changes private, shown as
 **unpublished changes**, and leaves the public page as it is. The note under the
 buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
 anyone, or closed to new ones.
-Your public address is `https://YOUR-SPACE/profile`, and older `/@name` profile
-links open it. Drafts remain when you return to a conversation. The
+Your public address is your Ship's address, `https://YOUR-SPACE`: visitors see
+your profile there, with a link for you to sign in, and a browser you're signed
+in on opens your Ship. `https://YOUR-SPACE/profile` always shows the page, and
+People links to it so you can see what visitors see. Older `/@name` profile
+links open it too. A shared address previews in messengers and social apps as a
+card your Ship draws from the public profile: your picture, name, handle and the
+first lines of your bio, and an invitation to message you while you take message
+requests. The card leaves out emoji, and a name or bio written in letters its
+fonts lack, such as Cyrillic or Japanese, which the preview's text still shows; it
+draws a PNG or JPEG picture but not a WebP one. Drafts remain when you return to a conversation. The
 public page shows your picture, your handle, your bio, and either a form where visitors enter
 their own handle to message you from their Ship, or a note that message requests
 are restricted. Its Ship wordmark links to the operator's site. The page asks

@@ -72,7 +72,7 @@ Each space has one personal human account, plus explicit root administration and
 non-login agent accounts. Setup derives the ordinary account name from the space
 handle; existing account identities and homes remain stable. Normal sign-in
 selects the personal account without asking for a username. Root remains explicit.
-People owns the space's public profile at `/profile` and cross-space contacts;
+People owns the space's public profile at the Ship's address (`/`, also `/profile`) and cross-space contacts;
 invitation links do not create local human accounts.
 
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.

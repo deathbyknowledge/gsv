@@ -386,7 +386,7 @@ async function readProfileRecord(resolved: ResolvedDid, ctx: KernelContext): Pro
   const record = found.data.value;
   return {
     did, handle, cid: found.data.cid, displayName: record.displayName, about: record.about ?? "",
-    contactPolicy: profileContactPolicy(record.contactPolicy), url: `https://${handle}/profile`,
+    contactPolicy: profileContactPolicy(record.contactPolicy), url: `https://${handle}`,
   };
 }
 
@@ -439,12 +439,12 @@ export function profileOwnerActive(ownerUid: number, ctx: KernelContext): boolea
   return !!account && ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid) && !!shadow && !isLocked(shadow);
 }
 
-/** The profile's address: the page on the Ship's handle host, which also names its DID. */
+/** The profile's address: the Ship's handle host itself, which also names its DID. */
 function profileUrl(ctx: KernelContext): string {
   const origin = ctx.installationIdentity?.canonicalOrigin;
   if (!origin) throw new Error("Installation has no canonical origin");
   const address = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain);
-  return `${address?.origin ?? origin}/profile`;
+  return new URL(address?.origin ?? origin).origin;
 }
 
 /** Whether the bytes begin as the declared image type does, so the Ship never serves other content as a picture. */

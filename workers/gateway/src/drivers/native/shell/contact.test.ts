@@ -54,7 +54,7 @@ describe("contact invite", () => {
 
   it("falls back to the public profile without operator signup", async () => {
     const result = await invite("requests", JSON.stringify({ primaryDomain: "ship.space" })).exec("contact invite");
-    expect(result.stdout).toBe("https://esteve.ship.space/profile\n");
+    expect(result.stdout).toBe("https://esteve.ship.space\n");
   });
 
   it("takes no arguments", async () => {
@@ -65,7 +65,7 @@ describe("contact invite", () => {
 describe("contact connect", () => {
   const profile: PublicProfile = {
     did: "did:plc:adaadaadaadaadaadaadaada", handle: "ada.ship.space", cid: "bafyada", displayName: "Ada", about: "",
-    contactPolicy: "requests", url: "https://ada.ship.space/profile",
+    contactPolicy: "requests", url: "https://ada.ship.space",
   };
 
   it("resolves the handle and sends one message request under the owner's name", async () => {

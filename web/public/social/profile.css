@@ -11,6 +11,7 @@ header { padding-bottom: 32px; border-bottom: 1px solid var(--line); }
 .wordmark { display: inline-block; color: var(--glyph); text-shadow: var(--glow); letter-spacing: .22em; font-size: 12px; font-weight: 500; }
 a.wordmark { text-decoration: none; }
 a.wordmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.sign-in { margin: 0; }
 .wordmark.is-glitch { text-shadow: 1px 0 0 rgba(255, 90, 160, .3), -1px 0 0 rgba(90, 200, 255, .28), 0 0 9px rgba(140, 120, 235, .55); transform: translateX(.6px); }
 .restricted { position: relative; display: flex; align-items: center; gap: 8px; margin: 32px 0 0; padding-block: 20px; border-block: 1px solid var(--line); color: var(--muted); }
 .avatar { display: block; width: 96px; height: 96px; margin-top: 40px; border: 1px solid var(--line); object-fit: cover; background: var(--panel); }

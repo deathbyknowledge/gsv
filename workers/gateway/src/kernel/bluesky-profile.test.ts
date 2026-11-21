@@ -4,7 +4,7 @@ import type { ShipProfileRecord } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
 import { blueskyProfile, type BlueskyProfileRecord } from "./bluesky-profile";
 
-const PAGE = "https://alice.ship.test/profile";
+const PAGE = "https://alice.ship.test";
 // A picture's CID as the repository names it (CIDv1, raw, SHA-256).
 const CID = "bafkreibbrlmfuiz676bjmgfgqznlnajcfnzuyywtlizlh2v5lq35rfc7qy";
 const PNG = { $type: "blob", ref: { $link: CID }, mimeType: "image/png", size: 12 } as const;

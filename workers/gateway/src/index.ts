@@ -54,7 +54,7 @@ import { buildGitProxyRequest, getBasicAuth, matchGitPath, publicGitResponse } f
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isShipXrpcPath } from "./kernel/ships/xrpc";
-import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
+import { matchPublicProfilePath, servePublicProfileHome, servePublicProfileRequest } from "./public-profiles";
 import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
@@ -159,12 +159,13 @@ export default {
 
     if (hookPath) return receiveHook(request, hookPath, kernelDO);
 
+    const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
+    const homeOrigin = primaryDomain ? `https://${primaryDomain}` : undefined;
     if (profilePath) {
-      const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
       return servePublicProfileRequest(request, profilePath, {
         page: () => kernelDO.getPublicProfile(),
         avatar: () => kernelDO.getPublicProfileAvatar(),
-      }, primaryDomain ? `https://${primaryDomain}` : undefined);
+      }, homeOrigin);
     }
 
     if (federationPath) {
@@ -215,7 +216,9 @@ export default {
     }
 
     if (request.method === "GET" || request.method === "HEAD") {
-      return withPublicDeploymentConfig(await env.ASSETS.fetch(request), env);
+      // The Ship's address is its public profile when it has one; the app lives at its own paths.
+      const home = url.pathname === "/" ? await servePublicProfileHome(request, { page: () => kernelDO.getPublicProfile() }, homeOrigin) : null;
+      return home ?? withPublicDeploymentConfig(await env.ASSETS.fetch(request), env);
     }
     return new Response("Not Found", { status: 404 });
   },
