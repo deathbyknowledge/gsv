@@ -756,11 +756,10 @@ export type KeyPress = { key: string; ctrlKey: boolean; metaKey: boolean; altKey
 
 /**
  * Whether a key pressed outside any text field is the start of writing: one printable character with
- * no command modifier (Shift is how capitals are typed) that no shortcut has claimed. Whitespace never starts it.
+ * no command modifier (Shift is how capitals are typed). No shortcut claims a character; whitespace never starts it.
  */
-export function startsWriting(press: KeyPress, claimed: ReadonlySet<string>): boolean {
+export function startsWriting(press: KeyPress): boolean {
   if (press.ctrlKey || press.metaKey || press.altKey) return false;
-  if (claimed.has(press.key)) return false;
   return Array.from(press.key).length === 1 && !/\s/u.test(press.key);
 }
 

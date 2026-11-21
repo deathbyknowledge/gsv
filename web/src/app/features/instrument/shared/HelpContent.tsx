@@ -5,6 +5,8 @@ import { useT, type TextKey } from "../../../i18n/locale";
 import { shortcutLabel } from "../../../services/platform/shortcutKeys";
 import { memoryLinkHref } from "../memory/memoryLinks";
 import { publicDeployment } from "../../../services/deployment";
+import { LINE_ICONS, LineIcon } from "./lineIcons";
+import { shellShortcutKeys, type ShellAction } from "./shellKeys";
 
 export const HELP_MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md", fragment: "" };
 
@@ -17,15 +19,8 @@ type HelpContentProps = {
   onNavigate: (href: string) => void;
 };
 
-function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" | "privacy" }) {
-  const paths = {
-    talk: "M3 3h14v10H8l-5 4V3Z",
-    phone: "M6 2h8v16H6V2Zm3 13h2",
-    memory: "M3 3h6l1 2 1-2h6v14h-6l-1 1-1-1H3V3Zm7 2v13",
-    permissions: "M3 5h14M3 15h14M7 2v6M13 12v6",
-    privacy: "M4 9h12v9H4V9Zm2 0V6a4 4 0 0 1 8 0v3",
-  };
-  return <svg class="instrument-help-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d={paths[kind]} /></svg>;
+function HelpIcon({ kind }: { kind: "chat" | "phone" | "memory" | "settings" | "privacy" }) {
+  return <LineIcon path={LINE_ICONS[kind]} class="instrument-help-icon" />;
 }
 
 export function HelpContent({ distance, connected, onClose, onSearch, onFeedback, onNavigate }: HelpContentProps) {
@@ -50,6 +45,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
   const modifier = /mac/i.test(platform) ? "Meta" : "Ctrl";
   const saveShortcut = shortcutLabel(`${modifier}+Enter`, platform);
   const findShortcut = shortcutLabel(`${modifier}+F`, platform);
+  const shell = (action: ShellAction) => shortcutLabel(shellShortcutKeys(action), platform);
   const navigate: JSX.MouseEventHandler<HTMLAnchorElement> = (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
     event.preventDefault();
@@ -71,24 +67,23 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
           <h4>{t("shell.help.views")}</h4>
           <p>{t("shell.help.viewsHint")}</p>
           <dl>
-            <dt>c</dt><dd>Chat</dd>
-            <dt>w</dt><dd>{t("shell.help.work")}</dd>
-            <dt>m</dt><dd>{t("shell.help.memory")}</dd>
-            <dt>p</dt><dd>{t("shell.help.people")}</dd>
-            <dt>s</dt><dd>{t("settings.title")}</dd>
-            <dt>l</dt><dd>{t("shell.help.theme")}</dd>
-            <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
+            <dt>{shell("zen")}</dt><dd>Chat</dd>
+            <dt>{shell("fleet")}</dt><dd>{t("shell.help.work")}</dd>
+            <dt>{shell("memory")}</dt><dd>{t("shell.help.memory")}</dd>
+            <dt>{shell("people")}</dt><dd>{t("shell.help.people")}</dd>
+            <dt>{shell("settings")}</dt><dd>{t("settings.title")}</dd>
+            <dt>{shell("theme")}</dt><dd>{t("shell.help.theme")}</dd>
+            <dt>{shell("help")}</dt><dd>{t("shell.help.toggle")}</dd>
             <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
           </dl>
           {distance === "zen" && <>
             <h4>{t("shell.help.chatBrowse")}</h4>
             <dl>
-              <dt>j / k</dt><dd>{t("shell.help.nextPrevious")}</dd>
-              <dt>gg / G</dt><dd>{t("shell.help.history")}</dd>
-              <dt>o</dt><dd>{t("shell.help.activity")}</dd>
-              <dt>/</dt><dd>{t("shell.help.browseSearch", { shortcut: findShortcut })}</dd>
-              <dt>y / n</dt><dd>{t("shell.help.approve")}</dd>
-              <dt>{t("shell.help.otherKeys")}</dt><dd>{t("shell.help.startWriting")}</dd>
+              <dt>↓ / ↑</dt><dd>{t("shell.help.nextPrevious")}</dd>
+              <dt>Home / End</dt><dd>{t("shell.help.history")}</dd>
+              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.activity")}</dd>
+              <dt>{findShortcut}</dt><dd>{t("shell.help.conversationSearch")}</dd>
+              <dt>{t("shell.help.anyCharacter")}</dt><dd>{t("shell.help.startWriting")}</dd>
             </dl>
             <h4>{t("shell.help.chatInput")}</h4>
             <dl>
@@ -148,7 +143,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
     <h3>{t("shell.help.gettingStarted")}</h3>
     <div class="instrument-help-topics">
       <details class="instrument-help-talking">
-        <summary class="instrument-help-row">{row("talk", "shell.help.talking", "shell.help.talkingHint")}</summary>
+        <summary class="instrument-help-row">{row("chat", "shell.help.talking", "shell.help.talkingHint")}</summary>
         <div class="instrument-help-examples">
           <p>{t("shell.help.talkingExplanation")}</p>
           <ul><li>{t("shell.help.examplePlan")}</li><li>{t("shell.help.exampleFind")}</li><li>{t("shell.help.exampleFollowUp")}</li></ul>
@@ -156,7 +151,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
       </details>
       <a class="instrument-help-row" href="/chat/settings?section=messengers" onClick={navigate}>{row("phone", "shell.help.whatsapp", "shell.help.whatsappHint")}</a>
       <a class="instrument-help-row" href="/memory" onClick={navigate}>{row("memory", "shell.help.memory", "shell.help.memoryHint")}</a>
-      <a class="instrument-help-row" href="/chat/settings?section=permissions" onClick={navigate}>{row("permissions", "shell.help.permissions", "shell.help.permissionsHint")}</a>
+      <a class="instrument-help-row" href="/chat/settings?section=permissions" onClick={navigate}>{row("settings", "shell.help.permissions", "shell.help.permissionsHint")}</a>
       {privacyUrl && <a class="instrument-help-row" href={privacyUrl} target="_blank" rel="noopener noreferrer">{row("privacy", "shell.help.privacy", "shell.help.privacyHint")}</a>}
     </div>
     <button type="button" class="instrument-help-shortcuts" ref={shortcutsButton} onClick={() => showShortcuts(true)}>

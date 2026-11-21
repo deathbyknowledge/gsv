@@ -1,6 +1,6 @@
 # Contact people on other Ships
 
-**People** holds conversations with people on other Ships. Open it with `p`.
+**People** holds conversations with people on other Ships. Open it from the header, or with **Alt+P** (**Option+P** on a Mac).
 It opens **Recent**, your conversations newest first; older ones load as you scroll.
 The search icon beside the heading searches all of People by name or handle,
 whichever list it opens from: recent and archived conversations, pending requests

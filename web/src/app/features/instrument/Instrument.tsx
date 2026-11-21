@@ -24,7 +24,7 @@ import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { HelpContent, HELP_MANUAL_PAGE } from "./shared/HelpContent";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { FirstRun } from "./onboarding/FirstRun";
-import { SHELL_KEYS } from "./shared/shellKeys";
+import { shellShortcut } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
 import { useInstrumentViewport } from "./shared/useInstrumentViewport";
@@ -111,14 +111,11 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
   useTabAttention();
   const [help, setHelp] = useState(false);
-  const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
   const [feedbackRequest, setFeedbackRequest] = useState(0);
   const feedbackAvailable = snapshot.server?.features?.includes(FEEDBACK_FEATURE) || import.meta.env.VITE_GSV_PREVIEW === "true";
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
-  const navigationRef = useRef<HTMLElement>(null);
-  const navigationButtonRef = useRef<HTMLButtonElement>(null);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
   const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
@@ -164,7 +161,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm(t("shell.confirm.discardFleetEdits"))) return false;
-      setNavigationOpen(false);
       if (to === distance) {
         if (reference) setFleetRequest({ reference });
         return true;
@@ -184,8 +180,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
 
   const closeHelp = useCallback(() => {
     setHelp(false);
-    const button = helpButtonRef.current;
-    (button?.getClientRects().length ? button : navigationButtonRef.current)?.focus();
+    helpButtonRef.current?.focus();
   }, []);
 
   useLayoutEffect(() => {
@@ -202,19 +197,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
 
-  useDismissOnOutsideClick(navigationOpen, () => [navigationRef.current, navigationButtonRef.current], () => setNavigationOpen(false));
-  useLayoutEffect(() => {
-    if (!navigationOpen) return;
-    const dismissNavigation = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setNavigationOpen(false);
-      navigationButtonRef.current?.focus();
-    };
-    window.addEventListener("keydown", dismissNavigation, true);
-    return () => window.removeEventListener("keydown", dismissNavigation, true);
-  }, [navigationOpen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -230,37 +212,12 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         return;
       }
       if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (!SHELL_KEYS.has(event.key)) return;
-      if (event.key === "c") {
-        event.preventDefault();
-        move("zen");
-      }
-      if (event.key === "w") {
-        event.preventDefault();
-        move("fleet");
-      }
-      if (event.key === "m") {
-        event.preventDefault();
-        move("memory");
-      }
-      if (event.key === "p") {
-        event.preventDefault();
-        move("people");
-      }
-      if (event.key === "s") {
-        event.preventDefault();
-        move("settings");
-      }
-      if (event.key === "l") {
-        event.preventDefault();
-        toggleTheme();
-      }
-      if (event.key === "?") {
-        event.preventDefault();
-        setNavigationOpen(false);
-        setHelp((open) => !open);
-      }
+      const action = shellShortcut(event, typing);
+      if (!action) return;
+      event.preventDefault();
+      if (action === "theme") toggleTheme();
+      else if (action === "help") setHelp((open) => !open);
+      else move(action);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -273,21 +230,11 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <div class="instrument-viewport">
       <div class="instrument-content">
       <HandsfreeStatus />
-      <InstrumentHeader distance={distance} feedbackRequest={feedbackRequest} onNavigate={(to) => {
-        if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
-      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
+      <InstrumentHeader distance={distance} feedbackRequest={feedbackRequest} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
         helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm(t("shell.confirm.discardMessage"))) setZenPid(null);
-        }} help={help} onHelp={() => {
-          setNavigationOpen(false);
-          setHelp((open) => !open);
-          if (navigationOpen) navigationButtonRef.current?.focus();
-        }} helpButtonRef={helpButtonRef} navigationOpen={navigationOpen} navigationRef={navigationRef}
-        navigationButtonRef={navigationButtonRef} onNavigationToggle={() => {
-          setHelp(false);
-          setNavigationOpen((open) => !open);
-        }} />
+        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       <FirstRun active={distance === "zen" && zenPid === null} onShownChange={setFirstRunShown} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>

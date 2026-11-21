@@ -3,17 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import type { Distance } from "../Instrument";
 import { InstrumentHeader } from "./InstrumentHeader";
+import { LineIcon } from "./lineIcons";
 
-async function headerButtons(distance: Distance) {
+async function headerButtons(distance: Distance, peopleWaiting = false) {
   const root = createTestRoot("Instrument header");
   let header: ComponentChildren;
   function Harness() {
     header = InstrumentHeader({
-      distance, onNavigate: vi.fn(),
+      distance, onNavigate: vi.fn(), peopleWaiting,
       helper: false, onShip: vi.fn(), help: false, onHelp: vi.fn(),
       helpButtonRef: createRef<HTMLButtonElement>(),
-      navigationOpen: false, onNavigationToggle: vi.fn(),
-      navigationButtonRef: createRef<HTMLButtonElement>(), navigationRef: createRef<HTMLElement>(),
     });
     return null;
   }
@@ -31,25 +30,21 @@ beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Instrument header", () => {
-  it.each(["fleet", "memory", "people", "settings"] as const)(
-    "keeps Search out of the top bar while %s is open",
-    async (distance: Distance) => {
-      const buttons = await headerButtons(distance);
-      expect(buttons.map(collectText)).toEqual(["c chat", "w work", "m memory", "p people", "s settings", "? help"]);
-    },
-  );
-
-  it("keeps Search out of the Chat top bar", async () => {
-    expect((await headerButtons("zen")).map(collectText)).toEqual(["c chat", "w work", "m memory", "p people", "s settings", "? help"]);
+  it.each(["zen", "fleet", "memory", "people", "settings"] as const)("names every view with an icon and an Alt shortcut while %s is open", async (distance: Distance) => {
+    const buttons = await headerButtons(distance);
+    expect(buttons.map(collectText)).toEqual(["chat", "work", "memory", "people", "settings", "help"]);
+    expect(buttons.map((button) => button.props["aria-keyshortcuts"])).toEqual(["Alt+C", "Alt+W", "Alt+M", "Alt+P", "Alt+S", "Alt+H"]);
+    expect(buttons.every((button) => collectNodes(button).some((node) => node.type === LineIcon))).toBe(true);
+    expect(buttons.some((button) => collectNodes(button).some((node) => node.type === "kbd"))).toBe(false);
   });
 
-  it.each(["zen", "fleet", "memory", "people", "settings"] as const)(
-    "keeps the shortcut badge separate from the %s label",
-    async (distance: Distance) => {
-      const buttons = await headerButtons(distance);
-      const viewButtons = buttons.filter((button) => collectNodes(button).some((node) => node.props.class === "view-label"));
-      expect(viewButtons).toHaveLength(5);
-      expect(viewButtons.every((button) => collectNodes(button).some((node) => node.type === "kbd"))).toBe(true);
-    },
-  );
+  it("marks only the open view as the current page", async () => {
+    const buttons = await headerButtons("memory");
+    expect(buttons.map((button) => button.props["aria-current"])).toEqual([undefined, undefined, "page", undefined, undefined, undefined]);
+  });
+
+  it("dots People while someone is waiting there, except when People is open", async () => {
+    expect(collectText((await headerButtons("zen", true))[3])).toBe("people •");
+    expect(collectText((await headerButtons("people", true))[3])).toBe("people");
+  });
 });

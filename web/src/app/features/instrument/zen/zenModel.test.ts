@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { SHELL_KEYS } from "../shared/shellKeys";
 import type { ConversationMessage, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import { conversationMessageRow } from "../../../services/chat/domain/conversations";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
@@ -1391,21 +1390,18 @@ describe("conversation attachments", () => {
 });
 
 describe("startsWriting", () => {
-  const claimed = new Set(["j", "k", "g", "G", "o", ...SHELL_KEYS]);
   const press = (key: string, held: Partial<Omit<KeyPress, "key">> = {}): KeyPress => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...held });
 
-  it("starts on a plain printable character, capitals and symbols included", () => {
-    for (const key of ["a", "f", "A", "1", "@", "$", "/", ",", "z", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
-  });
-
-  it("leaves claimed shortcut keys to their owners", () => {
-    for (const key of ["j", "G", "?", "c", "w", "m", "p", "s"]) expect(startsWriting(press(key), claimed)).toBe(false);
+  it("starts on any printable character, the old browse and view letters included", () => {
+    for (const key of ["a", "f", "A", "1", "@", "$", "/", ",", "z", "?", "c", "w", "m", "p", "s", "l", "j", "k", "g", "G", "o", "y", "n", "\u00e9", "\ud83d\ude00"]) {
+      expect(startsWriting(press(key))).toBe(true);
+    }
   });
 
   it("ignores command modifiers, whitespace and named keys", () => {
-    expect(startsWriting(press("a", { ctrlKey: true }), claimed)).toBe(false);
-    expect(startsWriting(press("k", { metaKey: true }), claimed)).toBe(false);
-    expect(startsWriting(press("e", { altKey: true }), claimed)).toBe(false);
-    for (const key of [" ", "Enter", "Tab", "Escape", "ArrowDown", "Dead", "Shift", "Backspace"]) expect(startsWriting(press(key), claimed)).toBe(false);
+    expect(startsWriting(press("a", { ctrlKey: true }))).toBe(false);
+    expect(startsWriting(press("k", { metaKey: true }))).toBe(false);
+    expect(startsWriting(press("e", { altKey: true }))).toBe(false);
+    for (const key of [" ", "Enter", "Tab", "Escape", "ArrowDown", "Home", "End", "Dead", "Shift", "Backspace"]) expect(startsWriting(press(key))).toBe(false);
   });
 });

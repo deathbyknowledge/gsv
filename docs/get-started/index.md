@@ -27,7 +27,7 @@ straight to the chat. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers
-it, and **Help** links to the community Discord.
+it; on a narrow screen, open it from **Help**. **Help** also links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 
@@ -96,9 +96,9 @@ The web app has five views:
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
 - **Settings** holds **Preferences**, **When things happen**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
-On phones, tap **menu** in the header to switch views. A dot on the menu button
-marks unread People activity. Choosing a view
-closes the menu and keeps your drafts. Tap **Ship** to return to Chat.
+Each view is a tab in the header with an icon and its name; on phones and
+narrow windows the tabs show their icons alone. A dot on **People** marks unread
+People activity. Switching views keeps your drafts. Tap **Ship** to return to Chat.
 View changes stay in the app and create browser history entries. **Back** and
 **Forward** retrace those views, including People conversations and your profile,
 without reloading the page or clearing drafts.
@@ -186,10 +186,11 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → Permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-Hover over or focus a top-right navigation button to see a short explanation.
-Press **w** outside a text field to open Work.
+Hover over or focus a header tab to see a short explanation and its shortcut.
+Press **Alt+W** (**Option+W** on a Mac) to open Work, from any view. Shortcuts
+always hold Alt, so a letter you type in Chat always lands in your message.
 
-The **?** Help panel (also available in the mobile menu) introduces what Ship can
+The **Help** panel introduces what Ship can
 help with. **Talking to Ship** expands example requests; the other getting-started
 rows open WhatsApp connections, Memory, Permissions and your operator's privacy
 policy, when one is configured for your installation. **Keyboard shortcuts** replaces
@@ -199,10 +200,10 @@ either panel. **Need more help?** opens the existing
 Feedback form through **Feedback**, when feedback is available, and links to the
 Ship manual inside Memory, email support and the community Discord.
 
-Open **Help** in the header or mobile menu, choose **Keyboard shortcuts**, and choose
+Open **Help** in the header, choose **Keyboard shortcuts**, and choose
 **Search Chat** to find earlier messages.
-Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
-mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
+Press `Ctrl+K` from any view to open the same search. In Chat, `Ctrl/Cmd+F` also
+opens it, even while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
 
 On your first visit, once you have chosen where to message Ship and while it wakes, the empty chat shows a
