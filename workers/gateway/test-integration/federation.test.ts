@@ -100,9 +100,9 @@ describe("Ship-to-Ship integration", () => {
     const named = await fetch(`https://${FIRST_HANDLE}/.well-known/atproto-did`);
     expect(await named.text()).toBe(identity?.did);
     const initial = (await second.profile.resolve({ address: FIRST_HANDLE })).profile;
-    expect(initial).toMatchObject({ did: identity?.did, handle: FIRST_HANDLE, contactPolicy: "requests", url: `https://${FIRST_HANDLE}/profile` });
+    expect(initial).toMatchObject({ did: identity?.did, handle: FIRST_HANDLE, contactPolicy: "requests", url: `https://${FIRST_HANDLE}` });
     await expect.poll(async () => (await second.profile.get({})).profile.published).toMatchObject({
-      url: `https://${SECOND_HANDLE}/profile`, revision: 1, contactPolicy: "requests",
+      url: `https://${SECOND_HANDLE}`, revision: 1, contactPolicy: "requests",
     });
     const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const };
     await first.profile.update({ expectedRevision: 1, draft });

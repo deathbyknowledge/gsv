@@ -3,7 +3,7 @@
   "name": "Ship",
   "short_name": "Ship",
   "description": "Ship desktop and agent operating shell.",
-  "start_url": "/",
+  "start_url": "/chat",
   "scope": "/",
   "display": "standalone",
   "background_color": "#07061a",

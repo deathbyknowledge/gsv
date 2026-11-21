@@ -137,7 +137,7 @@ function forgetSeededSession(): void {
 
 const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
-const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
+const PROFILE_URL = `https://${OWNER.username}.ship.space`;
 /** The owner's own profile, public by default with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
   revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, published: { url: PROFILE_URL, cid: "bafyreimockprofile1", revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
@@ -1541,7 +1541,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "profile.resolve": {
       const { address } = z.object({ address: z.string() }).parse(args);
       const handle = /^https?:\/\//i.test(address) ? new URL(address).host : address.replace(/^@/, "");
-      return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}/profile`,
+      return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}`,
         displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
     }
     case "atproto.identity": return respond(id, { identity: { did: OWN_DID, handle: "esteve.ship.space", host: "https://pds.ship.space" }, takedowns: [] });

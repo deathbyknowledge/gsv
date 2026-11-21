@@ -22,15 +22,14 @@ export function emptyApproachDraft(url = ""): ApproachDraft {
 export function profileAddress(value: string, deployment: PublicDeploymentConfig = publicDeployment()): string | null {
   const text = value.trim();
   const handle = text.replace(/^@/, "").toLowerCase();
-  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) return deployment.primaryDomain ? `https://${handle}.${deployment.primaryDomain}/profile` : null;
+  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) return deployment.primaryDomain ? `https://${handle}.${deployment.primaryDomain}` : null;
   if (!text || (!/^https?:\/\//i.test(text) && !text.includes("."))) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !/^https?:\/\//i.test(text)) return null;
   try {
     const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
-    // A bare handle or host names the profile page it serves.
-    if (url.pathname === "/") url.pathname = "/profile";
-    return url.href;
+    // A Ship's address is its profile; `/profile` names the same page.
+    return url.pathname === "/" || url.pathname === "/profile" ? url.origin : url.href;
   } catch { return null; }
 }
 
@@ -49,9 +48,9 @@ export function handleLabel(handle: string, deployment: PublicDeploymentConfig =
   return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(short) ? `@${short}` : handle;
 }
 
-/** A contact's profile page; only a handle that names their DID back leads to one. */
+/** A contact's profile, at their Ship's address; only a handle that names their DID back leads to one. */
 export function contactProfileUrl(contact: Pick<ContactSummary, "remoteHandle">): string | null {
-  return contact.remoteHandle ? `https://${contact.remoteHandle}/profile` : null;
+  return contact.remoteHandle ? `https://${contact.remoteHandle}` : null;
 }
 
 /** What People hands Ship when asked to help with a contact: who they are and, when known, where their profile is. */

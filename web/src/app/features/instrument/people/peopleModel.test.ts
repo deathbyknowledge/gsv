@@ -8,17 +8,17 @@ const handleLabel = (value: string) => label(value, deployment);
 
 describe("person addresses", () => {
   it("opens managed handles with or without @", () => {
-    for (const value of ["esteve", "@esteve", " @Esteve "]) expect(profileAddress(value)).toBe("https://esteve.fleet.example/profile");
-    expect(profileAddress("a")).toBe("https://a.fleet.example/profile");
-    expect(profileAddress("alex-river")).toBe("https://alex-river.fleet.example/profile");
+    for (const value of ["esteve", "@esteve", " @Esteve "]) expect(profileAddress(value)).toBe("https://esteve.fleet.example");
+    expect(profileAddress("a")).toBe("https://a.fleet.example");
+    expect(profileAddress("alex-river")).toBe("https://alex-river.fleet.example");
   });
 
-  it("keeps explicit federated hosts, ports and profile paths", () => {
-    expect(profileAddress("person.example")).toBe("https://person.example/profile");
-    expect(profileAddress("@person.example")).toBe("https://person.example/profile");
+  it("keeps explicit federated hosts, ports and alias paths, and reads /profile as the Ship's address", () => {
+    expect(profileAddress("person.example")).toBe("https://person.example");
+    expect(profileAddress("@person.example")).toBe("https://person.example");
     expect(profileAddress("https://person.example/@person")).toBe("https://person.example/@person");
-    expect(profileAddress("http://localhost:8787/profile")).toBe("http://localhost:8787/profile");
-    expect(profileAddress("esteve.fleet.example/profile")).toBe("https://esteve.fleet.example/profile");
+    expect(profileAddress("http://localhost:8787/profile")).toBe("http://localhost:8787");
+    expect(profileAddress("esteve.fleet.example/profile")).toBe("https://esteve.fleet.example");
   });
 
   it("rejects names, malformed handles, credentials and non-web schemes", () => {
@@ -45,14 +45,14 @@ describe("person addresses", () => {
   });
 
   it("links to a contact's profile only through a handle that names them back", () => {
-    expect(contactProfileUrl({ remoteHandle: "esteve.fleet.example" })).toBe("https://esteve.fleet.example/profile");
+    expect(contactProfileUrl({ remoteHandle: "esteve.fleet.example" })).toBe("https://esteve.fleet.example");
     expect(contactProfileUrl({})).toBeNull();
   });
 });
 
 const profile: PublicProfile = {
   did: "did:plc:personaaaaaaaaaaaaaaaaaa", handle: "person.example", cid: "bafyreiprofileone",
-  displayName: "Person", about: "", contactPolicy: "requests", url: "https://person.example/profile",
+  displayName: "Person", about: "", contactPolicy: "requests", url: "https://person.example",
 };
 
 describe("first-message approval", () => {

@@ -987,7 +987,8 @@ returns the existing one.
 `contact invite` prints the owner's invitation link. It never expires and
 anyone may use it: someone without a Ship creates one from it, and someone with
 a Ship signs in from it. Either way they send the owner an ordinary message
-request. It works only while the owner's profile is public and takes requests;
+request. Without an operator signup site the link is the Ship's address, which
+shows the public profile. It works only while the owner's profile is public and takes requests;
 the command says when it doesn't. Revocation may be performed by the signed-in
 human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts

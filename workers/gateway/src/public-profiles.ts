@@ -33,7 +33,7 @@ export async function servePublicProfileRequest(
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD", "cache-control": "no-store" } });
   if (path === "invalid") return unavailable();
   // A Ship has one profile, so a link to one of its old aliases opens it.
-  if (path === "alias") return new Response(null, { status: 308, headers: { location: "/profile", "cache-control": "no-store" } });
+  if (path === "alias") return new Response(null, { status: 308, headers: { location: "/", "cache-control": "no-store" } });
   let projection: PublicProfileProjection | null;
   try {
     if (path === "avatar") return serveAvatar(request, await source.avatar());
@@ -47,11 +47,37 @@ export async function servePublicProfileRequest(
   if (new URL(request.url).origin !== new URL(projection.url).origin) {
     return new Response(null, { status: 308, headers: { location: projection.url, "cache-control": "no-store" } });
   }
+  return await pageResponse(request, projection, homeOrigin);
+}
+
+/**
+ * The Ship's own address, `/`: its public profile while it has one there, or
+ * null, and the app opens instead. A Ship without a profile, one reached on
+ * another of its hosts, and one whose profile lookup fails all keep the app,
+ * so its owner is never locked out of it.
+ */
+export async function servePublicProfileHome(
+  request: Request,
+  source: Pick<PublicProfileSource, "page">,
+  homeOrigin?: string,
+): Promise<Response | null> {
+  let projection: PublicProfileProjection | null;
+  try {
+    projection = await source.page();
+  } catch (error) {
+    console.error("[Gateway] Public profile lookup failed:", exceptionDiagnostics(error));
+    return null;
+  }
+  if (!projection || new URL(request.url).origin !== new URL(projection.url).origin) return null;
+  return await pageResponse(request, projection, homeOrigin);
+}
+
+async function pageResponse(request: Request, projection: PublicProfileProjection, homeOrigin: string | undefined): Promise<Response> {
   const { record } = projection;
   const body = renderPublicProfile({
     url: projection.url, ...(projection.handle ? { handle: projection.handle } : undefined),
     displayName: record.displayName, about: record.about ?? "",
-    contactPolicy: profileContactPolicy(record.contactPolicy), avatar: projection.avatar !== undefined,
+    contactPolicy: profileContactPolicy(record.contactPolicy), avatar: projection.avatar?.cid ?? null,
   }, homeOrigin);
   const etag = `"${toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))))}"`;
   const headers = new Headers({

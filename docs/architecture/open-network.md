@@ -243,10 +243,21 @@ Bluesky shows the copy once relays crawl the deployment's PDS. The Ship
 doesn't read Bluesky, so follows, replies and messages there don't reach it,
 and a person who already has a Bluesky account has the Ship's as a second one.
 
-The Gateway renders the published record as the page at `/profile` on the
-Ship's hostname and serves its picture from the same host at
-`/profile/avatar`, as a sandboxed image. Both ask search engines not to index
-them.
+The Gateway renders the published record as the page at the Ship's own
+address, `/` on its hostname, and also at `/profile`. It serves the picture
+from the same host at `/profile/avatar`, as a sandboxed image. Both ask search
+engines not to index them. The page carries Open Graph and Twitter card tags,
+so messengers and social apps preview a shared address with the name, the
+about text and the picture, or the Ship app icon without one. The picture's
+address names its CID, so a new picture shows the next time the link is
+shared.
+
+The app has its own paths, such as `/chat`. At `/` the Gateway serves the
+app instead while the Ship has no public profile, when the request reaches
+another of the Ship's hosts, whose sign-ins are its own, and when the profile
+lookup fails, so the owner always reaches the app. The page offers its owner
+a sign-in link, and a browser that holds a session for the Ship goes straight
+to `/chat`; `/profile` always shows the page.
 
 A Ship reads another Ship's profile by resolving its handle to a DID, checking
 that the DID document claims the handle, and reading the record with
@@ -269,7 +280,7 @@ restoring is the same call with `applied: false`.
 Accounts Ship page ── audit event, reason ── PDS_MODERATION ──▶ HostedRepo: takedowns
                                              operator-moderation       │ every public read honours them
 People, atproto identity ◀── Kernel ◀── PDS (kernel-publish) ◀─────────┘
-/profile, /.well-known/atproto-did ◀─┘
+/, /profile, /.well-known/atproto-did ◀─┘
 Accounts ── OPERATOR_GATEWAY: operatorTakedownsChanged ──▶ Kernel ── Bluesky's copy ──▶ HostedRepo
 ```
 
@@ -316,11 +327,12 @@ stands and its audit entry says `unreachable`. Taking the subject down again
 tells the Ship again, and a restore it missed reaches Bluesky at the person's
 next sign-in or message.
 
-The Ship's own pages honour the same takedowns. For each request to `/profile`
-or `/profile/avatar`, the Kernel asks the PDS what it has taken down rather
-than keeping a copy that could fall behind. The page answers 404 while the
-account or the profile record is down, leaves out a picture whose file is
-down, and answers 503 while the PDS can't say. `/.well-known/atproto-did`
+The Ship's own pages honour the same takedowns. For each request to `/`,
+`/profile` or `/profile/avatar`, the Kernel asks the PDS what it has taken down
+rather than keeping a copy that could fall behind. `/profile` answers 404 while
+the account or the profile record is down and 503 while the PDS can't say, and
+`/` serves the app in both cases. The page leaves out a picture whose file is
+down. `/.well-known/atproto-did`
 claims no handle for an account that is down, as Bluesky's PDS does. Other
 Ships read profiles from the PDS, so `profile.resolve` finds no public profile.
 

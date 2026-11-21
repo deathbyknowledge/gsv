@@ -14,7 +14,7 @@ import { emptyApproachDraft, type ApproachDraft } from "./peopleModel";
 const ACCOUNT: ConsoleAccount = { uid: 1000, username: "sam", displayName: "Sam", relation: "self", runnable: false, gecos: "Sam", capabilities: ["*"] };
 const MARA: ContactSummary = { id: "contact-mara", ownerUid: 1000, state: "active", generation: "1", remoteDid: "did:plc:mara",
   remoteName: "Mara", remoteHandle: "mara.ship.space", conversationId: "conversation-mara", createdAtMs: 1, updatedAtMs: 2 };
-const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space/profile" };
+const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space" };
 let tree: ComponentChildren;
 let account = ACCOUNT;
 let root: ReturnType<typeof createTestRoot>;
@@ -72,7 +72,7 @@ describe("adding a contact", () => {
 
   it("finds someone new by handle and opens a request to them", async () => {
     const request = await type("juno.ship.space", async () => ({ data: { profile: JUNO } }));
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space/profile" }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space" }));
     await vi.waitFor(() => expect(collectText(messageButton())).toBe("Message Juno"));
     await act(async () => { await messageButton()!.props.onClick!(); });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ profile: JUNO, url: "juno.ship.space", saveContact: true }));
