@@ -52,10 +52,9 @@ The composer omits routine model and target-readiness feedback, retaining errors
 offline warnings and reconnecting. Its keyboard return hint is Send; iOS's native
 field-navigation accessory bar remains controlled by the browser.
 
-On narrow screens, the header uses one row with a menu button. The same view
-actions and Help open in a vertical menu with touch-sized rows.
-Choosing a view, tapping outside or pressing Escape closes the menu.
-The menu button retains the unread People indicator while navigation is closed.
+On narrow screens, the header keeps one row: the wordmark, then every view and
+Help as touch-sized icon tabs, with the unread People indicator on its tab. The
+Feedback link leaves the header there, and Help offers it instead.
 
 On a personal human account's first sign-in, a full screen in front of the chat, over the
 instrument's star field with the chat kept out of sight beneath it, asks where the person
@@ -257,7 +256,7 @@ Reconnecting leaves the Chat prompt editable and retains its text, focus and att
 
 The shell keeps one star field and one header mounted across Chat, People, Work, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. Contact messages count only when the Kernel's private attention policy permits. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has five fixed view shortcuts, each Alt (Option on a Mac) with a letter: c for Chat, w for Work, m for Memory, p for People and s for Settings; Alt with l switches between light and dark and Alt with h shows Help. They work in every view and while writing, so an unmodified key always belongs to what has focus and a letter typed in Chat always lands in the message. Outside text the key's place on the keyboard picks the shortcut, so Option's characters on a Mac (ç, ß, ł…) still reach it; in a text field those characters are typed instead. Shortcuts pause while a connection or AI model is being set up. Each shortcut and header tab always opens its named view. Help offers Search Chat from every view; Ctrl+K opens Chat search from any view, including while writing a draft. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. Connection and send errors appear when needed; ordinary model and target readiness stay out of the composer. Approvals and run activity remain in the transcript, and model attribution remains with the message. Work presents Connections and Helpers. Files open from a connection; responsibilities and routines open in Chat. Logs is in Settings.
 
-Header controls have transparent backgrounds so they follow the pane underneath. Each view is a header tab with a line icon from the shared set and its name; the open view is bright and underlined. Below 720px the tabs show their icons alone and keep the names for screen readers, so phones see every view without a menu. Navigation tabs use the shared Hint tooltip on hover and keyboard focus to explain each destination and name its shortcut. Keyboard focus uses an underline on controls and table labels. Work has no permanent footer: Help lists its shortcuts. Work’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
+Header controls have transparent backgrounds so they follow the pane underneath. Each view is a header tab with a line icon from the shared set and its name; the open view is bright and underlined. At 800px and below the tabs show their icons alone and keep the names for screen readers, so phones see every view without a menu. Navigation tabs use the shared Hint tooltip on hover and keyboard focus to explain each destination and name its shortcut. Keyboard focus uses an underline on controls and table labels. Work has no permanent footer: Help lists its shortcuts. Work’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
 
 The `x` shortcut cycles through 75%, 85%, 100%, 150% and 200% interface sizes, with
 100% as the default. The 75% size uses 15px rendered message text, smaller gaps

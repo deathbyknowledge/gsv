@@ -27,7 +27,7 @@ straight to the chat. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers
-it, and **Help** links to the community Discord.
+it; on a narrow screen, open it from **Help**. **Help** also links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 

@@ -227,14 +227,17 @@
   .instrument-header { padding-inline: 18px; gap: 8px; }
   .instrument-tabs button { padding: 0 7px; }
 }
-/* narrow screens show the icons alone, so longer names never crowd the wordmark; each name stays for screen readers */
-@container instrument (max-width: 720px) {
+/* narrow screens show the icons alone, so longer names never crowd the wordmark; each name stays for screen readers.
+   The named tabs need about 800px beside the wordmark and Feedback in the longest language, Portuguese. */
+@container instrument (max-width: 800px) {
   .instrument-tabs { gap: 0; margin-right: -12px; }
   .instrument-tabs button { justify-content: center; min-width: 40px; min-height: 44px; padding: 0; }
   .instrument-tabs button > svg { width: 18px; height: 18px; }
   .instrument-tabs .view-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .instrument-tabs [aria-current="page"]::after { content: ""; position: absolute; inset: auto 11px 6px; border-bottom: 1px solid currentColor; }
   .instrument-tabs .instrument-people-waiting { position: absolute; top: 7px; right: 6px; margin: 0; }
+  /* Help offers Feedback, so the icon header keeps its room for the views; the dialog stays mounted for Help to open. */
+  .instrument-header .feedback-trigger { display: none; }
 }
 @container instrument (max-width: 600px) {
   .distance, .instrument-header, .instrument-help { --instrument-header-height: 52px; }
