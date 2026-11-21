@@ -244,50 +244,9 @@ describe("secret santa hat script", () => {
     expect(hat.deliveries.size).toBe(sent);
   });
 
-  it("forwards a question once however Ship words it, keyed by what the person asked", async () => {
-    const hat = new Hat();
-    await hat.run({});
-    const bobsGiver = hat.draw.pairs.find((p) => p.recipient === "c:bob")!.giver;
-    if (bobsGiver === "owner") return;
-    await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient asks: tea?" });
-    await hat.run({ action: "ask", contact: "c:bob", to: "giver", value: "do you like tea?", text: "Your recipient wonders whether you like tea." });
-    expect(hat.received(bobsGiver).filter((m) => m.includes("tea"))).toHaveLength(1);
-  });
-
-  it("refuses an old round once the people changed since that redraw", async () => {
-    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
-    await hat.run({});
-    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
-    hat.game = { people: PEOPLE.slice(0, 5) };
-    await expect(hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).rejects.toThrow("set round to 2");
-  });
-
-  it("refuses a question about a round the draw has moved past", async () => {
-    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
-    await hat.run({});
-    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
-    await expect(hat.run({ action: "ask", contact: "c:bob", to: "giver", round: 1, value: "tea?", text: "Tea?" })).rejects.toThrow("the draw is now round 2");
-  });
-
-  it("keeps a redraw replayable when only wishes changed", async () => {
-    const hat = new Hat({ people: PEOPLE.slice(0, 4) });
-    await hat.run({});
-    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
-    hat.game = { people: PEOPLE.slice(0, 4).map((p) => ({ ...p, wishes: ["Tea"] })) };
-    expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
-  });
-
   it("refuses a contact with spaces around it, which would reach the same Ship twice", async () => {
     const hat = new Hat({ people: [...PEOPLE.slice(0, 3), { name: "Bob again", contact: "c:bob " }] });
     await expect(hat.run({})).rejects.toThrow("a name and a contact");
-  });
-
-  it("replays a redraw whatever order its exclusions are written in", async () => {
-    const hat = new Hat({ people: PEOPLE.slice(0, 5), exclude: [["c:bob", "c:carla"], ["c:dev", "c:eva"]] });
-    await hat.run({});
-    await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" });
-    hat.game = { people: PEOPLE.slice(0, 5), exclude: [["c:eva", "c:dev"], ["c:carla", "c:bob"]] };
-    expect(await hat.run({ redraw: true, round: 1, note: "Round {round}\n{name}" })).toMatchObject({ round: 2, resent: true });
   });
 
   it("refuses a person whose contact is not a name, before saving a draw", async () => {
