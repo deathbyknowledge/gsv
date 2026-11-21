@@ -159,11 +159,14 @@
         "web/src/app/features/instrument/people/**",
         "web/src/app/features/instrument/settings/Profile.tsx",
         "web/src/public/profile.ts",
+        "web/src/public/profile-card.ts",
+        "web/src/public/card/**",
         "web/public/social/**",
         "workers/gateway/src/kernel/approach*",
         "workers/gateway/src/kernel/approaches/**",
         "workers/gateway/src/kernel/profile*",
-        "workers/gateway/src/public-profile*"
+        "workers/gateway/src/public-profile*",
+        "workers/gateway/src/profile-card/**"
       ],
       "docs": [
         "docs/how-to/contact-people.md",
