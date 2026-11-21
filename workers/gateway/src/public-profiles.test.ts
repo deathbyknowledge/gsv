@@ -22,6 +22,7 @@ describe("public profile serving", () => {
   it("matches the page, its picture and old alias links without admitting ambiguous paths", () => {
     expect(matchPublicProfilePath("/profile")).toBe("page");
     expect(matchPublicProfilePath("/profile/avatar")).toBe("avatar");
+    expect(matchPublicProfilePath("/profile/card")).toBe("card");
     expect(matchPublicProfilePath("/@person")).toBe("alias");
     for (const path of ["/@", "/@person/extra", "/@%70erson", "/@PERSON"]) expect(matchPublicProfilePath(path)).toBe("invalid");
     for (const path of ["/", "/zen", "/profile/", "/profile.json", "/_gsv/federation/v2/subjects/subject%3Aone"]) expect(matchPublicProfilePath(path)).toBeNull();
@@ -63,7 +64,6 @@ describe("public profile serving", () => {
   it("shows the record's picture from the Ship's own host and serves it sandboxed", async () => {
     const page = await (await servePublicProfileRequest(new Request(PAGE_URL), "page", source({ ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } }))).text();
     expect(page).toContain(`<img class="avatar" src="/profile/avatar?v=${AVATAR.cid}" alt=""`);
-    expect(page).toContain(`<meta property="og:image" content="${PROFILE_URL}/profile/avatar?v=${AVATAR.cid}">`);
     const avatarUrl = "https://person.ship.example/profile/avatar";
     const response = await servePublicProfileRequest(new Request(avatarUrl), "avatar", source(PROJECTION, AVATAR));
     expect(response.status).toBe(200);
@@ -95,6 +95,37 @@ describe("public profile serving", () => {
     expect((await servePublicProfileRequest(new Request("https://person.ship.example/@PERSON"), "invalid", profiles)).status).toBe(404);
   });
 
+  it("draws the published profile as its link preview card", async () => {
+    const cardUrl = `${PAGE_URL}/card?v=bafyreirecord`;
+    const pictured = source({ ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } }, AVATAR);
+    const response = await servePublicProfileRequest(new Request(cardUrl), "card", pictured);
+    expect(response.status).toBe(200);
+    expect(Object.fromEntries(response.headers)).toMatchObject({
+      "content-type": "image/png", "cache-control": "public, max-age=0, must-revalidate",
+      "content-security-policy": "default-src 'none'; sandbox", "x-content-type-options": "nosniff",
+    });
+    const png = new Uint8Array(await response.arrayBuffer());
+    expect(response.headers.get("content-length")).toBe(String(png.byteLength));
+    expect(Array.from(png.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(pictured.avatar).toHaveBeenCalledOnce();
+    const unpictured = source();
+    expect((await servePublicProfileRequest(new Request(cardUrl), "card", unpictured)).status).toBe(200);
+    expect(unpictured.avatar).not.toHaveBeenCalled();
+
+    const etag = response.headers.get("etag")!;
+    const revalidating = source(PROJECTION, AVATAR);
+    const cached = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", revalidating);
+    expect(cached.status).toBe(304);
+    expect(revalidating.avatar).not.toHaveBeenCalled();
+    const edited = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", source({ ...PROJECTION, cid: "bafyreiedited" }));
+    expect(edited.status).toBe(200);
+    const head = await servePublicProfileRequest(new Request(cardUrl, { method: "HEAD" }), "card", source());
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    const unpublished = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", source(null));
+    expect(unpublished.status).toBe(404);
+  });
+
   it("rechecks the published profile before a 304", async () => {
     const page = await servePublicProfileRequest(new Request(PAGE_URL), "page", source());
     const etag = page.headers.get("etag")!;
@@ -107,17 +138,22 @@ describe("public profile serving", () => {
     expect(unpublished.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("shows neither the page nor its picture while the Ship can't say what its host has taken down", async () => {
+  it("shows neither the page, its picture nor its card while the Ship can't say what its host has taken down", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const failing = { page: vi.fn(async () => { throw new Error("PDS unavailable"); }), avatar: vi.fn(async () => { throw new Error("PDS unavailable"); }) };
-    for (const [url, path] of [[PAGE_URL, "page"], [`${PAGE_URL}/avatar`, "avatar"]] as const) {
+    for (const [url, path] of [[PAGE_URL, "page"], [`${PAGE_URL}/avatar`, "avatar"], [`${PAGE_URL}/card`, "card"]] as const) {
       const response = await servePublicProfileRequest(new Request(url), path, failing);
       expect(response.status).toBe(503);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.text()).toBe("Profile unavailable");
     }
-    expect(error).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledTimes(3);
     expect(error).toHaveBeenCalledWith("[Gateway] Public profile lookup failed:", expect.objectContaining({ exceptionName: "Error", exceptionMessage: "PDS unavailable" }));
+    const pictureless = { page: vi.fn(async () => ({ ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } })), avatar: failing.avatar };
+    const card = await servePublicProfileRequest(new Request(`${PAGE_URL}/card`), "card", pictureless);
+    expect(card.status).toBe(503);
+    expect(card.headers.get("cache-control")).toBe("no-store");
+    expect(error).toHaveBeenLastCalledWith("[Gateway] Profile card failed:", expect.objectContaining({ exceptionMessage: "PDS unavailable" }));
     error.mockRestore();
   });
 
@@ -128,8 +164,9 @@ describe("public profile serving", () => {
     expect(html).toContain(`<meta property="og:url" content="${PROFILE_URL}">`);
     expect(html).toContain('<meta property="og:title" content="Person &lt;script&gt;alert(1)&lt;/script&gt; (@person)">');
     expect(html).toContain('<meta property="og:description" content="&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt; Hello">');
-    expect(html).toContain(`<meta property="og:image" content="${PROFILE_URL}/icons/gsv-512.png?v=cursor">`);
-    expect(html).toContain('<meta name="twitter:card" content="summary">');
+    expect(html).toContain(`<meta property="og:image" content="${PROFILE_URL}/profile/card?v=bafyreirecord">`);
+    expect(html).toContain('<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
     const plain = await (await servePublicProfileRequest(new Request(PAGE_URL), "page", source({ ...PROJECTION, record: { ...RECORD, displayName: "person", about: "  " } }))).text();
     expect(plain).toContain('<meta property="og:title" content="@person">');
     expect(plain).toContain('<meta property="og:description" content="@person on Ship">');

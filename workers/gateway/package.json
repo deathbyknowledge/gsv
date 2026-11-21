@@ -34,8 +34,10 @@
     "@cloudflare/codemode": "^0.3.4",
     "@humansandmachines/gsv": "file:../../packages/gsv",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@resvg/resvg-wasm": "2.6.2",
     "just-bash": "^3.4.2",
     "marked": "^16.4.2",
+    "satori": "0.32.0",
     "zod": "4.3.6"
   }
 }
