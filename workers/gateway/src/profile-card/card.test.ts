@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { CARD_HEIGHT, CARD_WIDTH, cardText, pictureSize, renderProfileCard, type MissingCharacters, type ProfileCard } from "./card";
-import shipArt from "./ship.png.bin";
+import { CARD_HEIGHT, CARD_WIDTH, cardText, type MissingCharacters, type ProfileCard } from "../../../../web/src/public/profile-card";
+import shipArt from "../../../../web/src/public/card/ship.png.bin";
+import { pictureSize, renderProfileCard, type ProfileCardSource } from "./card";
 
 const CARD: ProfileCard = {
   host: "person.ship.example", handle: "person", displayName: "Person Example",
-  about: "Builds things.", requests: true, picture: null,
+  about: "Builds things.", requests: true,
 };
 const NOTHING_MISSING: MissingCharacters = { symbols: new Set(), letters: new Set() };
 
@@ -50,9 +51,9 @@ describe("profile card", () => {
   });
 
   it("draws a 1200×630 PNG, whatever the profile's text and picture", async () => {
-    const cards: ProfileCard[] = [
-      CARD,
-      { ...CARD, displayName: "山田 Zoë ★", about: "Hi 👋 — Привет, naïve café ♥", requests: false },
+    const cards: ProfileCardSource[] = [
+      { ...CARD, picture: null },
+      { ...CARD, displayName: "山田 Zoë ★", about: "Hi 👋 — Привет, naïve café ♥", requests: false, picture: null },
       { ...CARD, picture: { cid: "bafkreiship", mimeType: "image/png", size: shipArt.byteLength, bytes: new Uint8Array(shipArt) } },
       { ...CARD, picture: { cid: "bafkreihuge", mimeType: "image/jpeg", size: 21, bytes: jpeg(9000, 9000) } },
       { ...CARD, picture: { cid: "bafkreiwebp", mimeType: "image/webp", size: 16, bytes: new TextEncoder().encode("RIFF\0\0\0\0WEBPVP8 ") } },
