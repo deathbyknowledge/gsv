@@ -11,18 +11,17 @@ export type PublicProfilePage = {
   contactPolicy: ProfileContactPolicy;
   /** The CID of the record's picture, which the Ship serves at /profile/avatar, or null without one. */
   avatar: string | null;
+  /** The record's CID, which names the version of the card the Ship draws at /profile/card. */
+  cid: string;
 };
-
-/** The preview picture for a profile without one of its own: the Ship app icon. */
-const DEFAULT_PREVIEW = "/icons/gsv-512.png?v=cursor";
 
 /** `homeOrigin` is the operator's own site (their primary domain); without one the wordmark stays plain. */
 export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: string): string {
   // Handles in the request form resolve only on the operator's own domain.
   const handleDomain = homeOrigin ? new URL(homeOrigin).host : undefined;
   const handle = profile.handle ? `@${profile.handle}` : profile.displayName;
-  // Link previews in messengers and social apps: the name, the about text and the picture. The
-  // picture's address names its CID, so a new picture is fetched the next time the link is shared.
+  // Link previews in messengers and social apps: the name, the about text and the profile's card. The
+  // card's address names the record's CID, so an edited profile is fetched the next time the link is shared.
   const origin = new URL(profile.url).origin;
   const avatar = profile.avatar ? `/profile/avatar?v=${encodeURIComponent(profile.avatar)}` : null;
   const previewTitle = profile.handle && profile.displayName.trim() && profile.displayName.trim() !== profile.handle
@@ -30,9 +29,10 @@ export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: str
   const previewText = Array.from(profile.about.trim().replace(/\s+/g, " ")).slice(0, 200).join("") || `${handle} on Ship`;
   const preview = [
     ["og:type", "profile"], ["og:site_name", "Ship"], ["og:url", profile.url], ["og:title", previewTitle],
-    ["og:description", previewText], ["og:image", `${origin}${avatar ?? DEFAULT_PREVIEW}`], ["og:image:alt", avatar ? previewTitle : "Ship"],
+    ["og:description", previewText], ["og:image", `${origin}/profile/card?v=${encodeURIComponent(profile.cid)}`],
+    ["og:image:type", "image/png"], ["og:image:width", "1200"], ["og:image:height", "630"], ["og:image:alt", previewTitle],
   ].map(([property, content]) => `<meta property="${property}" content="${escapeHtml(content)}">`).join("")
-    + `<meta name="twitter:card" content="summary"><meta name="description" content="${escapeHtml(previewText)}">`;
+    + `<meta name="twitter:card" content="summary_large_image"><meta name="description" content="${escapeHtml(previewText)}">`;
   // An open profile offers the request form; a restricted one says so in the same place.
   const restricted = profile.contactPolicy === "requests"
     ? `<details class="connect" id="connect"><summary>Message from your Ship <span aria-hidden="true">↗</span></summary>

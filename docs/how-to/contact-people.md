@@ -122,8 +122,12 @@ Your public address is your Ship's address, `https://YOUR-SPACE`: visitors see
 your profile there, with a link for you to sign in, and a browser you're signed
 in on opens your Ship. `https://YOUR-SPACE/profile` always shows the page, and
 People links to it so you can see what visitors see. Older `/@name` profile
-links open it too. A shared address previews in messengers and social apps with
-your name, bio and picture. Drafts remain when you return to a conversation. The
+links open it too. A shared address previews in messengers and social apps as a
+card your Ship draws from the public profile: your picture, name, handle and the
+first lines of your bio, and an invitation to message you while you take message
+requests. The card leaves out emoji, and a name or bio written in letters its
+fonts lack, such as Cyrillic or Japanese, which the preview's text still shows; it
+draws a PNG or JPEG picture but not a WebP one. Drafts remain when you return to a conversation. The
 public page shows your picture, your handle, your bio, and either a form where visitors enter
 their own handle to message you from their Ship, or a note that message requests
 are restricted. Its Ship wordmark links to the operator's site. The page asks
