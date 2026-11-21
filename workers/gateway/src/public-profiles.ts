@@ -80,9 +80,10 @@ async function pageResponse(request: Request, projection: PublicProfileProjectio
   const body = renderPublicProfile({
     url: projection.url, ...(projection.handle ? { handle: projection.handle } : undefined),
     displayName: record.displayName, about: record.about ?? "",
-    contactPolicy: profileContactPolicy(record.contactPolicy), avatar: projection.avatar?.cid ?? null, cid: projection.cid,
+    contactPolicy: profileContactPolicy(record.contactPolicy), avatar: projection.avatar?.cid ?? null,
+    card: await cardVersion(projection),
   }, homeOrigin);
-  const etag = await digestTag(body);
+  const etag = `"${await digest(body)}"`;
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     "cache-control": "public, max-age=0, must-revalidate", etag,
@@ -109,10 +110,10 @@ function serveAvatar(request: Request, avatar: ProfileAvatarFile | null): Respon
   return new Response(request.method === "HEAD" ? null : avatar.bytes, { headers });
 }
 
-/** The card the published record draws, in this release's design; a sandboxed image and nothing else. */
+/** The card the published profile draws, in this release's design; a sandboxed image and nothing else. */
 async function serveCard(request: Request, projection: PublicProfileProjection, source: PublicProfileSource): Promise<Response> {
   const { record } = projection;
-  const etag = await digestTag([SERVER_RELEASE, projection.url, projection.handle ?? "", projection.cid].join("\n"));
+  const etag = `"${await cardVersion(projection)}"`;
   const headers = new Headers({
     "content-type": "image/png", "cache-control": "public, max-age=0, must-revalidate", etag,
     "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
@@ -139,8 +140,17 @@ async function serveCard(request: Request, projection: PublicProfileProjection, 
   return new Response(png, { headers });
 }
 
-async function digestTag(text: string): Promise<string> {
-  return `"${toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))))}"`;
+/**
+ * The version of the card the published profile draws: this release's design and everything of the
+ * profile it shows, including whether the host has taken its picture down. The page's link to the card
+ * names it, so apps fetch a changed card, and it is the card's ETag.
+ */
+async function cardVersion(projection: PublicProfileProjection): Promise<string> {
+  return await digest([SERVER_RELEASE, projection.url, projection.handle ?? "", projection.cid, projection.avatar?.cid ?? ""].join("\n"));
+}
+
+async function digest(text: string): Promise<string> {
+  return toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
 }
 
 function matchesEtag(request: Request, etag: string): boolean {

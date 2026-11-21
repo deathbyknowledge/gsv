@@ -96,8 +96,9 @@ describe("public profile serving", () => {
   });
 
   it("draws the published profile as its link preview card", async () => {
-    const cardUrl = `${PAGE_URL}/card?v=bafyreirecord`;
-    const pictured = source({ ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } }, AVATAR);
+    const cardUrl = `${PAGE_URL}/card`;
+    const withPicture = { ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } };
+    const pictured = source(withPicture, AVATAR);
     const response = await servePublicProfileRequest(new Request(cardUrl), "card", pictured);
     expect(response.status).toBe(200);
     expect(Object.fromEntries(response.headers)).toMatchObject({
@@ -113,17 +114,31 @@ describe("public profile serving", () => {
     expect(unpictured.avatar).not.toHaveBeenCalled();
 
     const etag = response.headers.get("etag")!;
-    const revalidating = source(PROJECTION, AVATAR);
+    const revalidating = source(withPicture, AVATAR);
     const cached = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", revalidating);
     expect(cached.status).toBe(304);
     expect(revalidating.avatar).not.toHaveBeenCalled();
-    const edited = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", source({ ...PROJECTION, cid: "bafyreiedited" }));
+    const edited = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", source({ ...withPicture, cid: "bafyreiedited" }, AVATAR));
     expect(edited.status).toBe(200);
     const head = await servePublicProfileRequest(new Request(cardUrl, { method: "HEAD" }), "card", source());
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
     const unpublished = await servePublicProfileRequest(new Request(cardUrl, { headers: { "if-none-match": etag } }), "card", source(null));
     expect(unpublished.status).toBe(404);
+  });
+
+  it("draws a new card, at a new address, when the host takes down or restores only the picture", async () => {
+    const pictured = { ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } };
+    const shown = await servePublicProfileRequest(new Request(`${PAGE_URL}/card`), "card", source(pictured, AVATAR));
+    const hidden = await servePublicProfileRequest(new Request(`${PAGE_URL}/card`, { headers: { "if-none-match": shown.headers.get("etag")! } }), "card", source(PROJECTION));
+    expect(hidden.status).toBe(200);
+    const restored = await servePublicProfileRequest(new Request(`${PAGE_URL}/card`, { headers: { "if-none-match": hidden.headers.get("etag")! } }), "card", source(pictured, AVATAR));
+    expect(restored.status).toBe(200);
+    const cardAddress = async (projection: PublicProfileProjection) => {
+      const html = await (await servePublicProfileRequest(new Request(PAGE_URL), "page", source(projection))).text();
+      return /<meta property="og:image" content="([^"]+)">/.exec(html)?.[1];
+    };
+    expect(await cardAddress(pictured)).not.toBe(await cardAddress(PROJECTION));
   });
 
   it("rechecks the published profile before a 304", async () => {
@@ -164,7 +179,8 @@ describe("public profile serving", () => {
     expect(html).toContain(`<meta property="og:url" content="${PROFILE_URL}">`);
     expect(html).toContain('<meta property="og:title" content="Person &lt;script&gt;alert(1)&lt;/script&gt; (@person)">');
     expect(html).toContain('<meta property="og:description" content="&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt; Hello">');
-    expect(html).toContain(`<meta property="og:image" content="${PROFILE_URL}/profile/card?v=bafyreirecord">`);
+    const card = await servePublicProfileRequest(new Request(`${PAGE_URL}/card`, { method: "HEAD" }), "card", source());
+    expect(html).toContain(`<meta property="og:image" content="${PROFILE_URL}/profile/card?v=${card.headers.get("etag")!.slice(1, -1)}">`);
     expect(html).toContain('<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">');
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
     const plain = await (await servePublicProfileRequest(new Request(PAGE_URL), "page", source({ ...PROJECTION, record: { ...RECORD, displayName: "person", about: "  " } }))).text();

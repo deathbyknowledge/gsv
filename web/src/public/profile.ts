@@ -11,8 +11,8 @@ export type PublicProfilePage = {
   contactPolicy: ProfileContactPolicy;
   /** The CID of the record's picture, which the Ship serves at /profile/avatar, or null without one. */
   avatar: string | null;
-  /** The record's CID, which names the version of the card the Ship draws at /profile/card. */
-  cid: string;
+  /** The version of the card the Ship draws at /profile/card, which changes with anything the card shows. */
+  card: string;
 };
 
 /** `homeOrigin` is the operator's own site (their primary domain); without one the wordmark stays plain. */
@@ -21,7 +21,7 @@ export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: str
   const handleDomain = homeOrigin ? new URL(homeOrigin).host : undefined;
   const handle = profile.handle ? `@${profile.handle}` : profile.displayName;
   // Link previews in messengers and social apps: the name, the about text and the profile's card. The
-  // card's address names the record's CID, so an edited profile is fetched the next time the link is shared.
+  // card's address names its version, so a changed card is fetched the next time the link is shared.
   const origin = new URL(profile.url).origin;
   const avatar = profile.avatar ? `/profile/avatar?v=${encodeURIComponent(profile.avatar)}` : null;
   const previewTitle = profile.handle && profile.displayName.trim() && profile.displayName.trim() !== profile.handle
@@ -29,7 +29,7 @@ export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: str
   const previewText = Array.from(profile.about.trim().replace(/\s+/g, " ")).slice(0, 200).join("") || `${handle} on Ship`;
   const preview = [
     ["og:type", "profile"], ["og:site_name", "Ship"], ["og:url", profile.url], ["og:title", previewTitle],
-    ["og:description", previewText], ["og:image", `${origin}/profile/card?v=${encodeURIComponent(profile.cid)}`],
+    ["og:description", previewText], ["og:image", `${origin}/profile/card?v=${encodeURIComponent(profile.card)}`],
     ["og:image:type", "image/png"], ["og:image:width", "1200"], ["og:image:height", "630"], ["og:image:alt", previewTitle],
   ].map(([property, content]) => `<meta property="${property}" content="${escapeHtml(content)}">`).join("")
     + `<meta name="twitter:card" content="summary_large_image"><meta name="description" content="${escapeHtml(previewText)}">`;
