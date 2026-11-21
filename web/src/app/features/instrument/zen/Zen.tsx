@@ -37,7 +37,6 @@ import { chatLinkContext, type ActivityRequest, type ChatContext } from "./chatC
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
-import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
@@ -119,9 +118,6 @@ function settleDuration(length: number): number {
 /** How many of the loaded messages settle on first paint, and how far apart they start. */
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
-/** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
-const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
-const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
 const SHIP_UNREACHABLE: ChatErrorContext = { summary: "chat.error.shipUnreachable.summary", action: "chat.error.shipUnreachable.action" };
 const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "chat.error.activityUnavailable.summary", action: "chat.error.activityUnavailable.action" };
@@ -417,7 +413,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [openNotes, setOpenNotes] = useState<ReadonlySet<string>>(() => new Set());
   /* browse mode: null while the prompt has focus, else the index of the focused moment (the TUI's browse cursor) */
   const [promptFocused, setPromptFocused] = useState(false);
-  const firstGoKey = useRef<number | null>(null);
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
   /* connecting a place from the selector, when the cloud is the only place; the dialog outlives a trip to Fleet and back */
@@ -900,13 +895,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   );
 
   useLayoutEffect(() => {
-    if (!active) { firstGoKey.current = null; return; }
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       if (event.target instanceof Element && event.target.closest(".fleet-dialog")) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
-      if (!event.altKey && (event.key === "f" && (event.ctrlKey || event.metaKey) || event.key === "/" && !typing && !event.ctrlKey && !event.metaKey)) {
+      if (event.key === "f" && (event.ctrlKey || event.metaKey) && !event.altKey) {
         event.preventDefault(); setSearchOpen(true); return;
       }
       if (editing && event.key === "Escape") {
@@ -917,36 +912,23 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       if (event.metaKey || event.altKey) return;
       if (event.ctrlKey) {
-        firstGoKey.current = null;
         if (!typing && (event.key === "u" || event.key === "d")) {
           event.preventDefault();
           scrolling.page(event.key === "u" ? "up" : "down");
         }
         return;
       }
-      if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
-        event.preventDefault();
-        void decide(event.key === "y" ? "approve" : "deny");
-        return;
-      }
       if (typing) return;
-      if (event.key === "g") {
+      // Browsing uses keys that never type, so every character starts writing instead.
+      if (event.key === "Home" || event.key === "End") {
         event.preventDefault();
-        if (firstGoKey.current !== null && event.timeStamp - firstGoKey.current < 700) {
-          scrolling.page("start");
-          firstGoKey.current = null;
-        } else firstGoKey.current = event.timeStamp;
-        return;
-      }
-      firstGoKey.current = null;
-      if (event.key === "G") {
-        event.preventDefault();
-        scrolling.page("end");
+        scrolling.page(event.key === "Home" ? "start" : "end");
         return;
       }
       const focused = browse !== null ? moments[browse] : latest;
       const focusedReceipt = focused ? receipts.get(focused.id) : undefined;
-      if (event.key === "o" && focused && (focusedReceipt || focused.activities.some((activity) => activity.you))) {
+      const onControl = event.target instanceof Element && event.target.closest("a[href], button, summary, [role='button']") !== null;
+      if (event.key === "Enter" && !onControl && focused && (focusedReceipt || focused.activities.some((activity) => activity.you))) {
         event.preventDefault();
         scrolling.stopFollowing();
         const yours = focused.activities.filter((activity) => activity.you);
@@ -954,20 +936,20 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
-      if (browse !== null && (event.key === "j" || event.key === "k")) {
+      if (browse !== null && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
-        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
+        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "ArrowDown" ? 1 : -1))));
         return;
       }
-      // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
-      // A pending approval keeps the keys, and shortcut letters keep their meaning.
-      if (pendingHil || !startsWriting(event, CLAIMED_KEYS)) return;
+      // Anything printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
+      // While an approval waits, the prompt takes "yes" or "no" as its answer.
+      if (!startsWriting(event)) return;
       const input = promptRef.current;
       if (input && !input.disabled) input.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [active, browse, latest, moments, receipts, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {

@@ -31,10 +31,6 @@
   gap: 12px;
   align-items: baseline;
 }
-.zen-approval kbd {
-  color: var(--text-hi);
-  padding: 0 6px;
-}
 .zen-approval.is-decided {
   border-color: var(--border);
   color: var(--text-dim);
@@ -47,11 +43,6 @@
 }
 .zen-approval .remember { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; }
 .zen-approval .remember:hover, .zen-approval .remember:focus-visible { color: var(--accent); }
-.zen-approval .keys .ibtn kbd {
-  color: inherit;
-  border-color: currentColor;
-  margin-right: 6px;
-}
 /* what Ship wants to do, in the person's words; the raw request folds beneath it */
 .zen-approval .ask {
   margin: 0;

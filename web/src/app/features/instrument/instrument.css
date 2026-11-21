@@ -44,7 +44,7 @@
   text-decoration: underline;
   text-underline-offset: 0.25em;
 }
-.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
+.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .people-list-more > summary, .people-self > small, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: .25em;
@@ -216,42 +216,31 @@
 .instrument-header .instrument-identity { display: flex; align-items: center; gap: 24px; justify-self: start; margin-left: -8px; }
 .instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-helper button { color: var(--accent); }
-.instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
-.instrument-header .keys > .gsv-hint { justify-content: stretch; }
-.instrument-header .keys > .gsv-hint > button { width: 100%; }
-.instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
-.instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
-.instrument-menu-toggle, .instrument-current-view { display: none; }
+/* the views as tabs: a line icon and its name; the open view is bright and underlined */
+.instrument-tabs { display: flex; align-items: center; gap: 2px; justify-self: end; margin-right: -10px; }
+.instrument-tabs button { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; }
+.instrument-tabs button > svg { flex: none; opacity: .75; }
+.instrument-tabs button:hover, .instrument-tabs [aria-current="page"] { color: var(--text-hi); }
+.instrument-tabs :is(button:hover, [aria-current="page"]) > svg { opacity: 1; }
+.instrument-tabs [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
-  .instrument-header .keys { gap: 8px; }
-  .instrument-header .keys kbd { display: none; }
+  .instrument-tabs button { padding: 0 7px; }
+}
+/* narrow screens show the icons alone, so longer names never crowd the wordmark; each name stays for screen readers */
+@container instrument (max-width: 720px) {
+  .instrument-tabs { gap: 0; margin-right: -12px; }
+  .instrument-tabs button { justify-content: center; min-width: 40px; min-height: 44px; padding: 0; }
+  .instrument-tabs button > svg { width: 18px; height: 18px; }
+  .instrument-tabs .view-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .instrument-tabs [aria-current="page"]::after { content: ""; position: absolute; inset: auto 11px 6px; border-bottom: 1px solid currentColor; }
+  .instrument-tabs .instrument-people-waiting { position: absolute; top: 7px; right: 6px; margin: 0; }
 }
 @container instrument (max-width: 600px) {
   .distance, .instrument-header, .instrument-help { --instrument-header-height: 52px; }
   .instrument-header { grid-template-columns: minmax(0, 1fr) auto; }
   .instrument-header .instrument-identity { max-width: 100%; gap: 16px; }
   .instrument-header .instrument-identity > button { min-height: 44px; }
-  .instrument-current-view { display: inline; color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .instrument-menu-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-right: -8px; font-size: 12px; }
-  .instrument-header .keys {
-    display: none;
-    position: absolute;
-    inset: var(--instrument-header-height) 18px auto;
-    margin: 0;
-    padding: 8px 16px;
-    justify-self: stretch;
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0;
-    background: var(--panel);
-    border: 1px solid var(--border-raised);
-    max-height: calc(var(--instrument-height) - var(--instrument-header-height) - 18px);
-    overflow-y: auto;
-    font-size: 14px;
-  }
-  .instrument-header .keys[data-open="true"] { display: flex; }
-  .instrument-header .keys button { min-height: 44px; text-align: left; }
 }
 .instrument kbd {
   font: inherit;
@@ -530,7 +519,7 @@
   .zen-bottom { padding: 0 18px 14px; }
 }
 
-/* ---------- the keys, on ? ---------- */
+/* ---------- Help ---------- */
 .instrument-help {
   position: absolute;
   right: 16px;

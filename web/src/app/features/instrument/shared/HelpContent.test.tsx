@@ -76,6 +76,11 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     expect(shortcutText).not.toContain("Need more help?");
     expect(shortcutNodes.some((node) => node.type === "details")).toBe(false);
     expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ F" : "Ctrl + F");
+    // Views move with Alt, Chat browses with keys that never type, and no letter is listed as a shortcut.
+    for (const label of platform === "MacIntel" ? ["⌥ C", "⌥ W", "⌥ H"] : ["Alt + C", "Alt + W", "Alt + H"]) expect(shortcutText).toContain(label);
+    for (const label of ["↓ / ↑", "Home / End"]) expect(shortcutText).toContain(label);
+    const listedKeys = shortcutNodes.filter((node) => node.type === "dt").map(collectText);
+    expect(listedKeys.filter((key) => /^[a-z?/]( \/ [a-zA-Z])?$|^gg/.test(key))).toEqual([]);
     const sections = [
       { distance: "zen", headings: ["Chat · browse", "Chat · input"] },
       { distance: "memory", headings: ["Memory"] },

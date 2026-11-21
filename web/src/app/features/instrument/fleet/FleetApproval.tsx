@@ -66,7 +66,6 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
         place={placeLabelFor(request.target)}
         label={label}
         disabled={!ready}
-        shortcuts={false}
         approveRef={approve}
         onInspect={onInspect}
         onDecide={(decision, remember) => {

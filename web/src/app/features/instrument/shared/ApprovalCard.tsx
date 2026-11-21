@@ -32,7 +32,6 @@ export type ApprovalCardProps = {
   place: string;
   label?: string;
   disabled?: boolean;
-  shortcuts?: boolean;
   approveRef?: Ref<HTMLButtonElement>;
   onInspect?: () => void;
   onDecide: (decision: "approve" | "deny", remember?: boolean) => void;
@@ -43,7 +42,7 @@ export type ApprovalCardProps = {
  * A publish also names who it speaks as, every change it makes, and the files its records carry.
  * Secondary notes (where to inspect it, that nothing runs yet) live in tooltips to keep the card short.
  */
-export function ApprovalCard({ request, who, place, label, disabled = false, shortcuts = true, approveRef, onInspect, onDecide }: ApprovalCardProps) {
+export function ApprovalCard({ request, who, place, label, disabled = false, approveRef, onInspect, onDecide }: ApprovalCardProps) {
   const t = useT();
   const line = hilRequestLine(request);
   const publication = hilPublication(request);
@@ -88,10 +87,10 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
       </details>
       <div class="keys">
         <button ref={approveRef} type="button" class="ibtn is-primary" disabled={disabled} onClick={() => { if (!disabled) onDecide("approve"); }}>
-          {shortcuts ? <kbd>y</kbd> : null} {t("shell.approval.run")}
+          {t("shell.approval.run")}
         </button>
         <button type="button" class="ibtn" disabled={disabled} onClick={() => { if (!disabled) onDecide("deny"); }}>
-          {shortcuts ? <kbd>n</kbd> : null} {t("shell.approval.deny")}
+          {t("shell.approval.deny")}
         </button>
         {!["*", "any", "device", "devices/*", "targets/*"].includes(request.target) ? (
           <Hint text={t("shell.approval.alwaysAllowHint", { capability: ruleCapabilityLabel(request.syscall), place })}>

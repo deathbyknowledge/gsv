@@ -12,6 +12,7 @@ export type TestNodeProps = {
   primary?: boolean;
   onToggle?: () => void;
   "aria-current"?: string;
+  "aria-keyshortcuts"?: string;
   blurb?: string;
   action?: string;
   info?: string;
