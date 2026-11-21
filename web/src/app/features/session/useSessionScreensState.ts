@@ -56,7 +56,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (visibleView !== "setup" || !setupConsentRequired) return;
     setupHasConsentEntry.current = false;
     const setupUrl = new URL(window.location.href);
-    const completedUrl = setupUrl.pathname === "/onboarding" ? new URL("/", setupUrl).href : setupUrl.href;
+    const completedUrl = setupUrl.pathname === "/onboarding" ? new URL("/chat", setupUrl).href : setupUrl.href;
     let outsideUrl: string | null = null;
     window.history.replaceState({ gsvSetupConsent: false }, "");
     const onPopState = () => {

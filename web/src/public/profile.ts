@@ -9,15 +9,30 @@ export type PublicProfilePage = {
   displayName: string;
   about: string;
   contactPolicy: ProfileContactPolicy;
-  /** Whether the page shows the record's picture, which the Ship serves at /profile/avatar. */
-  avatar: boolean;
+  /** The CID of the record's picture, which the Ship serves at /profile/avatar, or null without one. */
+  avatar: string | null;
 };
+
+/** The preview picture for a profile without one of its own: the Ship app icon. */
+const DEFAULT_PREVIEW = "/icons/gsv-512.png?v=cursor";
 
 /** `homeOrigin` is the operator's own site (their primary domain); without one the wordmark stays plain. */
 export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: string): string {
   // Handles in the request form resolve only on the operator's own domain.
   const handleDomain = homeOrigin ? new URL(homeOrigin).host : undefined;
   const handle = profile.handle ? `@${profile.handle}` : profile.displayName;
+  // Link previews in messengers and social apps: the name, the about text and the picture. The
+  // picture's address names its CID, so a new picture is fetched the next time the link is shared.
+  const origin = new URL(profile.url).origin;
+  const avatar = profile.avatar ? `/profile/avatar?v=${encodeURIComponent(profile.avatar)}` : null;
+  const previewTitle = profile.handle && profile.displayName.trim() && profile.displayName.trim() !== profile.handle
+    ? `${profile.displayName.trim()} (${handle})` : handle;
+  const previewText = Array.from(profile.about.trim().replace(/\s+/g, " ")).slice(0, 200).join("") || `${handle} on Ship`;
+  const preview = [
+    ["og:type", "profile"], ["og:site_name", "Ship"], ["og:url", profile.url], ["og:title", previewTitle],
+    ["og:description", previewText], ["og:image", `${origin}${avatar ?? DEFAULT_PREVIEW}`], ["og:image:alt", avatar ? previewTitle : "Ship"],
+  ].map(([property, content]) => `<meta property="${property}" content="${escapeHtml(content)}">`).join("")
+    + `<meta name="twitter:card" content="summary"><meta name="description" content="${escapeHtml(previewText)}">`;
   // An open profile offers the request form; a restricted one says so in the same place.
   const restricted = profile.contactPolicy === "requests"
     ? `<details class="connect" id="connect"><summary>Message from your Ship <span aria-hidden="true">↗</span></summary>
@@ -29,12 +44,16 @@ export function renderPublicProfile(profile: PublicProfilePage, homeOrigin?: str
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light"><meta name="referrer" content="no-referrer">
 <title>${escapeHtml(handle)} · Ship</title>
+<link rel="canonical" href="${escapeHtml(profile.url)}">
+${preview}
+<script src="/social/home.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico?v=cursor"><link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=cursor">
 <link rel="stylesheet" href="/social/profile.css">
 <script type="module" src="/social/profile.js"></script>
 ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/connect.js"></script>' : ""}</head>
-<body><main class="public-profile"><header>${homeOrigin ? `<a class="brand wordmark" href="${escapeHtml(homeOrigin)}">Ship</a>` : '<span class="brand wordmark">Ship</span>'}</header>
-${profile.avatar ? '<img class="avatar" src="/profile/avatar" alt="" width="96" height="96" decoding="async">' : ""}
+<body><main class="public-profile"><header>${homeOrigin ? `<a class="brand wordmark" href="${escapeHtml(homeOrigin)}">Ship</a>` : '<span class="brand wordmark">Ship</span>'}
+<p class="sign-in">Is this your Ship? <a href="/chat">Sign in</a></p></header>
+${avatar ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" width="96" height="96" decoding="async">` : ""}
 <div class="handle"><h1>${escapeHtml(handle)}</h1><button type="button" class="copy" data-copy="${escapeHtml(profile.url)}" aria-label="copy profile address" title="copy profile address" hidden>
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="5" width="8" height="9" rx="1"/><path d="M10 3V2H2v9h1"/></svg></button>
 <span class="copy-status" role="status"></span></div>

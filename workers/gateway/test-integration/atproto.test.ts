@@ -90,7 +90,7 @@ describe("the profile record", () => {
       // Bluesky's copy shares the picture and passes the validator the open-network host applies to app.bsky.actor.profile.
       expect(records("app.bsky.actor.profile")).toEqual([
         expect.not.objectContaining({ avatar: expect.anything() }),
-        expect.objectContaining({ avatar: picture, website: "https://default.gsv.space/profile" }),
+        expect.objectContaining({ avatar: picture, website: "https://default.gsv.space" }),
       ]);
       for (const record of records("app.bsky.actor.profile")) expect(safeParse(AppBskyActorProfile.mainSchema, record)).toMatchObject({ ok: true });
     } finally { await runtime.close(); }
@@ -108,9 +108,12 @@ describe("a takedown by the Ship's open-network host", () => {
         await response.body?.cancel();
         return response.status;
       };
+      // The Ship's address shows the profile while it is public, and otherwise the app.
+      const home = async () => (await (await gateway.fetch("https://default.gsv.space/")).text()).includes('class="public-profile"') ? "profile" : "app";
       const { identity } = await runtime.client.atproto.identity({});
       if (!identity) throw new Error("Sign-in did not create the Ship's identity");
       expect(await status("/profile")).toBe(200);
+      expect(await home()).toBe("profile");
       const { PDS } = await runtime.harness.getWorker<{ PDS: FixturePds }>("gsv").getEnv();
       const repository = await PDS.getInstallation("inst_integration_default");
 
@@ -119,6 +122,7 @@ describe("a takedown by the Ship's open-network host", () => {
       const account: PublicTakedown = { subject: { $type: "com.atproto.admin.defs#repoRef", did: identity.did }, ref: "audit_account", reason: "Spam", at: 2 };
       await repository.setTakedowns([account]);
       expect(await status("/profile")).toBe(404);
+      expect(await home()).toBe("app");
       expect(await status("/.well-known/atproto-did")).toBe(404);
       expect(await runtime.client.atproto.identity({})).toEqual({ identity: { ...identity, status: "takendown" }, takedowns: [account] });
 
@@ -133,6 +137,7 @@ describe("a takedown by the Ship's open-network host", () => {
 
       await repository.setTakedowns([]);
       expect(await status("/profile")).toBe(200);
+      expect(await home()).toBe("profile");
       expect(await (await gateway.fetch("https://default.gsv.space/.well-known/atproto-did")).text()).toBe(identity.did);
       expect(await runtime.client.atproto.identity({})).toEqual({ identity, takedowns: [] });
     } finally { await runtime.close(); }

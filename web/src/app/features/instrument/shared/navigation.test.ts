@@ -5,6 +5,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("legacy Chat links", () => {
   it.each([
+    ["/", "/chat"],
     ["/zen", "/chat"],
     ["/zen/settings", "/chat/settings"],
   ])("rewrites %s while preserving browser handoff and history state", (oldPath, newPath) => {

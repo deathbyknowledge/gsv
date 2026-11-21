@@ -31,7 +31,7 @@ import { ShipIdentity } from "./ships/identity";
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", gecos: "Person", home: "/home/private-login", cwd: "/home/private-login" };
 const DRAFT: ProfileFields = { displayName: "Published name", about: "Hello from my space", contactPolicy: "requests" };
 const SHIP = { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "local.ship.test", host: TEST_PDS_URL };
-const PROFILE_URL = "https://local.ship.test/profile";
+const PROFILE_URL = "https://local.ship.test";
 const PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.test", legacyDomains: ["gsv.test"] });
 const ROOT = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
 /** The WhatsApp identity the person has linked to their account. */
@@ -833,7 +833,7 @@ describe("reading another Ship's profile", () => {
     });
   });
 
-  const ALICE = { handle: "alice.ship.test", cid: "bafyreialice", displayName: "Alice", about: "Hello", contactPolicy: "requests", url: "https://alice.ship.test/profile" };
+  const ALICE = { handle: "alice.ship.test", cid: "bafyreialice", displayName: "Alice", about: "Hello", contactPolicy: "requests", url: "https://alice.ship.test" };
 
   it.each([
     "alice.ship.test", "@alice.ship.test", "@Alice.Ship.Test", "alice", "@alice",

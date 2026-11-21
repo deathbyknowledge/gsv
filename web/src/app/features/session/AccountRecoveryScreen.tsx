@@ -40,7 +40,7 @@ export function AccountRecoveryScreen() {
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
     <SectionHeader title={t(administrator ? "session.rootRecovery.title" : "session.ownerRecovery.title")} titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
-      {done ? <><p>{t(administrator ? "session.rootRecovery.done" : "session.ownerRecovery.done")}</p><AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : !attempt
+      {done ? <><p>{t(administrator ? "session.rootRecovery.done" : "session.ownerRecovery.done")}</p><AppLink href="/chat" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : !attempt
         ? <p>{t("session.ownerRecovery.unavailable")}</p>
         : <form class="gsv-login-fields" onSubmit={(event) => void submit(event)}>
           <p>{t(administrator ? "session.rootRecovery.intro" : "session.ownerRecovery.intro")}</p>
@@ -52,7 +52,7 @@ export function AccountRecoveryScreen() {
             {t(administrator ? "session.ownerRecovery.usePersonal" : "session.ownerRecovery.useAdministrator")}
           </button>
         </form>}
-      {!done && <AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink>}
+      {!done && <AppLink href="/chat" class="gsv-auth-link">{t("session.recovery.return")}</AppLink>}
     </div>
   </div></AuthLayout>;
 }

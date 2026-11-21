@@ -79,11 +79,11 @@ describe("installation onboarding capability", () => {
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
   });
 
-  it("keeps the inviter's profile from setup for People to open once", () => {
-    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&invite=${encodeURIComponent("https://esteve.ship.space/profile")}`);
+  it.each(["https://esteve.ship.space", "https://esteve.ship.space/profile"])("keeps the inviter's profile %s from setup for People to open once", (profile) => {
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&invite=${encodeURIComponent(profile)}`);
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
     expect(window.location.hash).toBe("");
-    expect(takeFirstRunInvite()).toBe("https://esteve.ship.space/profile");
+    expect(takeFirstRunInvite()).toBe(profile);
     expect(takeFirstRunInvite()).toBeNull();
   });
 

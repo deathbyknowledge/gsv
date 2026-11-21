@@ -33,7 +33,7 @@ async function screen() {
 }
 
 /** An existing Ship opens a request to the inviter's profile, as that profile's own page would. */
-function expectInviteNavigation(profile = "https://sponsor.example/profile") {
+function expectInviteNavigation(profile = "https://sponsor.example") {
   const destination = new URL(assign.mock.lastCall![0]);
   expect(destination.origin).toBe("https://custom.example.com");
   expect(destination.pathname).toBe("/people");
@@ -67,7 +67,7 @@ describe("signup entrypoint recovery", () => {
     const props = await screen();
     expect(props.invitation).toEqual({ name: "@esteve" });
     await props.onConnect("https://custom.example.com");
-    expectInviteNavigation("https://esteve.example.com/profile");
+    expectInviteNavigation("https://esteve.example.com");
   });
 
   it("carries the inviter's profile into a new Ship's setup", async () => {
@@ -76,7 +76,7 @@ describe("signup entrypoint recovery", () => {
     await props.onConnect("https://nora.example.com", token);
     const destination = new URL(assign.mock.lastCall![0]);
     expect(destination.pathname).toBe("/onboarding");
-    expect(Object.fromEntries(new URLSearchParams(destination.hash.slice(1)))).toEqual({ onboarding: token, invite: "https://sponsor.example/profile" });
+    expect(Object.fromEntries(new URLSearchParams(destination.hash.slice(1)))).toEqual({ onboarding: token, invite: "https://sponsor.example" });
   });
 
   it("opens plain signup for an old single-use invitation or an unusable name", async () => {

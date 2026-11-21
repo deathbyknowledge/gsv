@@ -258,6 +258,8 @@ describe("minimal account setup", () => {
       { url: "https://space.example/earlier?view=kept#position", state: { scrollPosition: 42 } },
       { url: "https://space.example/previous", state: null },
     ];
+    // Setup from a signup link finishes in the app, whose address is /chat.
+    const completed = path === "/onboarding" ? "https://space.example/chat" : "https://space.example/";
     const screen = await setupScreen(path, preceding);
     await act(() => {
       screen.state().setup.onPassword("password123");
@@ -276,12 +278,12 @@ describe("minimal account setup", () => {
     await screen.unmount();
     await vi.waitFor(() => expect(screen.history()).toEqual({ index: position, entries: [
       ...preceding,
-      { url: "https://space.example/", state: null },
-      { url: "https://space.example/", state: null },
+      { url: completed, state: null },
+      { url: completed, state: null },
     ] }));
     for (let index = position + 1; index < preceding.length + 2; index++) {
       await act(async () => window.history.forward());
-      expect(window.location.href).toBe(index < preceding.length ? preceding[index]!.url : "https://space.example/");
+      expect(window.location.href).toBe(index < preceding.length ? preceding[index]!.url : completed);
       expect(window.history.state).toBeNull();
     }
   });

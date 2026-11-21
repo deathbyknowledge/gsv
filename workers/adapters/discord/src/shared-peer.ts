@@ -76,7 +76,7 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
       await cancelBinaryBody(body, "Discord route changed before delivery");
       return { ok: false, error: "Discord route changed before delivery" };
     }
-    const rendered = context?.hil ? { ...message, text: `${message.text}\n\nOpen your GSV: ${state.activeRoute.canonicalOrigin}` } : message;
+    const rendered = context?.hil ? { ...message, text: `${message.text}\n\nOpen your GSV: ${new URL("/chat", state.activeRoute.canonicalOrigin).href}` } : message;
     return await this.deliver(rendered, { kind: "route", installationId, generation: state.activeRoute.generation }, body);
   }
 

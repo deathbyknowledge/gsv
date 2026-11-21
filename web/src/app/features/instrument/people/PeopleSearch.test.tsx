@@ -17,7 +17,7 @@ const contact = (id: string, name: string, handle: string, did: string): Contact
 const MARA = contact("contact-mara", "Mara", "mara.ship.space", "did:plc:mara");
 const pending = (id: string, direction: ApproachSummary["direction"], displayName: string): ApproachSummary => ({ id, direction, requestId: id, peerDid: `did:plc:${id}`,
   displayName, conversationId: `approach:${id}`, state: "pending", revision: 1, delivery: "received", createdAtMs: 10, updatedAtMs: 10, expiresAtMs: 99 });
-const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space/profile" };
+const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space" };
 let tree: ComponentChildren;
 let contactsOverride: ContactSummary[] | undefined;
 let root: ReturnType<typeof createTestRoot>;
@@ -91,7 +91,7 @@ describe("searching People", () => {
   it("looks up a handle no one here has and offers to send them a request", async () => {
     const request = await search("juno.ship.space", { resolve: async () => ({ data: { profile: JUNO } }) });
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space/profile" }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space" }));
     await vi.waitFor(() => expect(collectText(tree)).toContain("Juno"));
     const send = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request");
     await act(async () => { await send!.props.onClick!(); });
@@ -128,7 +128,7 @@ describe("searching People", () => {
   it("looks people up for an account that may not read contacts", async () => {
     const request = await search("juno.ship.space", { account: { ...ACCOUNT, capabilities: ["profile.resolve", "approach.list", "contact.block.list"] }, contactsLoaded: false, resolve: async () => ({ data: { profile: JUNO } }) });
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space/profile" }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space" }));
   });
 
   it("offers no request to an account that may not send one", async () => {

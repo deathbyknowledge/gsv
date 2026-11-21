@@ -131,7 +131,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
 
   const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
   const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyClosed");
-  const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
+  // The link opens the page as visitors see it: the Ship's address itself takes its signed-in owner to the app.
+  const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={new URL("/profile", state.published.url).href} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
   const copyAddress = state && <span class="people-profile-handle">
     <h2>{title}</h2>
     <Hint text={t("people.profile.copyAddress")}>

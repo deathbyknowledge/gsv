@@ -51,7 +51,7 @@ export function MemberRecoveryScreen() {
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
     <SectionHeader title={t("session.recovery.title")} titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
-      {done ? <><p>{t("session.recovery.done")}</p><AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : <>
+      {done ? <><p>{t("session.recovery.done")}</p><AppLink href="/chat" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : <>
         {email.loaded && (email.url
           ? <div class="gsv-login-fields">
             <p>{t("session.recovery.emailIntro")}</p>
@@ -70,7 +70,7 @@ export function MemberRecoveryScreen() {
           <Button variant="primary" block type="submit" label={t("session.recovery.reset")} disabled={busy || password.length < 8 || !code.trim()} />
         </form>}
         <SessionError message={error} />
-        <AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink>
+        <AppLink href="/chat" class="gsv-auth-link">{t("session.recovery.return")}</AppLink>
       </>}
     </div>
   </div></AuthLayout>;

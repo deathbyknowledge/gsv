@@ -16,7 +16,8 @@ import {
 } from "./installationOnboarding";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
-const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
+/** The stored session; the public profile's `web/public/social/home.js` reads it to send this Ship's owner from its address to the app. */
+export const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
 const STORAGE_PENDING_REVOKES = "gsv.ui.session.pending-revokes.v1";
 const SESSION_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_TOKEN_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
