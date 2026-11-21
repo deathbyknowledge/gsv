@@ -6,7 +6,7 @@ Workers, R2 storage and ripgit. H&M services are optional. The root deployment
 commands use the `operator` stage; they do not upgrade an existing singleton
 deployment in place.
 
-To try Ship without operating infrastructure, use [hosted Ship](https://gsv.space).
+To try Ship without operating infrastructure, use [hosted Ship](https://ship.space).
 GitHub Releases provide the host applications and browser extension. Self-hosters
 build the Workers and web UI from source; new releases do not include prebuilt
 Cloudflare deployment archives.

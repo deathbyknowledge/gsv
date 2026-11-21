@@ -4,9 +4,9 @@ An AI assistant lives on one box. Your life doesn't.
 
 You've got a laptop, maybe a home server, a phone. Today's self-hosted agents make you pick *one* of those to run the brain, then keep that machine awake forever. Turn it off and your assistant goes dark. Every other device you own just sits there.
 
-Ship is a different shape. It's a **personal AI computer** — or, for the technically inclined, *a distributed OS with AI in the kernel* — that ties all your machines into one system. The brain runs on the edge (Cloudflare), so it remains reachable even when every device you own is asleep, and it acts across all of them at once: read a log on your home server and push from your laptop in the same breath.
+Ship is a different shape. It's a **personal AI assistant** built on GSV, an open-source stack that works like *a distributed OS with AI in the kernel* and ties all your machines into one system. The brain runs on the edge (Cloudflare), so it remains reachable even when every device you own is asleep, and it acts across all of them at once: read a log on your home server and push from your laptop in the same breath.
 
-Not a chatbot. Not an agent pinned to a single host. A computer.
+Not a chatbot, and not an agent pinned to a single host.
 
 ## Distributed
 
@@ -18,7 +18,7 @@ Because the brain lives on the edge rather than on a box in your closet, Ship re
 
 ## Yours
 
-Ship is MIT-licensed and open from the ground up — read every line yourself. It runs in **your own Cloudflare account**: your keys, your data, never routed through us. Devices connect outbound through the gateway with tokens, so there are no open ports, no VPN, and no exposed box to babysit.
+GSV, the stack Ship is built on, is MIT-licensed and open from the ground up — read every line yourself. Self-hosted, Ship runs in **your own Cloudflare account**: your keys, your data, never routed through us. Devices connect outbound through the gateway with tokens, so there are no open ports, no VPN, and no exposed box to babysit.
 
 Two things we keep straight, because you'll check:
 
@@ -27,9 +27,10 @@ Two things we keep straight, because you'll check:
 
 ## What it costs
 
-The baseline can run within **Cloudflare Workers Free**, plus your own model
-costs. Workers Paid is optional for CodeMode and additional runtime capacity.
+Hosted Ship at [ship.space](https://ship.space) is free during early access.
+Self-hosting needs **Cloudflare Workers Paid**, because the public composition
+includes CodeMode's Worker Loader, plus your own model costs.
 
 ## Where we are
 
-Ship is in beta, and early. No big ecosystem or polish yet — what there *is* is the architecture we think personal AI should have been built on from the start: distributed, edge-native, open, and yours. If that's the thing you've been missing, this is the ground floor.
+Ship is in early access. No big ecosystem or polish yet — what there *is* is the architecture we think personal AI should have been built on from the start: distributed, edge-native, open, and yours. If that's the thing you've been missing, this is the ground floor.
