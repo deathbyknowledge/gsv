@@ -134,6 +134,25 @@ describe("model event origin annotations", () => {
     ]);
   });
 
+  it("labels the owner's message again after a notice that ends in a contact's words", async () => {
+    const whatsapp: InteractionOrigin = {
+      kind: "adapter", adapter: "whatsapp", accountId: "account:fixture", actorId: "actor:owner",
+      surface: { kind: "dm", id: "dm:owner" },
+    };
+    // A notice recorded while Ship is idle waits, outside any run, for the owner's next message.
+    const notice: ModelHistoryGroup = { ...group({ kind: "event", payload: {
+      kind: "owner.notified", severity: "info", audience: "both",
+      payload: { noticeId: "notice:fixture", topic: "contact.message", adapter: "whatsapp", from: "Ada", contactId: "contact:ada", preview: "Hello there!" },
+    } }, "run:unused"), runId: null };
+    const messages = await render([
+      user("Earlier request.", "run:before", whatsapp),
+      notice,
+      user("Can you ask Ben about Friday?", "run:after", whatsapp),
+    ]);
+    expect(messages[1]?.content).toMatch(/:\nHello there!$/);
+    expect(messages[2]?.content).toBe("[From: WhatsApp direct message]\nCan you ask Ben about Friday?");
+  });
+
   it("hands a contact message's attachments to the model with its event", async () => {
     const event = group({ kind: "event", payload: {
       kind: "contact.message", severity: "info", audience: "model",
