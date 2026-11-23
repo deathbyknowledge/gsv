@@ -319,7 +319,7 @@ async handleReq(
             frame.id,
             SETUP_REQUIRED_ERROR_CODE,
             "Setup required",
-            setupRequiredDetails(this.host.env),
+            setupRequiredDetails(),
           );
           return;
         }

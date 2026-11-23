@@ -1008,8 +1008,8 @@ the operator's signup address with `?invite=` naming the Ship: its handle on the
 operator's domain, or its full hostname otherwise. Someone new creates a Ship and
 lands in People with a request to the inviter ready to send; someone with a Ship
 signs in and gets the same. Without a signup site, the link is the Ship's
-address, which shows its profile. Either way the request works only while the inviter's profile is
-public and takes requests. `contact invite` in Shell prints the link.
+address, which shows its profile. Either way the request works only once the inviter's profile is
+published and while it takes requests. `contact invite` in Shell prints the link.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process, except that accepting a request stays with the signed-in
@@ -1228,21 +1228,21 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 Each space has one owner-authenticated profile, published as the Ship's `space.ship.profile` record
 (record key `self`) in its [open-network repository](#open-network-atproto). The Gateway renders that
 record as the page at the Ship's address, `https://SPACE`, which `profile.get` and `profile.resolve` return as
-`url`; `/profile` shows the same page, and older `/@name` links redirect to the address. Nothing is public
-until the owner chooses: `sys.setup` takes `profile: "public" | "private"` where `setupFeatures` lists
-`profile`, which it does only with the `PDS` service. Either choice saves a draft named by the Ship's handle
-with `contactPolicy: "requests"`; a public choice is published, as the owner has since edited it, at the next
-sign-in, which retries until the open-network host takes it. Without a choice, or with a private one,
-nothing publishes until an explicit publish.
-Draft changes stay private until the next explicit publish, which writes the record together with
-the profile as Bluesky shows it, an `app.bsky.actor.profile` record (record key `self`); unpublishing
-deletes both. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+`url`; `/profile` shows the same page, and older `/@name` links redirect to the address. Every profile is
+public. With the `PDS` service, the owner's first sign-in, or the first message reaching their Ship from any
+surface, publishes a starting profile: the Ship's handle as its name, no bio or picture, and
+`contactPolicy: "requests"`. That first publish creates the Ship's DID, and a failed one is retried at the next
+use. Every later change publishes at once, writing the record together with the profile as Bluesky shows it, an
+`app.bsky.actor.profile` record (record key `self`); a change the repository refuses leaves the profile as it
+was. There are no drafts and no unpublishing: an owner who wants no new message requests sets
+`contactPolicy: "closed"`. Without the `PDS` service, `profile.get` returns the starting profile and changes
+are refused. Profile changes and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
 owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Its optional
 `saveContact` keeps the person in the sender's contacts once the request is accepted; without it they stay unsaved. Like
 `shipHandlesMessages`, it is the sender's own choice, retained with the request and never sent to the other Ship; a replay
-must repeat both. The person who accepts a request decides separately and starts unsaved. Incoming requests, publishing a
+must repeat both. The person who accepts a request decides separately and starts unsaved. Incoming requests, changing the
 profile and every decision stay with the signed-in human; a process reading or listing an incoming
 request is rejected.
 
@@ -1253,15 +1253,7 @@ type ProfileAndApproachSyscalls = {
     result: { profile: ProfileState };
   };
   "profile.update": {
-    args: { expectedRevision: number; draft: ProfileFields };
-    result: { profile: ProfileState };
-  };
-  "profile.publish": {
-    args: { expectedRevision: number };
-    result: { profile: ProfileState };
-  };
-  "profile.unpublish": {
-    args: { expectedRevision: number };
+    args: { expectedRevision: number; fields: ProfileFields };
     result: { profile: ProfileState };
   };
   "profile.resolve": {
@@ -1322,18 +1314,17 @@ type ProfileAndApproachSyscalls = {
 
 `ProfileFields` contains `displayName` (1 to 80 characters), `about` (up to 2,048) and
 `contactPolicy` (`requests` or `closed`; a Ship reads any other value as `closed`). `ProfileState` returns those fields as
-`draft`, the draft's picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a
-revision, and the space's recorded `handle` when the installation has one. Clients name the profile
-by that handle rather than parsing it from the URL. While the record exists, `published` gives the
-page `url`, the record's `cid`, the live `contactPolicy` and the draft `revision` the record was
-written from. A later draft revision is an unpublished change; publishing it again also retries a
-publish that failed after the draft was saved.
+`fields`, the picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a `revision`, the
+record's `cid` once the repository holds it, and the space's recorded `handle` when the installation has
+one. Clients name the profile by that handle rather than parsing it from the URL. Revision 0 is the
+starting profile before it is published; each change publishes and moves the revision on, and a change
+made against an older revision is refused.
 
-`profile.avatar.set` replaces the draft's picture with its request body: a PNG, JPEG or WebP of at
-most 1 MB, of declared length, whose bytes match its type. `profile.avatar.remove` removes the
-picture. Both advance the draft revision, and the picture becomes public with the next publish.
-`profile.avatar.read` returns the draft's or the published picture as the response body, for the
-owner's editor.
+`profile.update` publishes `fields`. `profile.avatar.set` publishes its request body as the picture: a
+PNG, JPEG or WebP of at most 1 MB, of declared length, whose bytes match its type.
+`profile.avatar.remove` publishes the profile without a picture. A change that keeps the picture
+doesn't upload it again. `profile.avatar.read` returns the profile's picture as the response body, for
+the owner's editor.
 
 ```ts
 type ShipProfileRecord = {

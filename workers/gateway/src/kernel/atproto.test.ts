@@ -101,39 +101,10 @@ describe("writing records", () => {
     expect(repository.ensureAccount).not.toHaveBeenCalled();
   });
 
-  it("refuses while the profile is private, before asking", async () => {
+  it("refuses before the Ship has published the profile, before asking", async () => {
     const send = approval(true);
     const { ctx, repository } = context({ ...shipProcess(), published: false });
-    await expect(handleAtprotoWrite({ writes: [NOTE] }, ctx)).rejects.toThrow("Your profile is private, so your Ship can't publish to the open network");
-    expect(send).not.toHaveBeenCalled();
-    expect(repository.applyWrites).not.toHaveBeenCalled();
-  });
-
-  it("writes nothing when the profile became private while the person decided", async () => {
-    const profile = { published: true };
-    vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async () => {
-      profile.published = false;
-      return { type: "res", id: "approval", ok: true, data: { approved: true } };
-    });
-    const { ctx, repository } = context({ ...shipProcess(), profile });
-    await expect(handleAtprotoWrite({ writes: [NOTE] }, ctx)).rejects.toThrow("Your profile is private");
-    expect(repository.applyWrites).not.toHaveBeenCalled();
-  });
-
-  it.each(["space.ship.profile", "Space.SHIP.profile"])("sends %s back to People", async (collection) => {
-    const send = approval(true);
-    const { ctx, repository } = context(shipProcess());
-    await expect(handleAtprotoWrite({ writes: [NOTE, { action: "delete", collection, rkey: "self" }] }, ctx))
-      .rejects.toThrow("space.ship.profile is your profile; change it in People");
-    expect(send).not.toHaveBeenCalled();
-    expect(repository.applyWrites).not.toHaveBeenCalled();
-  });
-
-  it.each(["app.bsky.actor.profile", "App.Bsky.Actor.profile"])("sends %s, the profile on Bluesky, back to People", async (collection) => {
-    const send = approval(true);
-    const { ctx, repository } = context(shipProcess());
-    await expect(handleAtprotoWrite({ writes: [{ action: "put", collection, rkey: "self", record: { $type: collection, displayName: "Not my name" } }] }, ctx))
-      .rejects.toThrow("app.bsky.actor.profile is your profile on Bluesky; change it in People");
+    await expect(handleAtprotoWrite({ writes: [NOTE] }, ctx)).rejects.toThrow("Your Ship hasn't published your profile yet, so it can't publish to the open network");
     expect(send).not.toHaveBeenCalled();
     expect(repository.applyWrites).not.toHaveBeenCalled();
   });
@@ -198,9 +169,9 @@ describe("files", () => {
     expect(repository.uploadBlob).not.toHaveBeenCalled();
   });
 
-  it("refuses an upload while the profile is private", async () => {
+  it("refuses an upload before the Ship has published the profile", async () => {
     const { ctx, repository } = context({ published: false });
-    await expect(handleAtprotoBlobUpload({ mimeType: "text/plain" }, ctx, bodyFromText("hello"))).rejects.toThrow("Your profile is private");
+    await expect(handleAtprotoBlobUpload({ mimeType: "text/plain" }, ctx, bodyFromText("hello"))).rejects.toThrow("hasn't published your profile yet");
     expect(repository.uploadBlob).not.toHaveBeenCalled();
   });
 
@@ -229,7 +200,6 @@ type ContextOptions = Partial<KernelContext> & {
   account?: (typeof ACCOUNT & { status?: "takendown" }) | null;
   takedowns?: PublicTakedown[];
   published?: boolean;
-  profile?: { published: boolean };
   pds?: boolean;
   /** Whether the calling process is its owner's Ship. */
   personal?: boolean;
@@ -238,7 +208,7 @@ type ContextOptions = Partial<KernelContext> & {
 };
 
 function context(options: ContextOptions = {}) {
-  const { account = ACCOUNT, takedowns = [], published = true, profile = { published }, pds = true, personal = true, humanUid = OWNER.uid, ...overrides } = options;
+  const { account = ACCOUNT, takedowns = [], published = true, pds = true, personal = true, humanUid = OWNER.uid, ...overrides } = options;
   const repository = {
     account: vi.fn<PublicRepository["account"]>(async () => account),
     takedowns: vi.fn<PublicRepository["takedowns"]>(async () => takedowns),
@@ -258,7 +228,7 @@ function context(options: ContextOptions = {}) {
     callerOwnerUid: OWNER.uid,
     connection: {},
     auth: { getHumanAccount: () => ({ ...OWNER, uid: humanUid }) },
-    profiles: { published: (uid: number) => uid === OWNER.uid && profile.published
+    profiles: { published: (uid: number) => uid === OWNER.uid && published
       ? { cid: "bafyprofile", record: { $type: "space.ship.profile", displayName: "Alice", contactPolicy: "requests" } }
       : null },
     procs: { get: () => ({ isPersonalController: personal, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },

@@ -168,7 +168,7 @@ OS service privilege must never become an agent shell privilege by accident.
 ### Data and security
 
 - Enforce authorization in the Kernel, not only in UI or callers.
-- Only what a person chose to make public goes to the open network. The Kernel owns who may publish, approval of agent publishing and the collections features reserve.
+- Every Ship publishes its owner's profile, starting from the handle alone; beyond what the person writes there, only what they chose to make public goes to the open network. The Kernel owns who may publish, approval of agent publishing and the collections features reserve.
 - Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Accounts owns open registration for verified owners. Each self-service signup resumes one durable provisioning operation; private policy prepares its plan before setup authorization. Invitation links carry no authority and do not grant or reserve signup places. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.

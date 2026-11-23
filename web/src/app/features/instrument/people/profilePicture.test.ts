@@ -17,7 +17,7 @@ type PictureArgs = ProfileAvatarSetArgs | ProfileAvatarRemoveArgs | ProfileAvata
 type Answer = { data: ProfileGetResult | ProfileAvatarReadResult; body?: GsvBody };
 type Call = { call: string; args: PictureArgs; body?: Uint8Array };
 
-const PROFILE: ProfileState = { revision: 4, url: "https://person.ship.test/profile", draft: { displayName: "Person", about: "", contactPolicy: "requests" } };
+const PROFILE: ProfileState = { revision: 4, url: "https://person.ship.test", fields: { displayName: "Person", about: "", contactPolicy: "requests" }, cid: "bafyreiprofile" };
 const BYTES = new Uint8Array([137, 80, 78, 71]);
 
 /** A client that records each request, with the bytes of its body, and answers it with `answer`. */

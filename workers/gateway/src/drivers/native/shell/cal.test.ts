@@ -53,7 +53,7 @@ function calContext(): KernelContext {
       getMailboxForOwner: (uid: number) => uid === HANK.uid ? { address: "hank@ship.space" } : null,
       getPrimaryMailbox: () => null,
     },
-    profiles: { draft: () => ({ fields: { displayName: "Hank Hill" } }) },
+    profiles: { current: () => ({ fields: { displayName: "Hank Hill" } }) },
     config: { get: (key: string) => key === "users/1000/locale/timezone" ? "Europe/Amsterdam" : null },
   } as KernelContext;
 }

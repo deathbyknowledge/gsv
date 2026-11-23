@@ -86,9 +86,9 @@ describe("atproto shell command", () => {
 
     const cancel = vi.fn();
     vi.spyOn(fs, "openFile").mockResolvedValueOnce({ body: new ReadableStream({ cancel }), size: 5, totalSize: 5, mtime: new Date(), status: 200 });
-    upload.mockRejectedValueOnce(new Error("Your profile is private"));
+    upload.mockRejectedValueOnce(new Error("Your Ship hasn't published your profile yet"));
     const refused = await command.execute(["blob", "picture.png", "--mime", "image/webp"], shell());
-    expect(refused.stderr).toContain("Your profile is private");
+    expect(refused.stderr).toContain("hasn't published your profile yet");
     expect(upload).toHaveBeenLastCalledWith({ mimeType: "image/webp" }, expect.anything(), expect.anything());
     expect(cancel).toHaveBeenCalledOnce();
   });

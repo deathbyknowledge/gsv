@@ -12,7 +12,7 @@ import type { KernelContext } from "../context";
 import type { ProcessRecord } from "../processes";
 import { handleContactSend, processFederationDelivery } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
-import { handleProfileGet, handleProfilePublish, handleProfileUnpublish, handleProfileUpdate, readPublicProfile } from "../profiles";
+import { handleProfileGet, handleProfileUpdate, readPublicProfile } from "../profiles";
 import { requestReportSubmissionSchema, type RequestReportService, type RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
 import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachReport, handleApproachRetry } from "./admission";
 import { expireOverdueApproach, processApproachMaintenance } from "./runtime";
@@ -213,10 +213,9 @@ describe("message requests", () => {
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
   });
 
-  it.each(["changed", "unpublished"] as const)("refuses a request once the profile its sender read has %s", async (change) => {
+  it("refuses a request once the profile its sender read has changed", async () => {
     const { approach } = await alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)));
-    if (change === "changed") await publishProfile(bob, "requests", "Hello again");
-    else await bob.run(async (ctx) => void await handleProfileUnpublish({ expectedRevision: handleProfileGet(ctx).profile.revision }, ctx));
+    await publishProfile(bob, "requests", "Hello again");
     await alice.run((ctx) => processApproachMaintenance(held(ctx)));
     expect((await alice.run((ctx) => ctx.approaches.get(approach.id)))?.summary.delivery).toBe("failed");
     expect(await incomingRequests(bob)).toEqual([]);
@@ -456,8 +455,7 @@ function request(read: PublicProfile): ApproachCreateArgs {
 async function publishProfile(space: TestSpace, contactPolicy: ProfileContactPolicy, about = "Hello"): Promise<PublicProfile> {
   await space.run(async (ctx) => {
     const { revision } = handleProfileGet(ctx).profile;
-    handleProfileUpdate({ expectedRevision: revision, draft: { displayName: "Bob Builder", about, contactPolicy } }, ctx);
-    await handleProfilePublish({ expectedRevision: revision + 1 }, ctx);
+    await handleProfileUpdate({ expectedRevision: revision, fields: { displayName: "Bob Builder", about, contactPolicy } }, ctx);
   });
   return await alice.run((ctx) => readPublicProfile(space.account.did, ctx));
 }

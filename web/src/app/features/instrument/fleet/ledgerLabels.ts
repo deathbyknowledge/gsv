@@ -52,8 +52,6 @@ const labels = {
   "approach.retry": "fleet.ledger.approachRetry",
   "approach.report": "fleet.ledger.approachReport",
   "profile.update": "fleet.ledger.profileUpdate",
-  "profile.publish": "fleet.ledger.profilePublish",
-  "profile.unpublish": "fleet.ledger.profileUnpublish",
   "profile.resolve": "fleet.ledger.profileResolve",
   "profile.avatar.set": "fleet.ledger.profileAvatarSet",
   "profile.avatar.remove": "fleet.ledger.profileAvatarRemove",

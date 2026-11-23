@@ -19,8 +19,8 @@ connecting; use the owner's words if they gave any.
 Sending asks the owner for approval unless their approval policy allows
 `approach.create`, and that approval names the recipient and shows the message.
 It is the owner's one confirmation: do not ask them to confirm the message
-first as well, unless they asked to see it. The other person decides whether to accept; report the request as sent, not as connected. Profiles are public by
-default, so this usually works. If it fails because the profile is unavailable
+first as well, unless they asked to see it. The other person decides whether to accept; report the request as sent, not as connected. Every profile is
+public, so this usually works. If it fails because the profile is unavailable
 or not receiving requests, ask the person to add the owner instead, with the
 invitation link below.
 

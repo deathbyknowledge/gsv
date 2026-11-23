@@ -90,8 +90,6 @@ export async function handleAtprotoWrite(args: AtprotoWriteArgs, ctx: KernelCont
   // applies however the write arrives. A signed-in human has none and is not asked.
   await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "atproto.write",
     jsonObjectSchema.parse({ handle: address.handle, address: address.hostname, writes }));
-  // The person may have made their profile private while deciding.
-  publishingAddress(ownerUid, ctx);
   return await withRepository(ctx, async (repository) => {
     await ensureIdentity(repository, address.hostname, ctx);
     // A commit already sent completes, so its outcome is reported rather than raced.
@@ -191,14 +189,6 @@ export async function putProfileMirror(ctx: KernelContext, mirror: BlueskyProfil
   await withRepository(ctx, (repository) => commitProfileWrites(repository, [mirrorWrite(mirror)], ctx));
 }
 
-/** Deletes the profile record from the Ship's repository; a record already gone stays gone. Bluesky's copy goes in the same commit. */
-export async function deleteProfileRecord(ctx: KernelContext): Promise<void> {
-  await withRepository(ctx, (repository) => commitProfileWrites(repository, [
-    { action: "delete", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY },
-    mirrorWrite(null),
-  ], ctx));
-}
-
 function mirrorWrite(mirror: BlueskyProfileRecord | null): PublicRecordWrite {
   return mirror
     ? { action: "put", collection: BLUESKY_PROFILE_COLLECTION, rkey: BLUESKY_PROFILE_RKEY, record: jsonObjectSchema.parse(mirror) }
@@ -217,8 +207,8 @@ async function commitProfileWrites(repository: PublicRepository, writes: PublicR
     try {
       return await repository.applyWrites(pending);
     } catch (error) {
-      // The repository refuses to delete a record it doesn't hold, which an interrupted unpublish leaves behind.
-      // Bluesky's copy is also gone while the host has the profile down, and before a Ship first wrote one.
+      // The repository refuses to delete a record it doesn't hold. Bluesky's copy is gone while the host has
+      // the profile down, before a Ship first wrote one, and after an interrupted write.
       const missing = error instanceof Error
         ? pending.find((write) => write.action === "delete" && error.message.includes(`Could not find a record with key: ${write.collection}/${write.rkey}`))
         : undefined;
@@ -285,7 +275,7 @@ function publishingAddress(ownerUid: number, ctx: KernelContext) {
   const address = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain);
   if (!address) throw new Error("This Ship has no address to publish under");
   if (!profilePublished(ownerUid, ctx)) {
-    throw new Error("Your profile is private, so your Ship can't publish to the open network. Publish your profile in People first.");
+    throw new Error("Your Ship hasn't published your profile yet, so it can't publish to the open network. It publishes your profile when you next sign in or message it.");
   }
   return { handle: address.handle, hostname: new URL(address.origin).hostname };
 }

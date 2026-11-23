@@ -17,20 +17,18 @@ export type ProfileAvatarMimeType = (typeof PROFILE_AVATAR_MIME_TYPES)[number];
 /** A profile picture, named by the CID of its bytes. */
 export type ProfileAvatar = { cid: string; mimeType: ProfileAvatarMimeType; size: number };
 
+/**
+ * The owner's profile, which is public: what its record in the Ship's repository holds. Until the Ship
+ * first publishes it, it is the starting profile, named by the handle and open to message requests.
+ */
 export type ProfileState = {
+  /** 0 until the profile is first published; every change publishes and moves it on. */
   revision: number;
   url: string;
-  draft: ProfileFields;
-  /** The draft's picture, which publishing makes public with the rest of the draft. */
+  fields: ProfileFields;
   avatar?: ProfileAvatar;
-  /** The live record; `contactPolicy` is what visitors can do now, which unpublished changes may differ from. */
-  published?: {
-    url: string;
-    cid: string;
-    contactPolicy: ProfileContactPolicy;
-    /** The draft revision the record holds; a later draft revision is an unpublished change. */
-    revision: number;
-  };
+  /** The record's CID once the Ship's repository holds it. */
+  cid?: string;
   /** The space's recorded handle, which names the profile; absent when the installation has none. */
   handle?: string;
 };
@@ -52,21 +50,18 @@ export type PublicProfile = {
 
 export type ProfileGetArgs = Record<string, never>;
 export type ProfileGetResult = { profile: ProfileState };
-export type ProfileUpdateArgs = { expectedRevision: number; draft: ProfileFields };
+/** Publishes `fields` in place of the profile at `expectedRevision`. */
+export type ProfileUpdateArgs = { expectedRevision: number; fields: ProfileFields };
 export type ProfileUpdateResult = ProfileGetResult;
-export type ProfilePublishArgs = { expectedRevision: number };
-export type ProfilePublishResult = ProfileGetResult;
-export type ProfileUnpublishArgs = { expectedRevision: number };
-export type ProfileUnpublishResult = ProfileGetResult;
 /** A handle, with or without its @, or a link to a profile page. */
 export type ProfileResolveArgs = { address: string };
 export type ProfileResolveResult = { profile: PublicProfile };
-/** The request body carries the picture, of declared length; it replaces the draft's picture. */
+/** The request body carries the picture, of declared length; it replaces the profile's picture and publishes. */
 export type ProfileAvatarSetArgs = { expectedRevision: number; mimeType: ProfileAvatarMimeType };
 export type ProfileAvatarSetResult = ProfileGetResult;
 export type ProfileAvatarRemoveArgs = { expectedRevision: number };
 export type ProfileAvatarRemoveResult = ProfileGetResult;
-/** The draft's or the published picture; the response body carries it. */
+/** The profile's picture; the response body carries it. */
 export type ProfileAvatarReadArgs = { cid: string };
 export type ProfileAvatarReadResult = ProfileAvatar;
 

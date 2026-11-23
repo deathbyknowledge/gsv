@@ -129,7 +129,8 @@ function inviteLink(args: string[], ctx: KernelContext): ExecResult {
   const url = contactInviteUrl(origin, presentation);
   const published = ctx.profiles.published(ownerUid);
   if (published && profileContactPolicy(published.record.contactPolicy) === "requests") return completed(`${url}\n`);
-  return completed(`${url}\nNo one can send a request from it yet: the owner's profile must be public with message requests on (People → Profile).\n`);
+  const reason = published ? "the owner has message requests off (People → Profile)" : "the Ship hasn't published the owner's profile yet";
+  return completed(`${url}\nNo one can send a request from it yet: ${reason}.\n`);
 }
 
 /**
@@ -338,7 +339,7 @@ function contactUsage(): string {
     "",
     "Ask the owner who should handle new messages unless they already chose. manual leaves messages for the owner;",
     "ship lets Ship handle future incoming messages. The choice affects only this owner's side and can change later.",
-    "Profiles are public by default. connect finds the person's profile and sends them a first message request;",
+    "Every profile is public. connect finds the person's profile and sends them a first message request;",
     "they decide whether to accept. The request fails if the profile is unavailable or not receiving requests.",
     "invite prints the owner's invitation link. It never expires and anyone may use it: whoever opens it creates or signs",
     "in to their Ship and sends the owner an ordinary message request, which works only while the owner's profile is",

@@ -21,7 +21,7 @@ import {
 import { DidDeactivatedError, resolveDid } from "../ships/did-directory";
 import { handleApproachCreate, handleApproachDecide, handleApproachList } from "../approaches/admission";
 import { processApproachMaintenance } from "../approaches/runtime";
-import { handleProfileGet, handleProfilePublish, handleProfileUpdate, readPublicProfile } from "../profiles";
+import { handleProfileGet, handleProfileUpdate, readPublicProfile } from "../profiles";
 
 const HOUR_MS = 60 * 60_000;
 
@@ -383,10 +383,9 @@ async function connect(inviter: TestSpace, invitee: TestSpace): Promise<void> {
   // Each person goes by their name, as their account has it.
   const named = (space: TestSpace) => `${space.name.slice(0, 1).toUpperCase()}${space.name.slice(1)}`;
   await inviter.run(async (ctx) => {
-    const { revision, draft, published } = handleProfileGet(ctx).profile;
-    if (published?.contactPolicy === "requests") return;
-    handleProfileUpdate({ expectedRevision: revision, draft: { ...draft, displayName: named(inviter), contactPolicy: "requests" } }, ctx);
-    await handleProfilePublish({ expectedRevision: revision + 1 }, ctx);
+    const { revision, fields, cid } = handleProfileGet(ctx).profile;
+    if (cid && fields.displayName === named(inviter) && fields.contactPolicy === "requests") return;
+    await handleProfileUpdate({ expectedRevision: revision, fields: { ...fields, displayName: named(inviter), contactPolicy: "requests" } }, ctx);
   });
   const profile = await invitee.run((ctx) => readPublicProfile(inviter.account.did, ctx));
   await invitee.run(async (ctx) => {

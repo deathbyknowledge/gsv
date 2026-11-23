@@ -302,8 +302,6 @@ const SYSCALL_NAMES = [
   "conversation.send",
   "profile.get",
   "profile.update",
-  "profile.publish",
-  "profile.unpublish",
   "profile.resolve",
   "profile.avatar.remove",
   "atproto.identity",

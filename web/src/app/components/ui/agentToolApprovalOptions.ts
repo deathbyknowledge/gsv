@@ -150,8 +150,6 @@ const GRANT_LABELS = new Map(Object.entries({
   "conversation.view.update": "approval.match.conversationViewUpdate",
   "profile.get": "approval.match.profileGet",
   "profile.update": "approval.match.profileUpdate",
-  "profile.publish": "approval.match.profilePublish",
-  "profile.unpublish": "approval.match.profileUnpublish",
   "profile.resolve": "approval.match.profileResolve",
   "approach.create": "approval.match.approachCreate",
   "approach.list": "approval.match.approachList",

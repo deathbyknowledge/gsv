@@ -43,13 +43,13 @@ describe("contact invite", () => {
     expect(await invite("requests").exec("contact invite")).toMatchObject({ exitCode: 0, stdout: "https://signup.ship.space/?invite=esteve\n" });
   });
 
-  it("says when no one can send a request from it yet", async () => {
-    for (const policy of [null, "closed"]) {
-      const result = await invite(policy).exec("contact invite");
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("https://signup.ship.space/?invite=esteve\n");
-      expect(result.stdout).toContain("public with message requests on");
-    }
+  it.each([
+    [null, "the Ship hasn't published the owner's profile yet"],
+    ["closed", "the owner has message requests off (People → Profile)"],
+  ])("says why no one can send a request from it yet, with policy %s", async (policy, reason) => {
+    const result = await invite(policy).exec("contact invite");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`https://signup.ship.space/?invite=esteve\nNo one can send a request from it yet: ${reason}.\n`);
   });
 
   it("falls back to the public profile without operator signup", async () => {

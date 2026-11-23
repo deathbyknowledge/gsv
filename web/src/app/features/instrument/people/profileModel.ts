@@ -9,40 +9,26 @@ export type ProfileEdit = { revision: number; fields: ProfileFields };
 export type ProfilePictureEdit = { revision: number; picture: ProfilePicture | null };
 
 /**
- * What the profile editor's main button does. A private profile is published, so the button
- * says publish; a public one is saved in place. `fields` is the draft to commit first, or null
- * when the saved draft is published as it is.
+ * What saving the profile editor publishes: the chosen picture first, then `fields`, or null when
+ * only the picture changed. Every save publishes, so the editor shows what people see.
  */
-export type ProfileSubmission = { action: "publish" | "save"; ready: boolean; revision: number; fields: ProfileFields | null; picture: ProfilePictureEdit | null };
+export type ProfileSubmission = { ready: boolean; revision: number; fields: ProfileFields | null; picture: ProfilePictureEdit | null };
 
 export function profileSubmission(state: ProfileState, edit: ProfileEdit | null, pictureEdit: ProfilePictureEdit | null = null): ProfileSubmission {
   // The recorded handle names the profile; a stored name that predates it still needs saving, even without other edits.
-  const renamePending = !!state.handle && state.draft.displayName !== state.handle;
-  const live = !!state.published && state.published.revision === state.revision;
+  const renamePending = !!state.handle && state.fields.displayName !== state.handle;
   const stale = (!!edit && edit.revision !== state.revision) || (!!pictureEdit && pictureEdit.revision !== state.revision);
   return {
-    action: state.published ? "save" : "publish",
-    ready: !stale && (!!edit || !!pictureEdit || !live || renamePending),
+    ready: !stale && (!!edit || !!pictureEdit || renamePending),
     revision: edit?.revision ?? pictureEdit?.revision ?? state.revision,
-    fields: edit ? profileNamed(state, edit.fields) : renamePending ? profileNamed(state, state.draft) : null,
+    fields: edit ? profileNamed(state, edit.fields) : renamePending ? profileNamed(state, state.fields) : null,
     picture: pictureEdit,
   };
 }
 
-/** The draft as it is stored: named by the recorded handle. */
+/** The fields as they are published: named by the recorded handle. */
 export function profileNamed(state: ProfileState, shown: ProfileFields): ProfileFields {
   return { ...shown, ...(state.handle ? { displayName: state.handle } : undefined) };
-}
-
-/** Whether the saved profile has changes its live page doesn't show yet; a private profile has no live page. */
-export function profileUnpublished(state: ProfileState): boolean {
-  return !!state.published && state.published.revision !== state.revision;
-}
-
-/** Who can reach the owner through the live page now; unpublished changes do not count until published. */
-export function profileVisibility(state: ProfileState): "private" | "requests" | "closed" {
-  if (!state.published) return "private";
-  return state.published.contactPolicy === "requests" ? "requests" : "closed";
 }
 
 /** What a takedown covers, as the person knows it. */

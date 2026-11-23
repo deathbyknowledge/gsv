@@ -138,15 +138,16 @@ function forgetSeededSession(): void {
 const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const PROFILE_URL = `https://${OWNER.username}.ship.space`;
-/** The owner's own profile, public by default with an empty bio, editable in memory. */
+/** The owner's own profile: the starting profile, published with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
-  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, published: { url: PROFILE_URL, cid: "bafyreimockprofile1", revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
+  revision: 1, url: PROFILE_URL, fields: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, cid: "bafyreimockprofile1", handle: OWNER.username,
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the owner's language. */
 const STORED_CONFIG = new Map([
   [`users/${OWNER.uid}/ui/welcome_card_seen`, FIRST_RUN_SEEN],
+  [`users/${OWNER.uid}/ui/profile_intro_seen`, "gsv.mock.profile_intro_seen"],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
 const mockEventSources: EventSource[] = [
@@ -381,7 +382,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.create", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.create", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -1524,18 +1525,12 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
-      const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
+      const { fields } = z.object({ expectedRevision: z.number(), fields: z.object({
         displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "closed"]),
       }) }).parse(args);
-      ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
-      return respond(id, { profile: ownProfile });
-    }
-    case "profile.publish": {
-      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, cid: `bafyreimockprofile${ownProfile.revision}`, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
-      return respond(id, { profile: ownProfile });
-    }
-    case "profile.unpublish": {
-      ownProfile = { revision: ownProfile.revision + 1, url: ownProfile.url, draft: ownProfile.draft, handle: ownProfile.handle };
+      // Every change publishes.
+      const revision = ownProfile.revision + 1;
+      ownProfile = { ...ownProfile, revision, fields, cid: `bafyreimockprofile${revision}` };
       return respond(id, { profile: ownProfile });
     }
     case "profile.resolve": {

@@ -198,9 +198,9 @@ that boundary:
 
 - Only the signed-in person and their Ship publish. Other processes, other
   accounts and machines are refused whatever their capabilities.
-- Nothing publishes while the profile is private.
-- The Ship's writes ask the person first unless an approval rule allows them,
-  and the Kernel checks the profile again after approval.
+- Nothing publishes before the owner's profile: the first publish creates the
+  Ship's DID.
+- The Ship's writes ask the person first unless an approval rule allows them.
 - A feature owns its collection: `space.ship.profile` and
   `app.bsky.actor.profile`, the profile as Bluesky shows it, change only
   through People.
@@ -217,16 +217,19 @@ can allow or block the Ship's publishing.
 
 A Ship's public profile is its `space.ship.profile` record, with record key
 `self`: a display name, a bio, a picture as a blob, and whether visitors may
-send a message request. Publishing uploads the picture and writes the record;
-unpublishing deletes it. The Kernel keeps the published record and
-its picture, and records the draft revision each publish wrote, so an
-unpublished change or a failed publish shows in the editor.
+send a message request. Every Ship has one. The owner's first sign-in, or the
+first message to their Ship from any surface, publishes a starting profile
+named by the Ship's handle and open to message requests, and that first publish
+creates the Ship's DID. Each change the owner saves publishes at once: the
+Kernel uploads a new picture, writes the record and then records it, one
+change at a time, so the editor always shows what the repository holds. A
+change the repository refuses leaves the profile as it was. There are no drafts
+and no unpublishing.
 
-While the profile is public, the repository also holds it as Bluesky shows
-it: an `app.bsky.actor.profile` record with record key `self`, which Bluesky
-and other apps read from relays. The Kernel writes it in the same commit as
-`space.ship.profile`, and unpublishing deletes both in one commit; a delete
-of either record already gone is dropped and the rest commits. The copy
+The repository also holds the profile as Bluesky shows it: an
+`app.bsky.actor.profile` record with record key `self`, which Bluesky and other
+apps read from relays. The Kernel writes it in the same commit as
+`space.ship.profile`. The copy
 carries the display name, the bio, the picture and the profile page as its
 `website`. Bluesky allows a name of 64 graphemes and 640 bytes and a bio of 256
 graphemes and 2,560 bytes, so a longer one is cut between graphemes and ends

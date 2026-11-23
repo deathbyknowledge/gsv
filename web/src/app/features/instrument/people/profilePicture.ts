@@ -70,7 +70,7 @@ export async function profilePicture(file: Blob): Promise<ProfilePicture> {
   }
 }
 
-/** Replaces the draft's picture, or removes it when `picture` is null. */
+/** Publishes `picture` as the profile's picture, or removes the picture when it is null. */
 export async function saveProfilePicture(client: PictureClient, expectedRevision: number, picture: ProfilePicture | null): Promise<ProfileState> {
   if (!picture) return (await client.request("profile.avatar.remove", { expectedRevision })).data.profile;
   const response = await client.request("profile.avatar.set", { expectedRevision, mimeType: picture.mimeType }, { body: bodyFromBytes(picture.bytes) });
@@ -78,7 +78,7 @@ export async function saveProfilePicture(client: PictureClient, expectedRevision
   return response.data.profile;
 }
 
-/** The draft's or the published picture, from the Ship. */
+/** The profile's picture, from the Ship. */
 export async function readProfilePicture(client: PictureClient, avatar: ProfileAvatar): Promise<Blob> {
   const { data, body } = await client.request("profile.avatar.read", { cid: avatar.cid });
   if (!body) throw new Error(t("people.profile.pictureUnreadable"));

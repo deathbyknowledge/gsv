@@ -2,8 +2,8 @@ import { isHandle } from "@atcute/lexicons/syntax";
 import { toBase32 } from "@atcute/multibase";
 import type {
   BinaryBody, ProfileAvatar, ProfileAvatarMimeType, ProfileAvatarReadArgs, ProfileAvatarReadResult,
-  ProfileAvatarRemoveArgs, ProfileAvatarSetArgs, ProfileFields, ProfileGetResult, ProfilePublishArgs,
-  ProfileResolveArgs, ProfileResolveResult, ProfileUnpublishArgs, ProfileUpdateArgs, PublicProfile, ShipProfileRecord,
+  ProfileAvatarRemoveArgs, ProfileAvatarSetArgs, ProfileFields, ProfileGetResult,
+  ProfileResolveArgs, ProfileResolveResult, ProfileUpdateArgs, PublicProfile, ShipProfileRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
   BLUESKY_PROFILE_COLLECTION, BLUESKY_PROFILE_RKEY, PROFILE_AVATAR_MAX_BYTES, PROFILE_AVATAR_MIME_TYPES, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY,
@@ -16,12 +16,12 @@ import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { shipAddress } from "../installation/identity";
-import { deleteProfileRecord, publicTakedowns, putProfileMirror, putProfileRecord } from "./atproto";
+import { publicTakedowns, putProfileMirror, putProfileRecord } from "./atproto";
 import { blueskyProfile, type BlueskyProfileRecord } from "./bluesky-profile";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederation, readFederationJson } from "./federation/http";
 import { FederationHttpError } from "./federation/errors";
-import type { ProfileAvatarFile, ProfileDraft } from "./profile-store";
+import type { ProfileAvatarFile } from "./profile-store";
 import { DidNotResolvedError, resolveDid, resolveHandle, type ResolvedDid } from "./ships/did-directory";
 
 export type { ShipProfileRecord } from "@humansandmachines/gsv/protocol";
@@ -54,26 +54,12 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const ownerUid = requireContactHuman(ctx);
   const url = profileUrl(ctx);
   const handle = ctx.installationIdentity?.handle;
-  const state = ctx.profiles.get(ownerUid, url) ?? { revision: 0, url, draft: defaultProfileDraft(ownerUid, ctx) };
+  const state = ctx.profiles.get(ownerUid, url) ?? { revision: 0, url, fields: startingProfile(ownerUid, ctx) };
   return { profile: { ...state, ...(handle ? { handle } : undefined) } };
 }
 
-/** Set from setup until the profile the owner chose to make public is published. */
-function publicChoiceKey(ownerUid: number): string {
-  return `users/${ownerUid}/profile/publish_chosen`;
-}
-
-/**
- * Records the profile choice made at setup. Either way the default draft is saved; a public
- * choice is published at sign-in, which retries until the open-network host takes it.
- */
-export function recordSetupProfileChoice(ownerUid: number, choice: "public" | "private", ctx: KernelContext): void {
-  ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
-  if (choice === "public") ctx.config.set(publicChoiceKey(ownerUid), "1");
-}
-
-/** A new profile is named by the Ship's handle and open to message requests, and is public only once its owner chooses. */
-function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileFields {
+/** The profile a Ship publishes for its owner until they change it: named by the Ship's handle, with no bio or picture, open to message requests. */
+function startingProfile(ownerUid: number, ctx: KernelContext): ProfileFields {
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
   const displayName = ctx.installationIdentity?.handle || account.gecos || account.username;
   return { displayName, about: "", contactPolicy: "requests" };
@@ -82,7 +68,7 @@ function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileField
 /** The name the owner shows to other people: their profile's display name, else their account name. */
 export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string | undefined {
   const account = ctx.auth.getPasswdByUid(ownerUid);
-  return ctx.profiles.draft(ownerUid)?.fields.displayName ?? account?.gecos ?? account?.username;
+  return ctx.profiles.current(ownerUid)?.fields.displayName ?? account?.gecos ?? account?.username;
 }
 
 /** The name this Ship's person goes by with someone new: their profile name, else their account's. */
@@ -94,31 +80,19 @@ export function personName(ownerUid: number, ctx: KernelContext): string {
 }
 
 /**
- * Writes what a published profile is missing whenever the owner uses their
- * Ship, from sign-in or any other surface such as a messenger: a record
- * published before profiles were records, or the Bluesky copy, once the host's
- * takedowns allow it. It publishes only a profile the owner chose to make
- * public at setup. Once nothing is missing, this reads only the Kernel.
+ * Publishes what the owner's profile is missing whenever they use their Ship,
+ * from sign-in or any other surface such as a messenger: the starting profile,
+ * a record published before profiles were records, or the Bluesky copy, once
+ * the host's takedowns allow it. Once nothing is missing, this reads only the Kernel.
  */
 export async function ensurePublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
-  const chosen = ctx.config.getExplicit(publicChoiceKey(ownerUid)) === "1";
-  if (!chosen && !ctx.profiles.pendingPublication(ownerUid) && profileMirrored(ownerUid, ctx)) return;
+  if (ctx.profiles.published(ownerUid) && profileMirrored(ownerUid, ctx)) return;
   await publishInBackground(ctx, async (background) => {
-    if (chosen) await publishChosenProfile(ownerUid, background);
-    await publishPendingProfile(ownerUid, background);
+    await publishStartingProfile(ownerUid, background);
+    await writeUnwrittenProfile(ownerUid, background);
     await mirrorPublishedProfile(ownerUid, background);
   });
-}
-
-/** Publishes the profile chosen as public at setup, as its owner has since edited it, unless it already is. */
-async function publishChosenProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
-  const draft = ctx.profiles.draft(ownerUid);
-  if (draft && !ctx.profiles.published(ownerUid)) {
-    await publishProfileRevision(ownerUid, draft.revision, ctx);
-    ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  }
-  ctx.config.delete(publicChoiceKey(ownerUid));
 }
 
 /** Publishes away from the caller, within the time the open-network host gets for it. */
@@ -133,29 +107,72 @@ async function publishInBackground(ctx: KernelContext, publish: (background: Ker
   }
 }
 
-/** Writes a profile published before profiles were records to the Ship's repository, as it was published. */
-export async function publishPendingProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
-  if (!ctx.profiles.pendingPublication(ownerUid)) return;
+/** Publishes the starting profile for an owner who has none yet. */
+async function publishStartingProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  if (ctx.profiles.current(ownerUid)) return;
   await ctx.profiles.exclusive(async () => {
-    // The owner may have published or unpublished it meanwhile.
-    const pending = ctx.profiles.pendingPublication(ownerUid);
-    if (!pending) return;
-    const { cid, mirror } = await putProfileRecord(ctx, pending.record, null, (takedowns) => blueskyMirror(pending.record, takedowns, ctx));
-    ctx.profiles.publish(ownerUid, pending.revision, cid, pending.record, null, mirror);
+    // The owner may have published their own meanwhile.
+    if (!ctx.profiles.current(ownerUid)) await writeProfile(ownerUid, 0, startingProfile(ownerUid, ctx), null, ctx);
   });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
 }
 
-export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): ProfileGetResult {
+/** Writes a profile published before profiles were records to the Ship's repository, as it was published. */
+async function writeUnwrittenProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  if (!ctx.profiles.unwritten(ownerUid)) return;
+  await ctx.profiles.exclusive(async () => {
+    // The owner may have changed it meanwhile.
+    const record = ctx.profiles.unwritten(ownerUid);
+    if (!record) return;
+    const { cid, mirror } = await putProfileRecord(ctx, record, null, (takedowns) => blueskyMirror(record, takedowns, ctx));
+    ctx.profiles.written(ownerUid, cid, mirror);
+  });
+  ctx.broadcastToUserUid(ownerUid, "profile.changed");
+}
+
+/** Publishes the owner's name, bio and policy; the picture stays as it is. */
+export async function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): Promise<ProfileGetResult> {
   const ownerUid = requireContactHuman(ctx);
-  const draft = profileFieldsSchema.parse(args.draft);
-  if (!draft.displayName.trim()) throw new Error("A public display name is required");
-  ctx.profiles.update(ownerUid, revisionSchema.parse(args.expectedRevision), draft);
+  const fields = profileFieldsSchema.parse(args.fields);
+  if (!fields.displayName.trim()) throw new Error("A public display name is required");
+  return await changeProfile(ownerUid, revisionSchema.parse(args.expectedRevision), (_, avatar) => ({ fields, avatar }), ctx);
+}
+
+/**
+ * Publishes the profile as `change` makes it from the one at `expectedRevision`, 0 for the
+ * starting profile, and returns it as published. Nothing changes unless the repository takes it.
+ */
+async function changeProfile(
+  ownerUid: number,
+  expectedRevision: number,
+  change: (fields: ProfileFields, avatar: ProfileAvatarFile | null) => { fields: ProfileFields; avatar: ProfileAvatarFile | null },
+  ctx: KernelContext,
+): Promise<ProfileGetResult> {
+  await ctx.profiles.exclusive(async () => {
+    const current = ctx.profiles.current(ownerUid);
+    if ((current?.revision ?? 0) !== expectedRevision) throw new Error("Profile changed; reload before saving");
+    if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
+    const avatar = current?.avatar ? ctx.profiles.avatar(current.avatar.cid) : null;
+    const next = change(current?.fields ?? startingProfile(ownerUid, ctx), avatar);
+    await writeProfile(ownerUid, expectedRevision, next.fields, next.avatar, ctx);
+  });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
   return handleProfileGet(ctx);
 }
 
-/** Replaces the draft's picture with the request body: a PNG, JPEG or WebP of at most 1 MB. */
+/**
+ * Writes the profile to the Ship's repository and records it in place of the one at `revision`;
+ * the first write creates the Ship's DID. Callers hold the profile's exclusive turn.
+ */
+async function writeProfile(ownerUid: number, revision: number, fields: ProfileFields, avatar: ProfileAvatarFile | null, ctx: KernelContext): Promise<void> {
+  const record = profileRecord(fields, avatar);
+  // The repository keeps the picture its record shows, so a change that keeps it doesn't upload it again.
+  const upload = avatar && ctx.profiles.published(ownerUid)?.record.avatar?.ref.$link !== avatar.cid ? avatar : null;
+  const { cid, mirror } = await putProfileRecord(ctx, record, upload, (takedowns) => blueskyMirror(record, takedowns, ctx));
+  ctx.profiles.publish(ownerUid, revision, cid, record, avatar, mirror);
+}
+
+/** Publishes the request body as the profile's picture: a PNG, JPEG or WebP of at most 1 MB. */
 export async function handleProfileAvatarSet(args: ProfileAvatarSetArgs, ctx: KernelContext, body: BinaryBody | undefined): Promise<ProfileGetResult> {
   try {
     const ownerUid = requireContactHuman(ctx);
@@ -166,63 +183,27 @@ export async function handleProfileAvatarSet(args: ProfileAvatarSetArgs, ctx: Ke
     const bytes = await bodyToBytes(body, PROFILE_AVATAR_MAX_BYTES, ctx.requestSignal);
     if (!isImage(bytes, input.mimeType)) throw new Error("The picture must be a PNG, JPEG or WebP image");
     const avatar: ProfileAvatarFile = { cid: await blobCid(bytes), mimeType: input.mimeType, size: bytes.byteLength, bytes };
-    ctx.profiles.setAvatar(ownerUid, input.expectedRevision, avatar, defaultProfileDraft(ownerUid, ctx));
-    ctx.broadcastToUserUid(ownerUid, "profile.changed");
-    return handleProfileGet(ctx);
+    return await changeProfile(ownerUid, input.expectedRevision, (fields) => ({ fields, avatar }), ctx);
   } finally {
     await cancelBinaryBody(body, "Profile picture request finished");
   }
 }
 
-export function handleProfileAvatarRemove(args: ProfileAvatarRemoveArgs, ctx: KernelContext): ProfileGetResult {
+export async function handleProfileAvatarRemove(args: ProfileAvatarRemoveArgs, ctx: KernelContext): Promise<ProfileGetResult> {
   const ownerUid = requireContactHuman(ctx);
-  ctx.profiles.setAvatar(ownerUid, revisionSchema.parse(args.expectedRevision), null, defaultProfileDraft(ownerUid, ctx));
-  ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  return handleProfileGet(ctx);
+  return await changeProfile(ownerUid, revisionSchema.parse(args.expectedRevision), (fields) => ({ fields, avatar: null }), ctx);
 }
 
 /** A picture's metadata, with its bytes as the response body. */
 export type ProfileAvatarResponse = { data: ProfileAvatarReadResult; body: BinaryBody };
 
-/** The draft's or the published picture, for the owner's editor. */
+/** The profile's picture, for the owner's editor. */
 export function handleProfileAvatarRead(args: ProfileAvatarReadArgs, ctx: KernelContext): ProfileAvatarResponse {
   const ownerUid = requireContactHuman(ctx);
   const { cid } = avatarReadArgsSchema.parse(args);
   const avatar = ctx.profiles.ownAvatar(ownerUid, cid);
   if (!avatar) throw new Error("This picture isn't on your profile");
   return { data: { cid: avatar.cid, mimeType: avatar.mimeType, size: avatar.size }, body: bodyFromBytes(avatar.bytes) };
-}
-
-export async function handleProfilePublish(args: ProfilePublishArgs, ctx: KernelContext): Promise<ProfileGetResult> {
-  const ownerUid = requireContactHuman(ctx);
-  await publishProfileRevision(ownerUid, revisionSchema.parse(args.expectedRevision), ctx);
-  ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  return handleProfileGet(ctx);
-}
-
-/** Writes the owner's saved draft at exactly `revision` to the Ship's repository; the first publish creates the Ship's DID. */
-async function publishProfileRevision(ownerUid: number, revision: number, ctx: KernelContext): Promise<void> {
-  await ctx.profiles.exclusive(async () => {
-    const saved = ctx.profiles.draft(ownerUid);
-    if ((saved?.revision ?? 0) !== revision) throw new Error("Profile changed; reload before publishing");
-    if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
-    // Until something saves it, the profile is the default its editor shows at revision 0; publishing it saves it first,
-    // and clients learn its revision even if the publication then fails, so a retry isn't refused as out of date.
-    const draft = saved ?? saveDefaultDraft(ownerUid, ctx);
-    const avatar = draft.avatar ? ctx.profiles.avatar(draft.avatar.cid) : null;
-    const record = profileRecord(draft.fields, avatar);
-    const { cid, mirror } = await putProfileRecord(ctx, record, avatar, (takedowns) => blueskyMirror(record, takedowns, ctx));
-    // The repository now holds this revision, so it is recorded even if the draft moved on meanwhile.
-    ctx.profiles.publish(ownerUid, draft.revision, cid, record, avatar, mirror);
-    // A publish settles a public choice from setup that hadn't published yet.
-    ctx.config.delete(publicChoiceKey(ownerUid));
-  });
-}
-
-function saveDefaultDraft(ownerUid: number, ctx: KernelContext): ProfileDraft {
-  const draft = ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
-  ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  return draft;
 }
 
 /**
@@ -238,7 +219,7 @@ function blueskyMirror(record: ShipProfileRecord, takedowns: PublicTakedown[], c
   return hidden.page || copyDown ? null : blueskyProfile(record, profileUrl(ctx), !hidden.avatar);
 }
 
-/** Whether the repository holds the Bluesky copy the published record makes, or the profile is private and needs none. */
+/** Whether the repository holds the Bluesky copy the published record makes, or there is no record yet and it needs none. */
 function profileMirrored(ownerUid: number, ctx: KernelContext): boolean {
   const published = ctx.profiles.published(ownerUid);
   return !published || ctx.profiles.holdsMirror(ownerUid, blueskyProfile(published.record, profileUrl(ctx)));
@@ -253,7 +234,7 @@ function profileMirrored(ownerUid: number, ctx: KernelContext): boolean {
 async function mirrorPublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (profileMirrored(ownerUid, ctx)) return;
   await ctx.profiles.exclusive(async () => {
-    // The owner may have published or unpublished it meanwhile, or a sign-in and a message both found it missing.
+    // The owner may have changed it meanwhile, or a sign-in and a message both found it missing.
     const published = ctx.profiles.published(ownerUid);
     if (!published || profileMirrored(ownerUid, ctx)) return;
     const mirror = blueskyMirror(published.record, await publicTakedowns(ctx), ctx);
@@ -293,21 +274,6 @@ function profileRecord(fields: ProfileFields, avatar: ProfileAvatar | null): Shi
   return record;
 }
 
-export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: KernelContext): Promise<ProfileGetResult> {
-  const ownerUid = requireContactHuman(ctx);
-  const revision = revisionSchema.parse(args.expectedRevision);
-  await ctx.profiles.exclusive(async () => {
-    if (ctx.profiles.draft(ownerUid)?.revision !== revision) throw new Error("Profile changed; reload before unpublishing");
-    if (ctx.profiles.published(ownerUid)) await deleteProfileRecord(ctx);
-    // The record is gone from the repository, so the profile is private whatever the draft became meanwhile.
-    ctx.profiles.unpublish(ownerUid);
-    // Making it private replaces a public choice from setup that hadn't published yet.
-    ctx.config.delete(publicChoiceKey(ownerUid));
-  });
-  ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  return handleProfileGet(ctx);
-}
-
 /** Reads the public profile an address names: a handle, with or without its @, or a link to a profile page. */
 export async function handleProfileResolve(args: ProfileResolveArgs, ctx: KernelContext): Promise<ProfileResolveResult> {
   requireContactCaller(ctx, false);
@@ -315,7 +281,7 @@ export async function handleProfileResolve(args: ProfileResolveArgs, ctx: Kernel
   try {
     resolved = await resolveHandle(addressedHandle(addressSchema.parse(args.address), ctx), ctx);
   } catch (error) {
-    // A handle that names no account looks the same as a private profile, so neither says which it is.
+    // A handle that names no account looks the same as a Ship with no profile yet, so neither says which it is.
     if (error instanceof DidNotResolvedError) throw new FederationHttpError(404, NO_PUBLIC_PROFILE);
     throw error;
   }

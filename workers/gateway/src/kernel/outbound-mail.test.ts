@@ -1632,7 +1632,7 @@ function outboundContext(
       resolveGids: (_username: string, gid: number) => [gid, 100],
     },
     mailboxes: new MailboxStore(sql),
-    profiles: { draft: () => owner.displayName === undefined ? null : { fields: { displayName: owner.displayName } } },
+    profiles: { current: () => owner.displayName === undefined ? null : { fields: { displayName: owner.displayName } } },
     config: { get: (key: string) => owner.config?.get(key) ?? null },
     procs: { getOwnerUid: () => 1000 },
     scheduleManagedOutboundEnqueue: vi.fn(async () => undefined),

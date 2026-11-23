@@ -19,17 +19,19 @@ import { ConfigStore } from "./config";
 import { ProfileStore } from "./profile-store";
 import {
   ensurePublishedProfile, followHostTakedowns, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
-  handleProfilePublish, handleProfileResolve, handleProfileUnpublish, handleProfileUpdate, ownerDisplayName, recordSetupProfileChoice,
-  publicProfileAvatar, publicProfileProjection, readPublicProfile,
+  handleProfileResolve, handleProfileUpdate, ownerDisplayName, publicProfileAvatar, publicProfileProjection, readPublicProfile,
 } from "./profiles";
 import { KERNEL_V059_PUBLIC_PROFILES } from "./schema/v059_public_profiles";
 import { KERNEL_V075_PROFILE_RECORDS } from "./schema/v075_profile_records";
 import { KERNEL_V080_PROFILE_MIRRORS } from "./schema/v080_profile_mirrors";
+import { KERNEL_V099_PUBLIC_PROFILE_RECORDS } from "./schema/v099_public_profile_records";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipIdentity } from "./ships/identity";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", gecos: "Person", home: "/home/private-login", cwd: "/home/private-login" };
 const DRAFT: ProfileFields = { displayName: "Published name", about: "Hello from my space", contactPolicy: "requests" };
+/** The profile a Ship publishes until its owner changes it: named by its handle. */
+const STARTING: ProfileFields = { displayName: "local", about: "", contactPolicy: "requests" };
 const SHIP = { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "local.ship.test", host: TEST_PDS_URL };
 const PROFILE_URL = "https://local.ship.test";
 const PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.test", legacyDomains: ["gsv.test"] });
@@ -49,78 +51,57 @@ function blueskyPut(record: Omit<BlueskyProfileRecord, "$type" | "website">) {
   return { action: "put", collection: BLUESKY, rkey: "self", record: { $type: BLUESKY, website: PROFILE_URL, ...record } };
 }
 
+/** The migrations that brought a v074 profile table to records. */
+const PROFILE_MIGRATIONS_SINCE_V074 = [
+  ...KERNEL_V075_PROFILE_RECORDS.statements, ...KERNEL_V080_PROFILE_MIRRORS.statements, ...KERNEL_V099_PUBLIC_PROFILE_RECORDS.statements,
+];
+
 afterEach(() => vi.restoreAllMocks());
 
-describe("publishing the profile record", () => {
-  it("writes the saved draft as the Ship's space.ship.profile record and keeps its CID", async () => {
+describe("the public profile", () => {
+  it("shows the starting profile until the first change, and publishes every change as the Ship's space.ship.profile record", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      expect(handleProfileGet(ctx).profile).toEqual({ revision: 0, url: PROFILE_URL, handle: "local", draft: { displayName: "local", about: "", contactPolicy: "requests" } });
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      const result = await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      expect(handleProfileGet(ctx).profile).toEqual({ revision: 0, url: PROFILE_URL, handle: "local", fields: STARTING });
+      const result = await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests" };
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
         { action: "put", collection: "space.ship.profile", rkey: "self", record },
         blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about }),
       ]);
       expect(repository.uploadBlob).not.toHaveBeenCalled();
-      expect(result.profile).toMatchObject({ revision: 1, published: { url: PROFILE_URL, cid: "bafyrecord1", contactPolicy: "requests", revision: 1 } });
+      expect(result.profile).toEqual({ revision: 1, url: PROFILE_URL, handle: "local", fields: DRAFT, cid: "bafyrecord1" });
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
       expect(ownerDisplayName(OWNER.uid, ctx)).toBe(DRAFT.displayName);
-      // Later edits stay private until they are published.
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Private revision", contactPolicy: "closed" } }, ctx);
-      expect(handleProfileGet(ctx).profile).toMatchObject({
-        revision: 2, draft: { about: "Private revision", contactPolicy: "closed" }, published: { revision: 1, contactPolicy: "requests" },
-      });
       expect(await publicProfileProjection(ctx)).toEqual({ url: PROFILE_URL, handle: "local", cid: "bafyrecord1", record });
-    });
-  });
 
-  it("publishes the default profile a Ship shows before anything saved it", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      // Ships set up before setup saved a profile show the Kernel's default at revision 0 until their owner edits it.
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { displayName: "local", about: "", contactPolicy: "requests" } });
-      const result = await handleProfilePublish({ expectedRevision: 0 }, ctx);
-      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" };
-      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
-        { action: "put", collection: "space.ship.profile", rkey: "self", record },
-        blueskyPut({ displayName: "local" }),
+      const closed = await handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "", contactPolicy: "closed" } }, ctx);
+      // An empty about is left out of the record.
+      const next: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "closed" };
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record: next }, blueskyPut({ displayName: DRAFT.displayName }),
       ]);
-      expect(result.profile).toMatchObject({ revision: 1, draft: { displayName: "local" }, published: { revision: 1, contactPolicy: "requests" } });
-      // Once saved, revision 0 is out of date like any other.
-      await expect(handleProfilePublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("changed");
-      expect(repository.applyWrites).toHaveBeenCalledOnce();
+      expect(closed.profile).toMatchObject({ revision: 2, fields: { about: "", contactPolicy: "closed" }, cid: "bafyrecord2" });
+      expect(await publicProfileProjection(ctx)).toEqual({ url: PROFILE_URL, handle: "local", cid: "bafyrecord2", record: next });
     });
   });
 
-  it("tells the owner's clients about the default it saved when publishing it fails, so they retry at its revision", async () => {
+  it("keeps the profile as it was when the repository refuses a change, so the change can be retried", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(handleProfilePublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("unavailable");
-      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
-      expect(handleProfileGet(ctx).profile).toEqual({ revision: 1, url: PROFILE_URL, handle: "local", draft: { displayName: "local", about: "", contactPolicy: "requests" } });
-      expect((await handleProfilePublish({ expectedRevision: 1 }, ctx)).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
-    });
-  });
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx)).rejects.toThrow("unavailable");
+      expect(handleProfileGet(ctx).profile).toEqual({ revision: 0, url: PROFILE_URL, handle: "local", fields: STARTING });
+      expect(ctx.broadcastToUserUid).not.toHaveBeenCalled();
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
 
-  it("reports the draft revision the record holds, so unpublished changes show and a failed publish can be retried", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      const saved = handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Unpublished change" } }, ctx);
-      expect(saved.profile).toMatchObject({ revision: 2, published: { revision: 1, cid: "bafyrecord1" } });
       repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(handleProfilePublish({ expectedRevision: 2 }, ctx)).rejects.toThrow("unavailable");
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, published: { revision: 1, cid: "bafyrecord1" } });
+      await expect(handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Later" } }, ctx)).rejects.toThrow("unavailable");
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, fields: DRAFT, cid: "bafyrecord1" });
       expect(ctx.profiles.published(OWNER.uid)?.record.about).toBe(DRAFT.about);
-      const retried = await handleProfilePublish({ expectedRevision: 2 }, ctx);
-      expect(retried.profile).toMatchObject({ revision: 2, published: { revision: 2, cid: "bafyrecord2" } });
-      expect(ctx.profiles.published(OWNER.uid)?.record.about).toBe("Unpublished change");
+      const retried = await handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Later" } }, ctx);
+      expect(retried.profile).toMatchObject({ revision: 2, fields: { about: "Later" }, cid: "bafyrecord2" });
     });
   });
 
@@ -128,79 +109,26 @@ describe("publishing the profile record", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       repository.account.mockResolvedValue(null);
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       expect(repository.ensureAccount).toHaveBeenCalledExactlyOnceWith("local.ship.test");
       expect(ctx.shipIdentity.current()).toBe(SHIP.did);
-      // An empty about is left out of the record.
-      expect(repository.applyWrites.mock.calls[0]![0]).toEqual([{
-        action: "put", collection: "space.ship.profile", rkey: "self",
-        record: { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" },
-      }, blueskyPut({ displayName: DRAFT.displayName })]);
       expect(repository[Symbol.dispose]).toHaveBeenCalledOnce();
     });
   });
 
-  it("deletes the record to unpublish, and a record already gone stays gone", async () => {
+  it("publishes one change at a time, each from the revision it was made at", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      const result = await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
-      expect(repository.applyWrites).toHaveBeenLastCalledWith([
-        { action: "delete", collection: "space.ship.profile", rkey: "self" },
-        { action: "delete", collection: BLUESKY, rkey: "self" },
-      ]);
-      expect(result.profile).toMatchObject({ revision: 2, draft: DRAFT });
-      expect(result.profile.published).toBeUndefined();
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(await publicProfileProjection(ctx)).toBeNull();
-
-      await handleProfilePublish({ expectedRevision: 2 }, ctx);
-      repository.applyWrites.mockRejectedValueOnce(new Error("InvalidRequest: Could not find a record with key: space.ship.profile/self"));
-      await handleProfileUnpublish({ expectedRevision: 2 }, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-
-      await handleProfilePublish({ expectedRevision: 3 }, ctx);
-      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(handleProfileUnpublish({ expectedRevision: 3 }, ctx)).rejects.toThrow("unavailable");
-      expect(ctx.profiles.published(OWNER.uid)).not.toBeNull();
-      // Unpublishing a private profile has nothing to delete.
-      const calls = repository.applyWrites.mock.calls.length;
-      handleProfileUpdate({ expectedRevision: 3, draft: DRAFT }, ctx);
-      await handleProfileUnpublish({ expectedRevision: 4 }, ctx);
-      await handleProfileUnpublish({ expectedRevision: 5 }, ctx);
-      expect(repository.applyWrites).toHaveBeenCalledTimes(calls + 1);
-    });
-  });
-
-  it("publishes exactly the saved revision, one publication at a time", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await expect(handleProfilePublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("changed");
-      await expect(handleProfileUnpublish({ expectedRevision: 0 }, ctx)).rejects.toThrow("changed");
-      expect(repository.applyWrites).not.toHaveBeenCalled();
-
       const held = holdNextCommit(repository);
-      const publishing = handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const first = handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledOnce());
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Next revision" } }, ctx);
+      // Made at the same revision, the second change waits its turn and then finds the profile changed.
+      const refused = expect(handleProfileUpdate({ expectedRevision: 0, fields: { ...DRAFT, about: "Raced" } }, ctx)).rejects.toThrow("changed");
       held.release();
-      // The repository holds revision 1, so that is what the profile records as published.
-      expect((await publishing).profile).toMatchObject({ revision: 2, draft: { about: "Next revision" }, published: { revision: 1 } });
+      expect((await first).profile).toMatchObject({ revision: 1, fields: DRAFT });
+      await refused;
+      expect(repository.applyWrites).toHaveBeenCalledOnce();
       expect(ctx.profiles.published(OWNER.uid)?.record.about).toBe(DRAFT.about);
-
-      const next = holdNextCommit(repository);
-      const republishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
-      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledTimes(2));
-      const unpublishing = handleProfileUnpublish({ expectedRevision: 2 }, ctx);
-      next.release();
-      await republishing;
-      await unpublishing;
-      expect(repository.applyWrites.mock.calls.map(([writes]) => writes[0]!.action)).toEqual(["put", "put", "delete"]);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Next revision" } });
     });
   });
 
@@ -208,23 +136,24 @@ describe("publishing the profile record", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       const agent = { ...ctx, processId: "proc:ship" };
-      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, agent)).toThrow("signed-in human");
-      await expect(handleProfilePublish({ expectedRevision: 0 }, agent)).rejects.toThrow("signed-in human");
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, agent)).rejects.toThrow("signed-in human");
+      await expect(handleProfileAvatarRemove({ expectedRevision: 0 }, agent)).rejects.toThrow("signed-in human");
       const cancel = vi.fn();
       await expect(handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, agent, { stream: new ReadableStream({ cancel }), length: 12 }))
         .rejects.toThrow("signed-in human");
       expect(cancel).toHaveBeenCalledOnce();
       const root = { ...ctx, callerOwnerUid: 0, peer: testPeer({ kind: "human", account: { ...OWNER, uid: 0 }, calls: ["*"] }) };
-      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, root)).toThrow("signed-in human");
-      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, displayName: " " } }, ctx)).toThrow("display name");
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "raced" } }, ctx)).toThrow("changed");
-      expect(() => ctx.profiles.update(1001, 0, DRAFT)).toThrow("one public profile");
-      expect(ctx.profiles.draft(1001)).toBeNull();
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, root)).rejects.toThrow("signed-in human");
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: { ...DRAFT, displayName: " " } }, ctx)).rejects.toThrow("display name");
+      expect(repository.applyWrites).not.toHaveBeenCalled();
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: { ...DRAFT, about: "Raced" } }, ctx)).rejects.toThrow("changed");
+      const other: ShipProfileRecord = { $type: "space.ship.profile", displayName: "Other", contactPolicy: "requests" };
+      expect(() => ctx.profiles.publish(1001, 0, "bafyother", other, null, null)).toThrow("one public profile");
+      expect(ctx.profiles.current(1001)).toBeNull();
       // A locked owner can neither publish nor keep a public page.
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
       const shadow = vi.spyOn(ctx.auth, "getShadowByUsername").mockReturnValue(null);
-      await expect(handleProfilePublish({ expectedRevision: 1 }, ctx)).rejects.toThrow("signed-in human");
+      await expect(handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Locked" } }, ctx)).rejects.toThrow("signed-in human");
       expect(await publicProfileProjection(ctx)).toBeNull();
       shadow.mockRestore();
       expect(repository.applyWrites).toHaveBeenCalledOnce();
@@ -233,80 +162,52 @@ describe("publishing the profile record", () => {
 });
 
 describe("the profile picture", () => {
-  it("keeps a picture with the draft and publishes it with the record", async () => {
+  it("publishes a picture with the profile, and each change of it", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, uploads } = profileContext(storage);
       const set = await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
-      expect(set.profile).toMatchObject({ revision: 1, draft: { displayName: "local" }, avatar: { cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength } });
-      const read = handleProfileAvatarRead({ cid: PNG_CID }, ctx);
-      expect(read.data).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
-      expect(await bytesOf(read.body)).toEqual(PNG);
-      expect(repository.uploadBlob).not.toHaveBeenCalled();
-      expect(await publicProfileAvatar(ctx)).toBeNull();
-
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      expect(set.profile).toMatchObject({ revision: 1, fields: STARTING, avatar: { cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength }, cid: "bafyrecord1" });
       expect(repository.uploadBlob).toHaveBeenCalledExactlyOnceWith(expect.any(ReadableStream), PNG.byteLength, "image/png");
       expect(uploads).toEqual([PNG]);
       const png = { $type: "blob", ref: { $link: PNG_CID }, mimeType: "image/png", size: PNG.byteLength };
       expect(ctx.profiles.published(OWNER.uid)?.record.avatar).toEqual(png);
+      const read = handleProfileAvatarRead({ cid: PNG_CID }, ctx);
+      expect(read.data).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
+      expect(await bytesOf(read.body)).toEqual(PNG);
       expect((await publicProfileProjection(ctx))?.avatar).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
       expect((await publicProfileAvatar(ctx))?.bytes).toEqual(PNG);
 
-      // A new picture stays private until it is published; the public page keeps the old one.
-      await handleProfileAvatarSet({ expectedRevision: 1, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
-      expect((await publicProfileAvatar(ctx))?.cid).toBe(PNG_CID);
-      expect(handleProfileAvatarRead({ cid: PNG_CID }, ctx).data.cid).toBe(PNG_CID);
-      await handleProfilePublish({ expectedRevision: 2 }, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(WEBP_CID);
+      // The repository keeps the picture its record shows, so other changes don't upload it again.
+      await handleProfileUpdate({ expectedRevision: 1, fields: DRAFT }, ctx);
+      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: DRAFT.displayName, avatar: png });
+      expect(repository.uploadBlob).toHaveBeenCalledOnce();
+
+      await handleProfileAvatarSet({ expectedRevision: 2, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
+      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: DRAFT.displayName, avatar: { ref: { $link: WEBP_CID } } });
+      expect(uploads).toEqual([PNG, WEBP]);
       expect(ctx.profiles.avatar(PNG_CID)).toBeNull();
       expect(() => handleProfileAvatarRead({ cid: PNG_CID }, ctx)).toThrow("isn't on your profile");
 
-      const removed = handleProfileAvatarRemove({ expectedRevision: 2 }, ctx);
+      const removed = await handleProfileAvatarRemove({ expectedRevision: 3 }, ctx);
+      expect(removed.profile).toMatchObject({ revision: 4, fields: DRAFT });
       expect(removed.profile.avatar).toBeUndefined();
-      expect((await publicProfileAvatar(ctx))?.cid).toBe(WEBP_CID);
-      await handleProfilePublish({ expectedRevision: 3 }, ctx);
       expect(ctx.profiles.published(OWNER.uid)?.record).not.toHaveProperty("avatar");
       expect(ctx.profiles.avatar(WEBP_CID)).toBeNull();
       expect(await publicProfileAvatar(ctx)).toBeNull();
     });
   });
 
-  it("keeps the picture a publication shows when the draft's picture changes before the record lands", async () => {
+  it("publishes nothing and keeps no picture when the repository names it differently", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
-      const held = holdNextCommit(repository);
-      const publishing = handleProfilePublish({ expectedRevision: 1 }, ctx);
-      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledOnce());
-      await handleProfileAvatarSet({ expectedRevision: 1, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
-      held.release();
-      await publishing;
-      expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(PNG_CID);
-      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(PNG);
-
-      const next = holdNextCommit(repository);
-      const republishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
-      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledTimes(2));
-      handleProfileAvatarRemove({ expectedRevision: 2 }, ctx);
-      next.release();
-      await republishing;
-      expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(WEBP_CID);
-      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(WEBP);
-      expect(ctx.profiles.avatar(PNG_CID)).toBeNull();
-    });
-  });
-
-  it("publishes nothing when the repository names the picture differently", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
       repository.uploadBlob.mockImplementationOnce(async (body, size, mimeType) => {
         await body.cancel();
         return { $type: "blob", ref: { $link: WEBP_CID }, mimeType, size };
       });
-      await expect(handleProfilePublish({ expectedRevision: 1 }, ctx)).rejects.toThrow("named the profile picture differently");
+      await expect(handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG))).rejects.toThrow("named the profile picture differently");
       expect(repository.applyWrites).not.toHaveBeenCalled();
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.current(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.avatar(PNG_CID)).toBeNull();
     });
   });
 
@@ -318,9 +219,10 @@ describe("the profile picture", () => {
     ["something that isn't an image", () => bodyFromBytes(new TextEncoder().encode("<svg onload=alert(1)>")), "image/png", "must be a PNG, JPEG or WebP image"],
   ])("refuses %s and keeps nothing", async (_label, body, mimeType, message) => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx } = profileContext(storage);
+      const { ctx, repository } = profileContext(storage);
       await expect(handleProfileAvatarSet({ expectedRevision: 0, mimeType }, ctx, body())).rejects.toThrow(message);
-      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.current(OWNER.uid)).toBeNull();
+      expect(repository.uploadBlob).not.toHaveBeenCalled();
     });
   });
 
@@ -329,7 +231,7 @@ describe("the profile picture", () => {
       const { ctx } = profileContext(storage);
       // SAFETY: the handler validates arguments that arrive outside the typed client.
       await expect(handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/svg+xml" } as never, ctx, bodyFromBytes(PNG))).rejects.toThrow();
-      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.current(OWNER.uid)).toBeNull();
     });
   });
 });
@@ -339,7 +241,6 @@ describe("a takedown by the Ship's open-network host", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
       const page = await publicProfileProjection(ctx);
       expect(page?.avatar).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
       const takenDown = (subject: PublicTakedown["subject"]): PublicTakedown[] => [{ subject, ref: "audit_1", reason: "Impersonation", at: 1 }];
@@ -378,9 +279,8 @@ describe("the profile on Bluesky", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
-      handleProfileUpdate({ expectedRevision: 1, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 2 }, ctx);
-      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+      await handleProfileUpdate({ expectedRevision: 1, fields: DRAFT }, ctx);
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([
         { action: "put", collection: "space.ship.profile", rkey: "self", record: {
           $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, avatar: PICTURE, contactPolicy: "requests",
         } },
@@ -391,27 +291,28 @@ describe("the profile on Bluesky", () => {
 
       // Bluesky doesn't show WebP, so its profile leaves that picture out.
       await handleProfileAvatarSet({ expectedRevision: 2, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
-      await handleProfilePublish({ expectedRevision: 3 }, ctx);
       const [record, bluesky] = repository.applyWrites.mock.lastCall![0];
       expect(record).toMatchObject({ collection: "space.ship.profile", record: { avatar: { ref: { $link: WEBP_CID } } } });
       expect(bluesky).toEqual(blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about }));
     });
   });
 
-  it("deletes Bluesky's profile record with the Ship's, and finishes when either is already gone", async () => {
+  it("writes the record when Bluesky's copy it would delete is already gone", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, records } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      // An interrupted write can leave the repository without one of the two.
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
+      // An interrupted write can leave the repository without the copy.
       records.delete(`${BLUESKY}/self`);
-      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/${BLUESKY}/self`, cid: "bafymirror" }));
+      await handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Edited" } }, ctx);
+      const put = { action: "put", collection: "space.ship.profile", rkey: "self", record: expect.objectContaining({ about: "Edited" }) };
       expect(repository.applyWrites.mock.calls.slice(1).map(([writes]) => writes)).toEqual([
-        [{ action: "delete", collection: "space.ship.profile", rkey: "self" }, { action: "delete", collection: BLUESKY, rkey: "self" }],
-        [{ action: "delete", collection: "space.ship.profile", rkey: "self" }],
+        [put, { action: "delete", collection: BLUESKY, rkey: "self" }],
+        [put],
       ]);
-      expect(records.size).toBe(0);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect([...records]).toEqual(["space.ship.profile/self"]);
+      expect(ctx.profiles.published(OWNER.uid)?.record.about).toBe("Edited");
+      expect(ctx.profiles.holdsMirror(OWNER.uid, null)).toBe(true);
     });
   });
 
@@ -422,12 +323,10 @@ describe("the profile on Bluesky", () => {
   ])("deletes Bluesky's copy while the host has %s down, and writes it again once the host restores it", async (_label, subject) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, records } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       // Bluesky reads the firehose, not the host's takedowns, so a copy written now would show what the host hid.
       repository.takedowns.mockResolvedValue(takenDown(subject));
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Edited while down" } }, ctx);
-      await handleProfilePublish({ expectedRevision: 2 }, ctx);
+      await handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Edited while down" } }, ctx);
       expect(repository.applyWrites).toHaveBeenLastCalledWith([
         expect.objectContaining({ action: "put", collection: "space.ship.profile" }),
         { action: "delete", collection: BLUESKY, rkey: "self" },
@@ -448,9 +347,8 @@ describe("the profile on Bluesky", () => {
   it("leaves out a picture whose file the host has down, and shows it again once restored", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
       repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.admin.defs#repoBlobRef", did: SHIP.did, cid: PNG_CID }));
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
       expect(repository.applyWrites.mock.lastCall![0][1]).toEqual(blueskyPut({ displayName: "local" }));
       repository.takedowns.mockResolvedValue([]);
       await ensurePublishedProfile(OWNER.uid, ctx);
@@ -462,9 +360,8 @@ describe("the profile on Bluesky", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, host } = profileContext(storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests" };
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       // As an earlier release left it: the record published, with nothing beside it.
-      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      ctx.profiles.publish(OWNER.uid, 0, "bafyrecord0", record, null, null);
       await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord0", record });
@@ -480,8 +377,7 @@ describe("the profile on Bluesky", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, host } = profileContext(storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" };
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
-      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      ctx.profiles.publish(OWNER.uid, 0, "bafyrecord0", record, null, null);
       await Promise.all([ensurePublishedProfile(OWNER.uid, ctx), ensurePublishedProfile(OWNER.uid, ctx)]);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName })]);
       // One read of the takedowns, and the commit.
@@ -514,8 +410,7 @@ describe("the profile on Bluesky", () => {
       });
       instance.adapters.identityLinks.link(MESSENGER.adapter, MESSENGER.accountId, MESSENGER.actorId, OWNER.uid, OWNER.uid);
       // As an earlier release left it: the record published, with nothing beside it.
-      instance.profiles.update(OWNER.uid, 0, DRAFT);
-      instance.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      instance.profiles.publish(OWNER.uid, 0, "bafyrecord0", record, null, null);
     });
 
     await runInDurableObject(await kernel(), async (instance: Kernel) => {
@@ -552,8 +447,7 @@ describe("an operator's change to the host's takedowns", () => {
   ])("deletes Bluesky's copy as soon as the operator takes %s down, and writes it again as soon as they restore it", async (_label, subject) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, records } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       repository.takedowns.mockResolvedValue(takenDown(subject));
       expect(await followHostTakedowns(ctx)).toBe("removed");
       expect(repository.applyWrites).toHaveBeenLastCalledWith([{ action: "delete", collection: BLUESKY, rkey: "self" }]);
@@ -574,7 +468,6 @@ describe("an operator's change to the host's takedowns", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
       repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.admin.defs#repoBlobRef", did: SHIP.did, cid: PNG_CID }));
       expect(await followHostTakedowns(ctx)).toBe("updated");
       expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: "local" })]);
@@ -587,8 +480,7 @@ describe("an operator's change to the host's takedowns", () => {
   it("leaves the copy to the account's status while the whole account is down, and changes nothing for another record", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, records } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       const writes = repository.applyWrites.mock.calls.length;
       // The host refuses every write while the account is down, and relays hide the whole account meanwhile.
       repository.takedowns.mockResolvedValue([
@@ -602,10 +494,9 @@ describe("an operator's change to the host's takedowns", () => {
     });
   });
 
-  it("asks the host nothing for a private profile or without an open-network host", async () => {
+  it("asks the host nothing before the profile is published or without an open-network host", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       expect(await followHostTakedowns(ctx)).toBe("unchanged");
       expect(await followHostTakedowns(profileContext(storage, { pds: false }).ctx)).toBe("unchanged");
       expect(repository.takedowns).not.toHaveBeenCalled();
@@ -615,11 +506,9 @@ describe("an operator's change to the host's takedowns", () => {
   it("waits for a publication under way, then follows the takedowns against the profile it published", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, records } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Edited" } }, ctx);
+      await handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx);
       const held = holdNextCommit(repository);
-      const publishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
+      const publishing = handleProfileUpdate({ expectedRevision: 1, fields: { ...DRAFT, about: "Edited" } }, ctx);
       // The publication read the takedowns before the operator took the profile down, and is committing its copy.
       await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledTimes(2));
       repository.takedowns.mockResolvedValue(takenDown({ ...PROFILE_DOWN, cid: "bafyrecord2" }));
@@ -636,82 +525,57 @@ describe("an operator's change to the host's takedowns", () => {
   });
 });
 
-describe("the owner's profile at sign-in", () => {
-  it("publishes nothing until the owner chooses, from sign-in or any surface", async () => {
+describe("the owner's profile as they use their Ship", () => {
+  it("publishes the starting profile at the first use, from sign-in or any surface, then asks the host nothing", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository, host } = profileContext(storage);
       await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
-      expect(repository.applyWrites).not.toHaveBeenCalled();
-      expect(host.getInstallation).not.toHaveBeenCalled();
-    });
-  });
-
-  it("saves a private choice as a draft named by the Ship handle and publishes nothing", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository, host } = profileContext(storage);
-      recordSetupProfileChoice(OWNER.uid, "private", ctx);
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, draft: { displayName: "local", about: "", contactPolicy: "requests" } });
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(repository.applyWrites).not.toHaveBeenCalled();
-      expect(host.getInstallation).not.toHaveBeenCalled();
-    });
-  });
-
-  it("publishes a public choice once at sign-in, as the owner has since edited it, so an unpublish stays private", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      recordSetupProfileChoice(OWNER.uid, "public", ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "" } }, ctx);
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" });
-      expect(repository.applyWrites.mock.calls[0]![0][1]).toEqual(blueskyPut({ displayName: DRAFT.displayName }));
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, published: { revision: 2 } });
+      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" };
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record },
+        blueskyPut({ displayName: "local" }),
+      ]);
+      expect(handleProfileGet(ctx).profile).toEqual({ revision: 1, url: PROFILE_URL, handle: "local", fields: STARTING, cid: "bafyrecord1" });
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      const asked = host.getInstallation.mock.calls.length;
       await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(host.getInstallation).toHaveBeenCalledTimes(asked);
+    });
+  });
+
+  it("retries the starting profile at the next use after a failed publish", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
+      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
+      expect(ctx.profiles.current(OWNER.uid)).toBeNull();
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" });
+    });
+  });
+
+  it("leaves the profile the owner publishes while the starting profile waits its turn", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      const held = holdNextCommit(repository);
+      const changing = handleProfileUpdate({ expectedRevision: 0, fields: { ...DRAFT, contactPolicy: "closed" } }, ctx);
+      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledOnce());
+      const using = ensurePublishedProfile(OWNER.uid, ctx);
+      held.release();
+      await changing;
+      await using;
       expect(repository.applyWrites).toHaveBeenCalledOnce();
-      await handleProfileUnpublish({ expectedRevision: 2 }, ctx);
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: DRAFT.displayName, contactPolicy: "closed" });
     });
   });
 
-  it("lets a later publish or unpublish in People replace a public choice that hasn't published yet", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      recordSetupProfileChoice(OWNER.uid, "public", ctx);
-      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
-      handleProfileUpdate({ expectedRevision: 2, draft: { ...DRAFT, about: "Kept private" } }, ctx);
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-    });
-  });
-
-  it("retries a public choice at the next sign-in after a failed publish", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      recordSetupProfileChoice(OWNER.uid, "public", ctx);
-      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: "local", contactPolicy: "requests" });
-    });
-  });
-
-  it("leaves no timer running once sign-in has brought a profile up to date, or had nothing to do", async () => {
+  it("leaves no timer running once a use has brought a profile up to date, or had nothing to do", async () => {
     const kernel = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(kernel, async (_instance: Kernel, state) => {
       const { ctx, repository } = profileContext(state.storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" };
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
       // As an earlier release left it: the record published, with nothing beside it.
-      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      ctx.profiles.publish(OWNER.uid, 0, "bafyrecord0", record, null, null);
       await ensurePublishedProfile(OWNER.uid, ctx);
       await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
@@ -721,36 +585,17 @@ describe("the owner's profile at sign-in", () => {
     expect(await Promise.race([stopping, new Promise((resolve) => setTimeout(resolve, 2_000, "held"))])).toBe("stopped");
   });
 
-  it("leaves a draft or a choice the owner made alone", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-    });
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
-      await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
-      await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(repository.applyWrites).toHaveBeenCalledTimes(2);
-    });
-  });
-
   it("publishes nothing without an open-network host", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx } = profileContext(storage, { pds: false });
       await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
-      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
-      await expect(handleProfilePublish({ expectedRevision: 1 }, ctx)).rejects.toThrow("isn't available on this deployment");
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect(ctx.profiles.current(OWNER.uid)).toBeNull();
+      await expect(handleProfileUpdate({ expectedRevision: 0, fields: DRAFT }, ctx)).rejects.toThrow("isn't available on this deployment");
+      expect(handleProfileGet(ctx).profile).toEqual({ revision: 0, url: PROFILE_URL, handle: "local", fields: STARTING });
     });
   });
 
-  it("writes a profile signed before profiles were records to the repository at the next sign-in", async () => {
+  it("writes a profile signed before profiles were records to the repository at the next use", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       // The profile tables as v074 left them: a published, signed profile and a draft edited since.
       sql.exec("DROP TABLE social_profile_avatars");
@@ -764,16 +609,18 @@ describe("the owner's profile at sign-in", () => {
       };
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json, published_revision, published_json) VALUES (?, ?, ?, ?, ?, ?)",
         OWNER.uid, "subject:local", 3, JSON.stringify({ ...DRAFT, about: "Private draft", representation: "human" }), 2, JSON.stringify(signed));
-      storage.transactionSync(() => { for (const statement of [...KERNEL_V075_PROFILE_RECORDS.statements, ...KERNEL_V080_PROFILE_MIRRORS.statements]) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of PROFILE_MIGRATIONS_SINCE_V074) sql.exec(statement); });
 
       const { ctx, repository } = profileContext(storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "Signed name", about: "Signed about", contactPolicy: "invitation" };
-      expect(ctx.profiles.draft(OWNER.uid)).toEqual({ revision: 3, fields: { ...DRAFT, about: "Private draft" }, avatar: null });
-      expect(ctx.profiles.pendingPublication(OWNER.uid)).toEqual({ revision: 2, record });
-      // Until the repository holds it, the profile reads as private.
+      // The profile is what was published; the draft never was, so it is gone.
+      expect(ctx.profiles.unwritten(OWNER.uid)).toEqual(record);
+      expect(handleProfileGet(ctx).profile).toEqual({
+        revision: 3, url: PROFILE_URL, handle: "local", fields: { displayName: "Signed name", about: "Signed about", contactPolicy: "closed" },
+      });
+      // Until the repository holds it, the profile has no CID and no public page.
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
       expect(await publicProfileProjection(ctx)).toBeNull();
-      expect(handleProfileGet(ctx).profile.published).toBeUndefined();
 
       await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
@@ -781,14 +628,14 @@ describe("the owner's profile at sign-in", () => {
         blueskyPut({ displayName: "Signed name", description: "Signed about" }),
       ]);
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Private draft" }, published: { revision: 2, contactPolicy: "closed" } });
-      expect(ctx.profiles.pendingPublication(OWNER.uid)).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, cid: "bafyrecord1" });
+      expect(ctx.profiles.unwritten(OWNER.uid)).toBeNull();
       await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
   });
 
-  it("migrates a signed profile with an empty about and an unpublished draft", async () => {
+  it("keeps a signed profile with an empty about, and drops a draft never published", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       sql.exec("DROP TABLE social_profile_avatars");
       sql.exec("DROP TABLE social_profiles");
@@ -798,11 +645,10 @@ describe("the owner's profile at sign-in", () => {
         JSON.stringify({ displayName: "Signed name", about: "", contactPolicy: "requests", representation: "human" }));
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json) VALUES (?, ?, ?, ?)",
         1001, "subject:other", 2, JSON.stringify({ ...DRAFT, representation: "ship" }));
-      storage.transactionSync(() => { for (const statement of [...KERNEL_V075_PROFILE_RECORDS.statements, ...KERNEL_V080_PROFILE_MIRRORS.statements]) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of PROFILE_MIGRATIONS_SINCE_V074) sql.exec(statement); });
       const profiles = new ProfileStore(storage);
-      expect(profiles.pendingPublication(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "Signed name", contactPolicy: "requests" });
-      expect(profiles.draft(1001)).toEqual({ revision: 2, fields: DRAFT, avatar: null });
-      expect(profiles.pendingPublication(1001)).toBeNull();
+      expect(profiles.unwritten(OWNER.uid)).toEqual({ $type: "space.ship.profile", displayName: "Signed name", contactPolicy: "requests" });
+      expect(profiles.current(1001)).toBeNull();
     });
   });
 });
