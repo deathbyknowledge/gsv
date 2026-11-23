@@ -1,43 +1,52 @@
 # Ship
 
-<img src="web/public/brand/gsv-ship.png" alt="Ship's ASCII ship" width="240" height="240" />
-
-> ***a mind for your machines***
+<a href="https://ship.space/#demo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-refund-dark.png">
+    <img src=".github/assets/readme-refund-light.png" width="460" alt="A conversation with Ship. Ship: Hey, still no refund confirmation for those shoes you returned. Want me to follow up? You: yes please. Ship: Cool, email sent. I'll keep an eye on the reply. Ship: Your refund has been processed! They just confirmed it by email. Ship: By the way, your streaming trial ends tomorrow. Want me to cancel it before you're charged?">
+  </picture>
+</a>
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
+[![Docs](https://img.shields.io/badge/docs-docs.gsv.space-111)](https://docs.gsv.space)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hy9ExJJFvn)
-[![X](https://img.shields.io/badge/X-@shipdotspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
-[![Docs](https://img.shields.io/badge/docs-ship.space-111)](https://ship.space)
+[![X](https://img.shields.io/badge/X-@shipdotspace-000?logo=x&logoColor=white)](https://x.com/shipdotspace)
 
-**🚀 Public beta is here! Issues and PRs very welcome.**
+Ship is an open-source personal AI agent. You give it things to do from the web
+app, the Desktop app, the `gsv` CLI or a messenger. It works on them with the
+computers, browsers and accounts you connect, keeps going between
+conversations, and tells you when something changes.
 
-**Ship is your personal spaceship.** It stays in orbit while you live your life down here on Earth. Talk to your Ship, give it work, and keep your files and projects aboard. It uses the technology you connect to it and keeps work running while you are away.
+This repository is **GSV**, the runtime Ship is built on: the control plane,
+agent processes, protocol, clients and deployment. Use the hosted Ship at
+[ship.space](https://signup.ship.space), or deploy GSV to your own Cloudflare
+account and run your own.
 
-Ship is open source and user owned, with durable memory, processes, permissions, and the ability to act across your machines under your control.
+## What's in this repository
 
-Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. Ship instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your Ship control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. The public composition includes CodeMode and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), plus model usage.
+| Path | What it is |
+| --- | --- |
+| [`workers/gateway/`](workers/gateway/) | The Gateway: the Kernel (identity, capabilities, syscalls, routing, schedules), agent processes, conversations and the cloud target |
+| [`workers/installations/`](workers/installations/) | Accounts: the directory of Ships, sign-in, onboarding and operator administration |
+| [`workers/inference/`](workers/inference/), [`packages/inference/`](packages/inference/) | Model requests and provider integration |
+| [`workers/adapters/`](workers/adapters/) | Messengers: WhatsApp, Telegram, Slack, Discord and email |
+| [`workers/instances/`](workers/instances/) | Optional cloud browsers and cloud computers |
+| [`workers/pds/`](workers/pds/) | Optional AT Protocol host for each Ship's public profile |
+| [`workers/ripgit/`](workers/ripgit/) | Git-backed repositories and file storage |
+| [`web/`](web/) | The web app, also used by Desktop |
+| [`host/`](host/) | Rust host apps: the `gsv` CLI, the `gsvd` machine daemon and Desktop |
+| [`extension/`](extension/) | The browser extension, which lets Ship work in your browser |
+| [`packages/gsv/`](packages/gsv/) | The public TypeScript client and protocol |
+| [`lexicons/`](lexicons/) | The `space.ship.*` record types |
+| [`deployment/`](deployment/) | The Cloudflare deployment |
+| [`docs/`](docs/) | The documentation at [docs.gsv.space](https://docs.gsv.space) |
 
-## What you can do
+## Self-host
 
-- Run things across all your machines from one agent — kick off a job on your home server while your laptop's shut.
-- Keep agents working while your devices sleep — they live on the edge, not on your hardware.
-- Reach it from anywhere — web UI, CLI, or an extensible adapter system with
-  Discord, Telegram, and Slack implementations bundled today.
-- Spawn durable agents with their own memory and permissions, that can start sub-agents of their own.
-- Keep your repositories and knowledge source-inspectable through a built-in git remote.
-- Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.
-
-Under the hood, GSV is the distributed operating environment: agents are durable processes with identities, history, permissions, and a capability-gated syscall surface. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal intelligence that lives across the edge and the machines you already own.
-
-## Quick Start
-
-**Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up), plus any credentials required by your chosen model provider. The public composition includes CodeMode and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/). Model usage is billed separately by its provider.
-
-### 1. Deploy
-
-**Deploy the open-source operator stack from the terminal.** You need a
-domain in a Cloudflare DNS zone, Node.js and Rust for the source build:
+You need a Cloudflare account on
+[Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), a
+domain in one of its DNS zones, Node.js 22 or newer, npm and Rust.
 
 ```bash
 git clone https://github.com/deathbyknowledge/gsv.git
@@ -52,88 +61,82 @@ npm run deployment:plan
 npm run deployment:deploy
 ```
 
-The terminal flow deploys the `operator` stage with public Accounts and inference,
-and no messenger adapters enabled by default. Follow the
-[Alchemy guide](docs/how-to/deploy-with-alchemy.md#create-the-first-space) to issue
-the one-time bootstrap link and create your first space. Subsequent spaces use
-operator administration. Existing standalone deployments must stay on the
-[preserved release or source](docs/how-to/standalone-retirement.md) until an
-explicit migration is prepared; these commands do not adopt their state.
+Administration lives at `https://accounts.example.com` and each Ship at
+`<handle>.example.com`. Models run on your account's Workers AI by default, and
+each person can add their own provider keys. Messengers are off until you
+enable them. Next, [create the first Ship](docs/how-to/deploy-with-alchemy.md#create-the-first-space)
+with the one-time link the deployment issues.
 
-Install the CLI, machine daemon, and Desktop separately where supported:
+Install the CLI, the machine daemon and Desktop:
 
 ```bash
-curl -fsSL https://install.ship.space | bash
+curl -fsSL https://install.ship.space | bash        # Linux and macOS
+irm https://install.ship.space/install.ps1 | iex    # Windows PowerShell
 ```
 
-The verified host installer ships matching versions of `gsv` and `gsvd` on
-Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64, into a per-user
-directory (`~/.gsv/bin`) that the daemon keeps current on its own. Linux and macOS
-also receive the native Desktop plus its isolated local transcription
-helper; launch it with `gsv desktop`. See the
-[host application install and upgrade guide](docs/how-to/install-host-apps.md)
-for platform details and service rollback behavior.
-
-### 2. Start using it
-
-Chat from the web UI right away, or from the CLI:
+Then sign in and talk to your Ship:
 
 ```bash
-gsv login your-space.example
+gsv login you.example.com
 gsv ship "Hello, what can you help me with?"
 ```
 
-To connect a messenger (Discord / Telegram / Slack), add more devices, and see what to do next, follow the full guide at [docs.gsv.space/get-started](https://docs.gsv.space/get-started).
+To connect a computer, open **Work**, click **connect** beside Connections and
+run the `gsv pair` command it gives you on that computer. Connections are
+outbound only, so there are no ports to open. See
+[Connect devices](docs/how-to/connect-devices.md),
+[Messengers](docs/how-to/messengers.md) and the full
+[deployment guide](docs/how-to/deploy-with-alchemy.md).
 
-## Connect a Device
-
-Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Open **Work** in the web UI, click **connect** beside Connections and create an invitation, then run the command it gives you on that computer:
-
-```bash
-gsv pair CODE   # saves the connection and starts the background service
-gsv status
-```
-
-Now Ship can use the shell and read/write files on that machine. Set up adapters under **Ship > Integrations**.
-
-## How Ship Works
-
-Ship uses Linux as a design model (not POSIX, though). Familiar, composable primitives make the system understandable to both people and models.
-
-- **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, schedules, and agent loops rather than performing heavy local computation.
-- **Kernel and syscalls** — humans, agents, and the CLI use the same capability-gated primitives for processes, files, shells, networking, repositories, and configuration. The public client exposes those contracts to other clients.
-- **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv work` lists them).
-- **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
-- **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
-- **Adapters** — independently deployed Workers translate external services into stable Ship actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
-
-## Development
+## Develop
 
 ```bash
 ./scripts/setup-deps.sh        # install workspace and worker dependencies
-npm run build --workspace web  # build assets served by the gateway
-npm run dev                    # start the local multi-worker stack
-GSV_MANAGED_SERVICES_ROOT=/path/to/services npm run dev:managed
+npm run build --workspace web  # build the web app the Gateway serves
+npm run dev                    # start the local stack
 ```
 
-`npm run dev` starts public Accounts, inference, Gateway and ripgit on
-`http://localhost:8976`; open `/admin` to create a local space. No private
-repository is required. The optional `dev:managed` command uses an operator's
-compatible `accounts/` and `inference/` packages, including its funding policy.
-See [service contracts](docs/architecture/services.md) for the boundaries.
+`npm run dev` runs Accounts, inference, the Gateway and ripgit at
+`http://localhost:8976`; open `/admin` to create a local Ship. Read
+[AGENTS.md](AGENTS.md) before changing code: it is the engineering contract and
+lists the checks for each part of the repository.
 
-Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
-[npm](https://nodejs.org).
+## How it works
 
-## 🤝 Get Involved
+GSV borrows Linux's ideas, not its compatibility: familiar, composable
+primitives that people and models both understand.
 
-Ship is actively evolving, and we want you to be part of the network! We welcome contributions of all sizes.
-Whether you want to submit a pull request, share a wild idea, or just say hi, please don't hesitate to reach out. :)
+- **Gateway**: a small control plane on Cloudflare's edge. It owns identity,
+  permissions, routing, schedules and agent loops; heavy work runs on the
+  device or service it belongs to.
+- **Syscalls**: people, agents and the CLI use the same capability-checked
+  calls for processes, files, shells, networking, repositories and settings.
+- **Processes**: agents are durable processes with their own identity, history,
+  permissions and queue. Ship hands work to helper processes and records what
+  it has promised in a durable ledger, so nothing is forgotten between runs.
+- **Targets**: Ship's cloud home, your computers, your browser and cloud
+  instances offer the same file, shell and network calls. Choosing a target
+  changes where work runs, not what a command means.
+- **Agent tools**: the model sees eight tools: Read, Write, Edit, Delete,
+  Search, Shell, CodeMode and Send. Integrations add capabilities beneath them
+  instead of new tools.
+- **Adapters**: each messenger is a separate Worker that turns its messages
+  into the same people, places and messages for the Kernel.
+- **Open network**: every Ship publishes a public profile on the
+  [AT Protocol](https://atproto.com) network, and its owner decides what it
+  shows.
 
-- **Join the Community:** Come hang out, talk shop, and share ideas on our [Discord Server](https://discord.gg/hy9ExJJFvn).
-- **Found a bug or have a feature request?** [Open an issue](https://github.com/deathbyknowledge/gsv/issues).
-- **Follow Updates:** Reach out directly on Twitter/X [@gsvspace](https://x.com/gsvspace)
+GSV is named after the General Systems Vehicles, the ship Minds of Iain M.
+Banks' Culture novels. Read more in the [architecture docs](docs/architecture/index.md),
+the [syscall reference](docs/reference/syscalls.md) and the
+[security model](docs/architecture/security-model.md).
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Open an
+[issue](https://github.com/deathbyknowledge/gsv/issues) or talk to us on
+[Discord](https://discord.gg/hy9ExJJFvn).
 
 ## License
 
-MIT
+[MIT](LICENSE)
