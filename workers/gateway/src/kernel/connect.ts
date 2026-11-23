@@ -48,8 +48,8 @@ export const PROTOCOL_VERSION = 4;
 const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
 
-export function setupRequiredDetails(env: { PDS?: unknown }): SetupRequiredDetails {
-  return { setupMode: true, next: "sys.setup", setupFeatures: setupFeatures(env) };
+export function setupRequiredDetails(): SetupRequiredDetails {
+  return { setupMode: true, next: "sys.setup", setupFeatures: setupFeatures() };
 }
 
 const kernelBootstraps = new WeakMap<KernelContext["auth"], Promise<void>>();

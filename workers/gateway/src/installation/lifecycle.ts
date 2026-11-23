@@ -21,19 +21,18 @@ type ResolvedManagedInstallation = Extract<
 export type ManagedInstallationLifecycleBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService;
   GSV_OWNER_SIGNUP_URL?: string;
-  PDS?: unknown;
 };
 
-/** The optional `sys.setup` arguments this Ship accepts: a profile choice only where an open-network host can publish it. */
-export function setupFeatures(bindings: Pick<ManagedInstallationLifecycleBindings, "PDS">): string[] {
-  return bindings.PDS ? ["language", "profile"] : ["language"];
+/** The optional `sys.setup` arguments this Ship accepts. */
+export function setupFeatures(): string[] {
+  return ["language"];
 }
 
 export function setupRecoveryDetails(
-  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "PDS">,
+  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL">,
   installation: ResolvedManagedInstallation,
 ): SetupRecoveryDetails {
-  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures(bindings) };
+  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures() };
   if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
     details.setupUrl = bindings.GSV_OWNER_SIGNUP_URL;
   }

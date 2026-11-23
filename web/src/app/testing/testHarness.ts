@@ -4,6 +4,7 @@ import { act } from "preact/test-utils";
 import { z } from "zod";
 import type { ConnectFlowDef, ConnectNav } from "../components/connect-flow/connectFlowTypes";
 import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/consoleModels";
+import type { ProfilePicture } from "../features/instrument/people/profilePicture";
 
 export type TestNodeProps = {
   "aria-label"?: string;
@@ -30,6 +31,7 @@ export type TestNodeProps = {
   links?: readonly object[];
   onRefreshLinks?: () => void;
   onFinish?: () => void;
+  onChoose?: (picture: ProfilePicture) => void;
   ownerUid?: number;
   selected?: boolean;
   boxed?: boolean;

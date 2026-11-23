@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runSqlMigrations } from "../../schema/runner";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
-import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
+import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "./migrations";
 
 describe("contact invitations migration", () => {
   it("drops invitations and their notices, and closes profiles that took only invited people", async () => {
@@ -23,8 +23,9 @@ describe("contact invitations migration", () => {
       profile(1000, "invitation");
       profile(1001, "requests");
 
-      runKernelSqlMigrations(storage);
-      runKernelSqlMigrations(storage);
+      const throughThisOne = KERNEL_MIGRATIONS.filter((migration) => migration.id <= 98);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughThisOne);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughThisOne);
 
       const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'federation_%'")
         .toArray().map((row) => row.name);

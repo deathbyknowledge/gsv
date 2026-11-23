@@ -87,8 +87,6 @@ export type SessionSnapshot = {
   arrivedFromSignup?: boolean;
   /** Whether setup still collects the terms agreement; self-signup already did. */
   setupConsentRequired?: boolean;
-  /** Whether setup asks if the owner's profile is public: only a Ship that can publish one accepts the choice. */
-  setupProfileChoice?: boolean;
 };
 
 export type SessionLoginInput = {
@@ -210,7 +208,7 @@ function isSetupRequiredError(value: SessionWireValue): boolean {
   return error.data.details?.setupMode === true;
 }
 
-type SetupFacts = Pick<SessionSnapshot, "arrivedFromSignup" | "setupConsentRequired" | "setupProfileChoice">;
+type SetupFacts = Pick<SessionSnapshot, "arrivedFromSignup" | "setupConsentRequired">;
 
 /** Setup presentation facts: the Kernel's answer wins; otherwise a signup arrival already agreed to the terms. */
 function setupFacts(signupArrival: boolean, value?: SessionWireValue): SetupFacts {
@@ -219,7 +217,6 @@ function setupFacts(signupArrival: boolean, value?: SessionWireValue): SetupFact
   return {
     arrivedFromSignup: signupArrival,
     setupConsentRequired: details?.consentRequired ?? !signupArrival,
-    setupProfileChoice: details?.setupFeatures?.includes("profile") === true,
   };
 }
 
@@ -791,13 +788,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
 
     let result: SysSetupResult;
     try {
-      const { language, profile, ...args } = input;
-      const features = language !== undefined || profile !== undefined ? await setupFeatures(client, url) : [];
+      const { language, ...args } = input;
+      const features = language !== undefined ? await setupFeatures(client, url) : [];
       if (disposed || setupGeneration !== reconnectGeneration) throw new Error("Session ended");
       result = await client.requestOnce(url, "sys.setup", {
         ...args,
         ...(language !== undefined && features.includes("language") ? { language } : undefined),
-        ...(profile !== undefined && features.includes("profile") ? { profile } : undefined),
         ...(installationOnboardingToken
           ? { onboardingToken: installationOnboardingToken }
           : undefined),
@@ -812,8 +808,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
             installationOnboardingToken = null;
           } catch (storageError) {
             if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "setup", url,
-              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError), ...setupFacts(signupArrival),
-              setupProfileChoice: snapshot.setupProfileChoice });
+              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError), ...setupFacts(signupArrival) });
             throw storageError;
           }
         }
@@ -826,8 +821,6 @@ export function createSessionService(client: SessionClient, options: SessionServ
           connectionId: null,
           message: normalizeMessage(error),
           ...setupFacts(signupArrival),
-          // What the Ship accepts doesn't change with a failed attempt; a fresh probe says so again.
-          setupProfileChoice: snapshot.setupProfileChoice,
           ...recovery,
         });
       }
@@ -894,18 +887,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const persisted = currentSessionToken = readPersistedToken(storage);
 
     if (installationOnboardingToken) {
-      // The link opens setup directly; only the Ship can say whether it asks about the profile.
-      const features = await setupFeatures(client, url).catch((): string[] => []);
-      if (disposed || generation !== reconnectGeneration) return;
-      setSnapshot({
-        phase: "setup",
-        url,
-        username: snapshot.username,
-        connectionId: null,
-        message: null,
-        ...setupFacts(signupArrival),
-        setupProfileChoice: features.includes("profile"),
-      });
+      // The link opens setup directly.
+      setSnapshot({ phase: "setup", url, username: snapshot.username, connectionId: null, message: null, ...setupFacts(signupArrival) });
       return;
     }
 

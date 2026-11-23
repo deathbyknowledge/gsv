@@ -89,11 +89,10 @@ describe("Ship-to-Ship integration", () => {
     vi.restoreAllMocks();
   });
 
-  it("publishes a profile open to requests at sign-in, then only what its person publishes, read by another Ship from the open network", async () => {
-    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
-    expect((await first.profile.get({})).profile).toMatchObject({
-      revision: 1, published: { revision: 1, contactPolicy: "requests" }, draft: { contactPolicy: "requests" },
-    });
+  it("publishes a profile open to requests at sign-in, then each change its person makes, read by another Ship from the open network", async () => {
+    await expect.poll(async () => (await first.profile.get({})).profile.cid).toBeDefined();
+    // The starting profile is named by the Ship's handle.
+    expect((await first.profile.get({})).profile).toMatchObject({ revision: 1, fields: { displayName: "default", about: "", contactPolicy: "requests" } });
     const { identity } = await first.atproto.identity({});
     expect(identity).toMatchObject({ handle: FIRST_HANDLE, host: `https://pds.${FIRST_DOMAIN}` });
     // The Ship's address names its DID.
@@ -101,29 +100,18 @@ describe("Ship-to-Ship integration", () => {
     expect(await named.text()).toBe(identity?.did);
     const initial = (await second.profile.resolve({ address: FIRST_HANDLE })).profile;
     expect(initial).toMatchObject({ did: identity?.did, handle: FIRST_HANDLE, contactPolicy: "requests", url: `https://${FIRST_HANDLE}` });
-    await expect.poll(async () => (await second.profile.get({})).profile.published).toMatchObject({
-      url: `https://${SECOND_HANDLE}`, revision: 1, contactPolicy: "requests",
+    await expect.poll(async () => (await second.profile.get({})).profile).toMatchObject({
+      url: `https://${SECOND_HANDLE}`, revision: 1, fields: { contactPolicy: "requests" }, cid: expect.any(String),
     });
-    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const };
-    await first.profile.update({ expectedRevision: 1, draft });
-    expect((await second.profile.resolve({ address: FIRST_HANDLE })).profile.cid).toBe(initial.cid);
-    await first.profile.publish({ expectedRevision: 2 });
-    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(2);
+    const fields = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const };
+    expect((await first.profile.update({ expectedRevision: 1, fields })).profile).toMatchObject({ revision: 2, fields });
     const remote = (await second.profile.resolve({ address: `https://${FIRST_HANDLE}/profile` })).profile;
-    expect(remote).toMatchObject({ did: identity?.did, displayName: draft.displayName, about: draft.about });
+    expect(remote).toMatchObject({ did: identity?.did, displayName: fields.displayName, about: fields.about });
     expect(remote.cid).not.toBe(initial.cid);
     expect(remote).not.toHaveProperty("ownerUid");
     expect(remote).not.toHaveProperty("username");
-    await first.profile.update({ expectedRevision: 2, draft: { ...draft, about: "Unpublished revision" } });
-    expect((await second.profile.resolve({ address: `@${FIRST_HANDLE}` })).profile.about).toBe(draft.about);
     const record = `https://pds.${FIRST_DOMAIN}/xrpc/com.atproto.repo.getRecord?repo=${identity?.did}&collection=space.ship.profile&rkey=self`;
-    expect(await (await fetch(record)).json()).toMatchObject({ value: { displayName: draft.displayName, about: draft.about } });
-    await first.profile.unpublish({ expectedRevision: 3 });
-    await expect(second.profile.resolve({ address: FIRST_HANDLE })).rejects.toThrow("No public profile is available at this address");
-    // Unpublishing removes the record from the open network, not only from this Ship's answers.
-    const removed = await fetch(record);
-    expect(removed.status).toBe(400);
-    expect(await removed.json()).toMatchObject({ error: "RecordNotFound" });
+    expect(await (await fetch(record)).json()).toMatchObject({ value: { displayName: fields.displayName, about: fields.about } });
   });
 
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
@@ -416,10 +404,8 @@ describe("Ship-to-Ship integration", () => {
       for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
     }
     const initial = (await second.profile.get({})).profile;
-    const draft = { displayName: "Second person", about: "Message me about Ship", contactPolicy: "requests" as const };
-    const saved = (await second.profile.update({ expectedRevision: initial.revision, draft })).profile;
-    await second.profile.publish({ expectedRevision: saved.revision });
-    await expect.poll(async () => (await second.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
+    const fields = { displayName: "Second person", about: "Message me about Ship", contactPolicy: "requests" as const };
+    await second.profile.update({ expectedRevision: initial.revision, fields });
     const profile = (await first.profile.resolve({ address: SECOND_HANDLE })).profile;
     const input = { did: profile.did, profileCid: profile.cid,
       displayName: "First person", text: "An intentional first-contact message", idempotencyKey: "integration-approach" };
@@ -672,8 +658,6 @@ async function setup(origin: URL, username: string, agentName: string): Promise<
     password: PASSWORD,
     agentName,
     timezone: "Europe/Amsterdam",
-    // These Ships meet on the open network, so each owner makes their profile public.
-    profile: "public",
   });
 }
 
@@ -698,13 +682,11 @@ function servedBy(serve: TestHarness["fetch"]): (request: Request) => Promise<Re
 
 /** The inviter's profile takes requests; the invitee sends one and the inviter accepts it. */
 async function connectByRequest(inviter: GSVClient, inviterHandle: string, invitee: GSVClient, key: string): Promise<void> {
+  // Sign-in publishes the starting profile in the background.
+  await expect.poll(async () => (await inviter.profile.get({})).profile.cid, { timeout: 20_000 }).toBeDefined();
   const { profile: state } = await inviter.profile.get({});
-  if (state.published?.contactPolicy !== "requests" || state.published.revision !== state.revision) {
-    const draft = { ...state.draft, contactPolicy: "requests" as const };
-    const saved = state.draft.contactPolicy === "requests" ? state
-      : (await inviter.profile.update({ expectedRevision: state.revision, draft })).profile;
-    await inviter.profile.publish({ expectedRevision: saved.revision });
-    await expect.poll(async () => (await inviter.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
+  if (state.fields.contactPolicy !== "requests") {
+    await inviter.profile.update({ expectedRevision: state.revision, fields: { ...state.fields, contactPolicy: "requests" } });
   }
   const profile = (await invitee.profile.resolve({ address: inviterHandle })).profile;
   const sent = (await invitee.approach.create({

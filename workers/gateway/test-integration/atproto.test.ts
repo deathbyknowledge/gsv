@@ -17,23 +17,8 @@ const NOTE = { action: "put" as const, collection: "com.example.note", rkey: "fi
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 
 describe("publishing to the open network", () => {
-  it("publishes nothing at sign-in without a choice, or with a private one", async () => {
-    for (const profile of [undefined, "private"] as const) {
-      const runtime = await startProcessRuntimeHarness({ pds: true, profile });
-      try {
-        // The harness has signed in; with nothing chosen public, that sign-in returns without publishing.
-        const { profile: state } = await runtime.client.profile.get({});
-        expect(state.revision).toBe(profile ? 1 : 0);
-        expect(state.published).toBeUndefined();
-        expect(await committed(runtime.harness)).toEqual([]);
-      } finally {
-        await runtime.close();
-      }
-    }
-  });
-
-  it("publishes the person's profile at sign-in when they chose public, creating the Ship's identity, then lets them publish directly", async () => {
-    const runtime = await startProcessRuntimeHarness({ pds: true, profile: "public" });
+  it("publishes the person's starting profile at sign-in, creating the Ship's identity, then lets them publish directly", async () => {
+    const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
       const [profile] = await profilePublishedAtSignIn(runtime);
       expect(profile).toEqual([
@@ -69,14 +54,14 @@ describe("publishing to the open network", () => {
 
 describe("the profile record", () => {
   it("is one its lexicon accepts, with a picture and without, as the reference validator reads it", async () => {
-    const runtime = await startProcessRuntimeHarness({ pds: true, profile: "public" });
+    const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
       await profilePublishedAtSignIn(runtime);
       const { profile } = await runtime.client.profile.get({});
       const set = await runtime.client.request("profile.avatar.set", { expectedRevision: profile.revision, mimeType: "image/png" }, { body: bodyFromBytes(PNG) });
       await set.body?.stream.cancel("profile.avatar.set does not return a body");
-      await runtime.client.profile.publish({ expectedRevision: set.data.profile.revision });
-      await runtime.waitFor(async () => (await committed(runtime.harness)).length === 2, "the profile published with its picture");
+      // Setting the picture publishes it.
+      expect(await committed(runtime.harness)).toHaveLength(2);
 
       const writes = (await committed(runtime.harness)).flat();
       const records = (collection: string) => writes.flatMap((write) => write.action !== "delete" && write.collection === collection ? [write.record] : []);
@@ -99,7 +84,7 @@ describe("the profile record", () => {
 
 describe("a takedown by the Ship's open-network host", () => {
   it("takes down the public page, and the handle with the account, tells the person why, and restores both", async () => {
-    const runtime = await startProcessRuntimeHarness({ pds: true, profile: "public" });
+    const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
       await profilePublishedAtSignIn(runtime);
       const gateway = runtime.harness.getWorker("gsv");
@@ -146,7 +131,7 @@ describe("a takedown by the Ship's open-network host", () => {
 
 describe("the Ship publishing to the open network", () => {
   it("asks first, even when other tools run without asking, and writes only what the person approves", async () => {
-    const runtime = await startProcessRuntimeHarness({ pds: true, profile: "public" });
+    const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
       const signIn = await profilePublishedAtSignIn(runtime);
       const ship = (await runtime.client.proc.list({})).processes.find(({ personal }) => personal);
@@ -187,9 +172,10 @@ describe("the Ship publishing to the open network", () => {
   });
 });
 
-/** The write batches committed once the person's sign-in has published the profile they chose public, the Ship's first write. */
+/** The write batches committed once the person's sign-in has published their starting profile, the Ship's first write. */
 async function profilePublishedAtSignIn(runtime: Awaited<ReturnType<typeof startProcessRuntimeHarness>>) {
-  await runtime.waitFor(async () => (await committed(runtime.harness)).length > 0, "the profile published at sign-in");
+  // The Kernel records the profile once the repository has committed it.
+  await runtime.waitFor(async () => (await runtime.client.profile.get({})).profile.cid !== undefined, "the profile published at sign-in");
   return await committed(runtime.harness);
 }
 

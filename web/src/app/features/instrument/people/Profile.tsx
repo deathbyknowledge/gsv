@@ -15,15 +15,13 @@ import { Select } from "../../../components/ui/Select";
 import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { Hint } from "../../../components/ui/Tooltip";
-import { profileNamed, profileSubmission, profileTakenDown, profileUnpublished, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
-import { profilePicture, readProfilePicture, saveProfilePicture } from "./profilePicture";
+import { profileSubmission, profileTakenDown, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
+import { readProfilePicture, saveProfilePicture, type ProfilePicture } from "./profilePicture";
 import { ProfilePicturePicker, useObjectUrl } from "./ProfilePicturePicker";
 import { ProfileNotice } from "./ProfileNotice";
 import { ProfileTakedowns, useShipTakedowns } from "./ProfileTakedowns";
 
-const VISIBILITY_TEXT = {
-  private: "people.profile.visibilityPrivate", requests: "people.profile.visibilityPublic", closed: "people.profile.visibilityPublicClosed",
-} as const;
+const VISIBILITY_TEXT = { requests: "people.profile.visibilityPublic", closed: "people.profile.visibilityPublicClosed" } as const;
 
 export function Profile({ account, active, edit: editing, focusBio, onDirty, onEdit, onBack }: {
   account: ConsoleAccount; active: boolean; edit: boolean; focusBio: boolean; onDirty: (dirty: boolean) => void;
@@ -35,7 +33,6 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   const key = [...INSTRUMENT_PROFILE_KEY, account.uid];
   const [draft, setDraft] = useState<{ revision: number; fields: ProfileFields } | null>(null);
   const [pictureEdit, setPictureEdit] = useState<ProfilePictureEdit | null>(null);
-  const [pictureError, setPictureError] = useState<string | null>(null);
   const canRead = canConfigure(account, "profile.get");
   const profile = useQuery({ queryKey: key, queryFn: async () => (await client.profile.get({})).profile, enabled: connected && active && canRead });
   const savedAvatar = profile.data?.avatar;
@@ -64,39 +61,17 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     await refresh(saved);
     return saved.revision;
   };
+  // Each step publishes: the picture first, then the fields at the revision it leaves.
   const save = useMutation({
-    mutationFn: async (input: { revision: number; fields: ProfileFields | null; picture: ProfilePictureEdit | null }) => {
-      const revision = input.picture ? await savePicture(input.revision, input.picture) : input.revision;
-      return input.fields ? (await client.profile.update({ expectedRevision: revision, draft: input.fields })).profile : null;
-    },
-    onSuccess: async (state) => { setDraft(null); if (state) await refresh(state); },
-  });
-  const publish = useMutation({
     mutationFn: async (input: ProfileSubmission) => {
-      let revision = input.picture ? await savePicture(input.revision, input.picture) : input.revision;
-      if (input.fields) {
-        // Commit the saved draft before publishing: if publishing fails, the edit stays saved as
-        // unpublished changes and save can retry, instead of leaving a stale local draft.
-        const saved = (await client.profile.update({ expectedRevision: revision, draft: input.fields })).profile;
-        setDraft(null);
-        await refresh(saved);
-        revision = saved.revision;
-      }
-      return (await client.profile.publish({ expectedRevision: revision })).profile;
+      const revision = input.picture ? await savePicture(input.revision, input.picture) : input.revision;
+      return input.fields ? (await client.profile.update({ expectedRevision: revision, fields: input.fields })).profile : null;
     },
-    onSuccess: async (state) => { setDraft(null); await refresh(state); onBack(); },
+    onSuccess: async (state) => { setDraft(null); if (state) await refresh(state); onBack(); },
   });
-  const unpublish = useMutation({
-    mutationFn: async (revision: number) => (await client.profile.unpublish({ expectedRevision: revision })).profile,
-    onSuccess: async (state, revision) => {
-      setDraft((current) => current?.revision === revision ? { ...current, revision: state.revision } : current);
-      setPictureEdit((current) => current?.revision === revision ? { ...current, revision: state.revision } : current);
-      await refresh(state);
-    },
-  });
-  const pending = save.isPending || publish.isPending || unpublish.isPending;
+  const pending = save.isPending;
   const state = profile.data;
-  const fields = draft?.fields ?? state?.draft;
+  const fields = draft?.fields ?? state?.fields;
   const dirty = draft !== null || pictureEdit !== null;
   const stale = !!state && ((!!draft && draft.revision !== state.revision) || (!!pictureEdit && pictureEdit.revision !== state.revision));
   const valid = !!fields && !!fields.displayName.trim() && profileFieldsSchema.safeParse(fields).success;
@@ -104,35 +79,29 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     if (!state || !fields) return;
     setDraft({ revision: draft?.revision ?? state.revision, fields: { ...fields, ...patch } });
   };
-  const choosePicture = (file: File) => {
+  const choosePicture = (picture: ProfilePicture) => {
     if (!state) return;
-    setPictureError(null);
-    void profilePicture(file).then(
-      (picture) => setPictureEdit({ revision: pictureEdit?.revision ?? draft?.revision ?? state.revision, picture }),
-      (cause: unknown) => setPictureError(cause instanceof Error ? cause.message : t("people.profile.pictureUnreadable")),
-    );
+    setPictureEdit({ revision: pictureEdit?.revision ?? draft?.revision ?? state.revision, picture });
   };
   const removePicture = () => {
     if (!state) return;
-    setPictureError(null);
     // A picture chosen in the editor and removed again leaves nothing to save.
     setPictureEdit(state.avatar ? { revision: pictureEdit?.revision ?? draft?.revision ?? state.revision, picture: null } : null);
   };
   const shownPictureUrl = pictureEdit ? chosenPictureUrl : savedPictureUrl;
   const editable = connected && canConfigure(account, "profile.update") && !pending;
-  const canPublish = canConfigure(account, "profile.publish");
   const submission = state ? profileSubmission(state, draft, pictureEdit) : null;
   useLayoutEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
-  const error = profile.error ?? save.error ?? publish.error ?? unpublish.error;
+  const error = profile.error ?? save.error;
   const bio = useRef<HTMLTextAreaElement>(null);
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   useEffect(() => { if (editing && focusBio && state) bio.current?.focus(); }, [editing, focusBio, !!state]);
   useEffect(() => { setCopied(null); }, [editing]);
 
-  const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
+  const title = state ? (state.handle ? `@${state.handle}` : state.fields.displayName) : "";
   const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyClosed");
   // The link opens the page as visitors see it: the Ship's address itself takes its signed-in owner to the app.
-  const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={new URL("/profile", state.published.url).href} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
+  const status = state && <p role="status" class="people-note">{rich(t("people.profile.publicAt"), { link: <a href={new URL("/profile", state.url).href} target="_blank" rel="noopener noreferrer">{state.url}</a> })}</p>;
   const copyAddress = state && <span class="people-profile-handle">
     <h2>{title}</h2>
     <Hint text={t("people.profile.copyAddress")}>
@@ -151,7 +120,6 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {!editing && <span class="people-profile-complete"><Button variant="link" label={t("people.profile.completeBio")} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit("bio")} /></span>}</p>}
     <p class="people-profile-policy">{policyLabel(shown.contactPolicy)}</p>
   </div>;
-  const unpublishedChanges = !!state && profileUnpublished(state);
 
   return <section class="people-profile" aria-labelledby="people-profile-title">
     <header class="people-conversation-header">
@@ -159,10 +127,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
       <div class="people-conversation-title people-profile-title">
         <h1 id="people-profile-title">{t(editing ? "people.profile.editTitle" : "people.profile.title")}</h1>
         {state && !editing && <>
-          <span class="people-profile-tag"><Tag boxed size="medium" tone={state.published ? "accent" : "idle"} label={t(state.published ? "people.profile.publicLabel" : "people.profile.privateLabel")} /></span>
           {takenDown && <span class="people-profile-tag"><Tag boxed size="medium" tone="error" label={t("people.profile.takenDownLabel")} /></span>}
-          {unpublishedChanges && <span class="people-profile-tag"><Tag boxed size="medium" tone="update" label={t("people.profile.unpublishedChanges")} /></span>}
-          <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(VISIBILITY_TEXT[profileVisibility(state)])} />
+          <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(VISIBILITY_TEXT[state.fields.contactPolicy])} />
         </>}
       </div>
       {state && !editing && <span class="people-profile-edit"><Button variant="link" label={`${t("people.profile.edit")}${dirty ? " ·" : ""}`} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit()} /></span>}
@@ -173,15 +139,15 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
     {state && !editing && <ProfileTakedowns takedowns={takedowns} avatarCid={savedAvatar?.cid} />}
-    {state && !editing && <ProfileNotice ownerUid={account.uid} published={!!state.published && !takenDown} />}
-    {state && !editing && preview(state.draft, unpublishedChanges ? t("people.profile.previewSaved") : null, savedPictureUrl)}
+    {state && !editing && <ProfileNotice ownerUid={account.uid} published={!!state.cid && !takenDown} />}
+    {state && !editing && preview(state.fields, null, savedPictureUrl)}
     {state && fields && editing && <>
       {status}
       <form class="people-form" onSubmit={(event) => {
         event.preventDefault();
-        if (valid && editable && canPublish && submission?.ready) publish.mutate(submission);
+        if (valid && editable && submission?.ready) save.mutate(submission);
       }}>
-        <ProfilePicturePicker src={shownPictureUrl} disabled={!editable} error={pictureError ?? savedPicture.error?.message ?? null}
+        <ProfilePicturePicker src={shownPictureUrl} disabled={!editable} error={savedPicture.error?.message ?? null}
           onChoose={choosePicture} onRemove={removePicture} />
         <TextArea label={t("people.profile.about")} value={fields.about} maxLength={2048} rows={4} disabled={!editable} placeholder={t("people.profile.emptyBio")}
           onChange={(about) => edit({ about })} textareaProps={{ ref: bio }} />
@@ -190,19 +156,12 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
           value={fields.contactPolicy === "requests" ? 0 : 1} onChange={(index) => edit({ contactPolicy: index === 0 ? "requests" : "closed" })} />
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
-          <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || !submission?.ready} label={publish.isPending ? t("common.saving") : t(submission?.action === "publish" ? "people.profile.publish" : "people.profile.save")} />
-          <Button variant="secondary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !dirty || stale} label={save.isPending ? t("common.saving") : t("people.profile.saveDraft")} onClick={() => {
-            save.mutate({ revision: draft?.revision ?? pictureEdit?.revision ?? state.revision, fields: draft ? profileNamed(state, draft.fields) : null, picture: pictureEdit });
-          }} />
-          {dirty && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); setPictureEdit(null); setPictureError(null); save.reset(); }} />}
+          <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !submission?.ready} label={save.isPending ? t("common.saving") : t("people.profile.save")} />
+          {dirty && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); setPictureEdit(null); save.reset(); }} />}
         </div>
-        <p id="people-profile-save-note" class="people-note people-profile-save-note">{state.published ? t("people.profile.saveNote") : t("people.profile.publishNote")}</p>
+        <p id="people-profile-save-note" class="people-note people-profile-save-note">{t("people.profile.saveNote")}</p>
       </form>
-      {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved"), shownPictureUrl)}
-      {state.published && <div class="people-actions">
-        <Button variant="dangerGhost" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} label={t("people.profile.unpublish")} onClick={() => unpublish.mutate(state.revision)} />
-      </div>}
-      {state.published && <p class="people-note">{t("people.profile.unpublishHint")}</p>}
+      {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewPublic"), shownPictureUrl)}
     </>}
     </div></div>
   </section>;

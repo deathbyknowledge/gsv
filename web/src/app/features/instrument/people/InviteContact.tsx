@@ -6,36 +6,31 @@ import { publicDeployment } from "../../../services/deployment";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
-import { profileNamed, profileUnpublished } from "./profileModel";
+import { profileNamed } from "./profileModel";
 import { useT, type TextKey } from "../../../i18n/locale";
 
 /**
  * The owner's invitation link. It never expires and anyone may use it: whoever opens it creates a
- * Ship, or opens theirs, and sends the owner a message request. That works only while the live
+ * Ship, or opens theirs, and sends the owner a message request. That works only while the published
  * profile takes requests, so the link shows once it does.
  */
-export function InviteContact({ account, profile, onBusy, onFind, onEditProfile }: {
+export function InviteContact({ account, profile, onBusy, onFind }: {
   account: ConsoleAccount | undefined;
   profile: ProfileState | undefined;
   onBusy: (busy: boolean) => void;
   /** Look for someone by handle instead. */
   onFind: () => void;
-  onEditProfile: () => void;
 }) {
   const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [copyStatus, setCopyStatus] = useState<TextKey | null>(null);
-  const allowed = (name: string) => connected && !!account && canConfigure(account, name);
-  const open = profile?.published?.contactPolicy === "requests";
-  // Turning requests on publishes the profile; changes the owner hasn't published yet are theirs to review first.
-  const unpublished = !!profile && profileUnpublished(profile);
+  const published = !!profile?.cid;
+  const open = published && profile?.fields.contactPolicy === "requests";
+  // Turning requests on publishes the profile with them on.
   const turnOn = useMutation({
-    mutationFn: async (state: ProfileState) => {
-      const saved = state.draft.contactPolicy === "requests" ? state
-        : (await client.profile.update({ expectedRevision: state.revision, draft: profileNamed(state, { ...state.draft, contactPolicy: "requests" }) })).profile;
-      return (await client.profile.publish({ expectedRevision: saved.revision })).profile;
-    },
+    mutationFn: async (state: ProfileState) =>
+      (await client.profile.update({ expectedRevision: state.revision, fields: profileNamed(state, { ...state.fields, contactPolicy: "requests" }) })).profile,
     onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_PROFILE_KEY }),
   });
   useEffect(() => { onBusy(turnOn.isPending); return () => onBusy(false); }, [turnOn.isPending, onBusy]);
@@ -52,12 +47,12 @@ export function InviteContact({ account, profile, onBusy, onFind, onEditProfile 
       }}>{t("people.invite.copy")}</button><span class="people-note" role="status">{t(copyStatus ?? "people.invite.ready")}</span></div>
       <p class="people-note">{t("people.invite.reusable")}</p>
     </div> : profile && <div class="people-invite-link">
-      <p class="people-note">{t(profile.published ? "people.invite.requestsOff" : "people.invite.private")}</p>
-      <div class="people-actions">{unpublished
-        ? <button class="ibtn is-primary" disabled={!connected} onClick={onEditProfile}>{t("people.invite.reviewProfile")}</button>
-        : <button class="ibtn is-primary" disabled={turnOn.isPending || !allowed("profile.update") || !allowed("profile.publish")} onClick={() => turnOn.mutate(profile)}>
-          {t(turnOn.isPending ? "common.saving" : "people.invite.turnOn")}</button>}</div>
-      {unpublished && <p class="people-note">{t("people.invite.unpublishedFirst")}</p>}
+      {/* The Ship publishes the starting profile as its owner signs in, so this is brief unless the host is down. */}
+      <p class="people-note">{t(published ? "people.invite.requestsOff" : "people.invite.publishing")}</p>
+      {published && <div class="people-actions">
+        <button class="ibtn is-primary" disabled={turnOn.isPending || !connected || !account || !canConfigure(account, "profile.update")} onClick={() => turnOn.mutate(profile)}>
+          {t(turnOn.isPending ? "common.saving" : "people.invite.turnOn")}</button>
+      </div>}
     </div>}
     <div class="people-compose-footer"><button class="people-action" disabled={turnOn.isPending} onClick={onFind}>{t("people.invite.useProfile")}</button></div>
     {turnOn.error && <p class="people-error" role="alert">{turnOn.error.message}</p>}

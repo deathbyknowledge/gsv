@@ -11,15 +11,13 @@ import { InviteContact } from "./InviteContact";
 
 const ACCOUNT: ConsoleAccount = { uid: 1000, username: "esteve", displayName: "Esteve", relation: "self", runnable: false, gecos: "Esteve", capabilities: ["*"] };
 const FIELDS: ProfileFields = { displayName: "esteve", about: "", contactPolicy: "requests" };
-const URL_ = "https://esteve.ship.space/profile";
-const live = (contactPolicy: ProfileFields["contactPolicy"], revision = 1) => ({ url: URL_, cid: "bafyprofile", contactPolicy, revision });
+const URL_ = "https://esteve.ship.space";
 let tree: ComponentChildren;
 let root: ReturnType<typeof createTestRoot>;
 let cache: QueryClient;
-const onEditProfile = vi.fn();
 
 function Harness({ profile }: { profile: ProfileState }) {
-  tree = InviteContact({ account: ACCOUNT, profile, onBusy: vi.fn(), onFind: vi.fn(), onEditProfile });
+  tree = InviteContact({ account: ACCOUNT, profile, onBusy: vi.fn(), onFind: vi.fn() });
   return null;
 }
 
@@ -37,59 +35,38 @@ beforeEach(() => {
   vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
   cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   root = createTestRoot("invite contact");
-  onEditProfile.mockReset();
 });
 afterEach(async () => { await root.unmount(); cache.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("inviting someone", () => {
-  it("shows the reusable signup link once the live profile takes requests", async () => {
-    await show({ revision: 1, url: URL_, handle: "esteve", draft: FIELDS, published: live("requests") });
+  it("shows the reusable signup link once the published profile takes requests", async () => {
+    await show({ revision: 1, url: URL_, handle: "esteve", fields: FIELDS, cid: "bafyprofile" });
     expect(link()).toBe("https://signup.ship.space/?invite=esteve");
     expect(collectText(tree)).toContain("It doesn’t expire.");
   });
 
-  it("turns requests on and publishes before showing a link", async () => {
+  it("turns requests on, which publishes them, before showing a link", async () => {
     const closed = { ...FIELDS, contactPolicy: "closed" as const };
     const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
-      if (call === "profile.update") return { data: { profile: { revision: 2, url: URL_, draft: FIELDS, published: live("closed") } } };
-      if (call === "profile.publish") return { data: { profile: { revision: 2, url: URL_, draft: FIELDS, published: live("requests", 2) } } };
+      if (call === "profile.update") return { data: { profile: { revision: 2, url: URL_, handle: "esteve", fields: FIELDS, cid: "bafyprofile2" } } };
       throw new Error(`Unexpected request ${call} ${JSON.stringify(args)}`);
     });
-    await show({ revision: 1, url: URL_, handle: "esteve", draft: closed, published: live("closed") });
+    await show({ revision: 1, url: URL_, handle: "esteve", fields: closed, cid: "bafyprofile" });
     expect(link()).toBeUndefined();
     expect(collectText(tree)).toContain("Your profile isn’t taking message requests");
     await act(async () => { button("turn on message requests")!.props.onClick!(); });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
     expect(request.mock.calls.map(([call, args]) => [call, args])).toEqual([
-      ["profile.update", { expectedRevision: 1, draft: { ...closed, contactPolicy: "requests" } }],
-      ["profile.publish", { expectedRevision: 2 }],
+      ["profile.update", { expectedRevision: 1, fields: { ...closed, contactPolicy: "requests" } }],
     ]);
   });
 
-  it("publishes a profile that was never saved as the Kernel's default", async () => {
-    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
-      if (call === "profile.publish") return { data: { profile: { revision: 1, url: URL_, draft: FIELDS, published: live("requests") } } };
-      throw new Error(`Unexpected request ${call} ${JSON.stringify(args)}`);
-    });
-    // The Kernel answers with its default draft, already open to requests, until the owner saves one.
-    await show({ revision: 0, url: URL_, handle: "esteve", draft: FIELDS });
-    await act(async () => { button("turn on message requests")!.props.onClick!(); });
-    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    expect(request.mock.calls.map(([call, args]) => [call, args])).toEqual([["profile.publish", { expectedRevision: 0 }]]);
-  });
-
-  it("asks to review unpublished profile changes rather than publish them unseen", async () => {
+  it("waits while the Ship publishes the starting profile", async () => {
     const request = vi.spyOn(GSVClient.prototype, "request");
-    await show({ revision: 2, url: URL_, handle: "esteve", draft: { ...FIELDS, about: "Draft" }, published: live("closed") });
+    await show({ revision: 0, url: URL_, handle: "esteve", fields: FIELDS });
+    expect(link()).toBeUndefined();
+    expect(collectText(tree)).toContain("Your Ship is still publishing your profile");
     expect(button("turn on message requests")).toBeUndefined();
-    await act(async () => { button("review my profile")!.props.onClick!(); });
-    expect(onEditProfile).toHaveBeenCalledOnce();
     expect(request).not.toHaveBeenCalled();
-  });
-
-  it("asks a private profile to go public", async () => {
-    await show({ revision: 1, url: URL_, handle: "esteve", draft: FIELDS });
-    expect(collectText(tree)).toContain("Your profile is private");
-    expect(button("turn on message requests")).toBeDefined();
   });
 });

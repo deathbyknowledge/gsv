@@ -977,7 +977,7 @@ automatic retry. An outcome that may have reached the provider is reported as
 `contact` manages relationships with people on other Ships.
 `contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
 profile does not establish whether the Ship
-exists: the address may be mistyped, the Ship elsewhere, or the profile private.
+exists: the address may be mistyped, the Ship elsewhere, or its profile not yet published.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
 sends that profile a first message request, which the person accepts or declines
 in People. The request names the version of the profile it read, so their Ship
@@ -988,8 +988,8 @@ returns the existing one.
 anyone may use it: someone without a Ship creates one from it, and someone with
 a Ship signs in from it. Either way they send the owner an ordinary message
 request. Without an operator signup site the link is the Ship's address, which
-shows the public profile. It works only while the owner's profile is public and takes requests;
-the command says when it doesn't. Revocation may be performed by the signed-in
+shows the public profile. It works only once the Ship has published the owner's profile and
+while it takes requests; the command says when it doesn't. Revocation may be performed by the signed-in
 human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact list --all` adds ended contacts, and one
@@ -1044,8 +1044,8 @@ the receiving Ship only when opened.
 
 `atproto` publishes public records and files on the [open network](/architecture/open-network)
 under the Ship's address. It works for the signed-in person and their Ship;
-other processes are refused. Nothing publishes while the profile is private,
-and the person approves each of the Ship's writes unless a rule allows it. A record's `$type` defaults
+other processes are refused. Nothing publishes until the Ship has published its
+owner's profile, and the person approves each of the Ship's writes unless a rule allows it. A record's `$type` defaults
 to its collection. `apply` commits up to ten writes together from a JSON array
 of [`atproto.write`](./syscalls.md#open-network-atproto) changes. To publish a
 picture, upload it with `atproto blob PATH`, which prints a `blob` reference,

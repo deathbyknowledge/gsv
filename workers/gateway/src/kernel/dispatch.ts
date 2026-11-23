@@ -127,8 +127,8 @@ import {
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
 import {
-  handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet, handleProfilePublish,
-  handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
+  handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
+  handleProfileResolve, handleProfileUpdate,
 } from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
 import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachReport, handleApproachRetry } from "./approaches/admission";
@@ -884,13 +884,7 @@ async function dispatchKernel(
         data = await handleApproachReport(frame.args, ctx);
         break;
       case "profile.update":
-        data = handleProfileUpdate(frame.args, ctx);
-        break;
-      case "profile.publish":
-        data = await handleProfilePublish(frame.args, ctx);
-        break;
-      case "profile.unpublish":
-        data = await handleProfileUnpublish(frame.args, ctx);
+        data = await handleProfileUpdate(frame.args, ctx);
         break;
       case "profile.resolve":
         data = await handleProfileResolve(frame.args, ctx);
@@ -899,7 +893,7 @@ async function dispatchKernel(
         data = await handleProfileAvatarSet(frame.args, ctx, frame.body);
         break;
       case "profile.avatar.remove":
-        data = handleProfileAvatarRemove(frame.args, ctx);
+        data = await handleProfileAvatarRemove(frame.args, ctx);
         break;
       case "profile.avatar.read":
         return {

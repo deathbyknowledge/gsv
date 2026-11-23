@@ -31,8 +31,8 @@ Choose **add contact** to open **Add a contact**. Type their handle, such as `es
 or `esteve.ship.space`. People shows your matching contacts as you type and, once
 the handle names a public profile, that person. **Message** opens a conversation
 you already have, or a first message request to someone new. When nothing matches,
-People says no public profile matches: the handle may be mistyped, or their profile
-may be private.
+People says no public profile matches: the handle may be mistyped, or their Ship
+may not have published their profile yet.
 
 The request has **Also add them as a contact** ticked, so they join Contacts once they
 accept; untick it to keep them out of Contacts. Choose **Let Ship answer their messages**
@@ -45,10 +45,10 @@ and `contact connect @esteve --message TEXT --handling manual|ship` sends the sa
 first message request. Telling Ship "add @esteve" is enough: Ship resolves the
 handle, asks you to approve sending it (an `approach.create` rule in the
 [approval policy](../reference/configuration.md#tool-approval-policy) can skip the question),
-and Esteve decides whether to accept. A handle resolves when its owner made their profile public.
+and Esteve decides whether to accept. A handle resolves once its Ship has published its owner's profile.
 You can send 50 new message requests a day.
 An unavailable profile does not establish whether the Ship exists: the handle may
-be mistyped, the Ship elsewhere, or the profile private.
+be mistyped, the Ship elsewhere, or its profile not yet published.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
@@ -63,10 +63,9 @@ with **copy link**. Share it wherever you already talk, as often as you like: it
 doesn't expire, and anyone may use it.
 
 The link works through message requests, so it shows only while your profile is
-public and open to them. Otherwise it offers **turn on message requests**, which
-publishes your profile with requests on. When your profile has changes you haven't
-published, it offers **review my profile** instead, since turning requests on would
-publish those changes too.
+open to them. Otherwise it offers **turn on message requests**, which publishes your
+profile with requests on. In the moments before your Ship first publishes your
+profile, it says so instead.
 
 Someone new to Ship sees your name on the signup page, verifies their email and
 chooses a handle. When their Ship opens, **Add a contact** has you ready: they
@@ -92,32 +91,28 @@ There are no signup-place reservations or registration codes.
 
 ## Your profile {#your-profile}
 
-Setting up your Ship offers **I'm OK with a public profile, so other people's Ships
-can find mine** beside the terms, or beside the password when signup already
-took them. It starts unticked, and **What's the difference?** under it explains both
-choices. Ticked, your profile is public: it is published on the open network at your
-first sign-in, named by your handle and open to message requests, so people can
-add you by handle, and Bluesky and other apps can show it. Those apps and search
-engines can save a copy of a public profile, and a copy they saved may remain
-after you make it private. A private profile publishes nothing and takes no message
-requests, so your invitation link doesn't work either; you can publish it later in People. Choose
-your handle at the bottom of People to see your profile as others will: a **public**
-or **private** label, your picture, your handle with a button that copies your
-profile address, your bio, and who can start a conversation. An empty bio shows
-"Space cowboy." with a **complete bio** link. While the profile is public, a note
-there says who can see it and how to make it private, until you choose **got it**.
-The note says that Bluesky and other apps can show your profile and that any app
-or search engine can save it and make it searchable.
+Every Ship has a public profile. Your Ship publishes it on the open network when you
+first sign in: named by your handle, with no bio or picture, and open to message
+requests, so people can add you by handle, and Bluesky and other apps can show it.
+Those apps and search engines can save a copy of it. The first time you open
+People, **Your public profile** offers to add a picture and a few words: **Save and
+continue** publishes them, and **Skip for now** leaves the profile as it is. Either
+way it doesn't ask again.
+
+Choose your handle at the bottom of People to see your profile as others will:
+your picture, your handle with a button that copies your profile address, your bio,
+and who can start a conversation. An empty bio shows "Space cowboy." with a
+**complete bio** link. A note there says that your profile is public and what you
+can change, until you choose **got it**. It says that Bluesky and other apps can
+show your profile and that any app or search engine can save it and make it
+searchable. **Who can see my profile?** describes the page.
 Choose **edit** to change it. **choose picture** takes a PNG, JPEG or WebP image,
 which Ship crops to a square of at most 512 pixels and saves as a JPEG, or as a
-PNG when it has transparency, so Bluesky can show it; like the rest of the profile,
-it becomes public when you publish. A WebP picture saved before then shows
-everywhere but Bluesky until you choose a picture again. On a private profile the main
-button is **publish**, which makes it public; on a public one it is **save**, which
-updates the public page. **save as draft** keeps changes private, shown as
-**unpublished changes**, and leaves the public page as it is. The note under the
-buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
-anyone, or closed to new ones.
+PNG when it has transparency, so Bluesky can show it. A WebP picture saved before
+Ship did this shows everywhere but Bluesky until you choose a picture again.
+**save** publishes your changes at once, and **discard** drops them; a preview
+shows them as people will see them. The profile can be open to message requests
+from anyone, or closed to new ones, which also stops your invitation link working.
 Your public address is your Ship's address, `https://YOUR-SPACE`: visitors see
 your profile there, with a link for you to sign in, and a browser you're signed
 in on opens your Ship. `https://YOUR-SPACE/profile` always shows the page, and
@@ -136,12 +131,7 @@ profile from your Ship's public record. Your Ship also keeps a copy as Bluesky
 shows it: your name, bio and picture, with a link to your page. Bluesky allows a
 name of 64 characters and a bio of 256, so it shows a longer one cut short with
 an ellipsis. Bluesky and other apps may let anyone search for your profile. Your
-Ship doesn't see follows, replies or messages on Bluesky. Unpublishing removes
-the page, the record and the Bluesky copy, and keeps the profile private until
-you publish again;
-existing contacts and conversations remain. People and apps that already saved it
-may keep their copies. A Ship set up before setup asked keeps its profile as it was,
-and one that never had a profile stays private until you publish.
+Ship doesn't see follows, replies or messages on Bluesky.
 If your operator takes down your profile, its copy on Bluesky, its picture,
 something else your Ship published or your whole Ship on the open network, your
 handle at the bottom of People reads **taken down**, and your profile lists each

@@ -8,8 +8,8 @@ import "./own-profile.css";
 const NOTICE_SEEN = "ui/profile_notice_seen";
 
 /**
- * Tells the owner once that their profile is public on the open network, and how to make it
- * private. Their config follows them between the web app and Desktop.
+ * Tells the owner once that their profile is public on the open network, and what they can change.
+ * Their config follows them between the web app and Desktop.
  */
 export function ProfileNotice({ ownerUid, published }: { ownerUid: number; published: boolean }) {
   const t = useT();
@@ -30,7 +30,7 @@ export function ProfileNotice({ ownerUid, published }: { ownerUid: number; publi
   return <aside class="people-profile-notice" aria-labelledby="people-profile-notice-title">
     <h2 id="people-profile-notice-title">{t("people.profile.noticeTitle")}</h2>
     <p>{t("people.profile.noticeBody")}</p>
-    <p>{t("people.profile.noticePrivate")}</p>
+    <p>{t("people.profile.noticeEdit")}</p>
     {dismiss.isError && <p class="people-error" role="alert">{t("people.profile.noticeFailed")}</p>}
     <div class="people-actions">
       <Button variant="secondary" disabled={!connected || dismiss.isPending} label={t("people.profile.noticeDismiss")} onClick={() => dismiss.mutate()} />
