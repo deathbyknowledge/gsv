@@ -69,7 +69,6 @@ export function People({ onDirtyChange, onAsk }: {
   const [profileDirty, setProfileDirty] = useState(false);
   const detail = useRef<HTMLElement>(null);
   const drafts = useContactDrafts(setContactDirty);
-  useDraftGuard(contactDirty || profileDirty || !!compose.text || busy, onDirtyChange);
   useEffect(() => {
     if (!compose.url) return;
     const url = new URL(window.location.href);
@@ -125,7 +124,8 @@ export function People({ onDirtyChange, onAsk }: {
   useLayoutEffect(() => { if (active && hasSelection) detail.current?.focus({ preventScroll: true }); }, [active, view, contactId, requestId]);
   const mayStart = !!account && (canConfigure(account, "profile.get") || canConfigure(account, "profile.resolve"));
   const firstVisit = !!contactsQuery.data && !contacts.length && !hasSelection && view === "inbox" && !archived;
-  const intro = useProfileIntro(human ? account!.uid : undefined, profile.data, !hasSelection && view === "inbox" && !archived);
+  const intro = useProfileIntro(account?.uid, profile.data, !hasSelection && view === "inbox" && !archived);
+  useDraftGuard(contactDirty || profileDirty || intro.dirty || !!compose.text || busy, onDirtyChange);
   const closeSearch = () => { setSearching(false); setFilter(""); };
   const openList = (next: PeopleRoute["view"]) => {
     closeSearch();
@@ -215,7 +215,7 @@ export function People({ onDirtyChange, onAsk }: {
       <RetainedView active={active && view === "inbox"}>
         {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(contactAsk(selectedContact, task))} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">{t("people.inbox.opening")}</LoadingState> : <p class="people-note">{t("people.inbox.unavailable")}</p>
-          : intro.shown && profile.data ? <ProfileIntro ownerUid={account!.uid} profile={profile.data} finishing={intro.finishing} finishError={intro.finishError} onFinish={intro.finish} />
+          : intro.shown && profile.data ? <ProfileIntro profile={profile.data} intro={intro} />
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
           : <div class="people-empty"><h2>{t("people.inbox.resume")}</h2><p>{t("people.inbox.resumeHint")}</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("add")}>{t("people.connect.prompt")}</button></div>}
         {!contactId && contactsQuery.data?.attentionNotice && <ContactAttentionNotice account={account} />}
