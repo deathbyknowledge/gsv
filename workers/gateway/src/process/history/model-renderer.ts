@@ -114,7 +114,9 @@ function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: 
 
     const source = formatInteractionOriginForContext(origin);
     const shouldRenderSource = !schedule && source !== null && source !== previousSource;
-    if (primary.kind === "message" || source !== null) previousSource = source;
+    // A message leaves out its source only when the last message or event before it had the same one. An event
+    // without a source, such as a notice ending in a contact's words, must not let the owner's next message read as part of it.
+    previousSource = source;
 
     const replyDestination = ownsDistinctRun || schedule?.replyTo ? formatReplyDestinationForContext(origin) : null;
     const shouldRenderReplyDestination =
