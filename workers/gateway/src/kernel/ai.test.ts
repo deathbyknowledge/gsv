@@ -330,7 +330,7 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
-  it("puts a person-facing purpose first on every syscall tool", async () => {
+  it("puts a required person-facing purpose first on every syscall tool", async () => {
     const result = await handleAiTools(makeContext("ready"));
     const withPurpose = result.tools.filter((tool) => JSON.stringify(tool.inputSchema).includes("\"purpose\""));
 
@@ -340,7 +340,7 @@ describe("handleAiTools", () => {
       const schema = tool.inputSchema as { properties: Record<string, { description?: string }>; required: string[] };
       expect(Object.keys(schema.properties)[0]).toBe("purpose");
       expect(schema.properties.purpose?.description).toContain("receipt of the run");
-      expect(schema.required).not.toContain("purpose");
+      expect(schema.required).toContain("purpose");
     }
   });
 

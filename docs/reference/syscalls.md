@@ -50,7 +50,8 @@ argument. It never appears in a wire `args` object and is not part of any
 signature below: the runtime lifts it off the arguments before dispatch,
 collapses whitespace, and caps it at 400 characters. The person sees it in an
 approval prompt and in the corresponding [ledger](../architecture/ledger.md)
-line. It is optional; a call without one is admitted the same way.
+line. Every capability tool lists it as required, so models write one; a call
+without one is still admitted the same way.
 
 ## Shared Records
 

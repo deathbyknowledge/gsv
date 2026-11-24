@@ -94,8 +94,9 @@ export const PURPOSE_SCHEMA_DESCRIPTION = "One short sentence in the language th
 
 /**
  * Put the person-facing `purpose` first on a syscall tool so it streams before the
- * command or path. The Process lifts it off the arguments before dispatch and keeps it
- * with the call record, the pending approval and the ledger line.
+ * command or path. It is required because models leave optional fields out; the
+ * Process still admits a call without one. It lifts it off the arguments before
+ * dispatch and keeps it with the call record, the pending approval and the ledger line.
  */
 export function withPurpose(tool: ToolDefinition): ToolDefinition {
   const { required, properties } = parseSyscallInputSchema(tool.inputSchema);
@@ -114,7 +115,7 @@ export function withPurpose(tool: ToolDefinition): ToolDefinition {
         },
         ...properties,
       },
-      required,
+      required: ["purpose", ...required],
     },
   };
 }
