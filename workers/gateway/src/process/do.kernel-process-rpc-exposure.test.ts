@@ -59,7 +59,7 @@ describe("kernel process RPC exposure", () => {
     };
     const codeMode = data.tools.find((tool) => tool.name === "CodeMode");
     expect(codeMode).toBeDefined();
-    expect(codeMode?.inputSchema.required).toEqual(["code"]);
+    expect(codeMode?.inputSchema.required).toEqual(["purpose", "code"]);
     expect(data.tools.find((tool) => tool.name === "ProcessMessage")).toBeUndefined();
   });
 });
