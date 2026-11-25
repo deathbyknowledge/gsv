@@ -3,7 +3,6 @@ import type {
   BeginInstallationOwnerLinkInput, InstallationOwnershipService, InstallationRecoveryGatewayService, OwnerSignInCodeInput,
   OwnerSignInVerification, OwnerSignInVerifyInput,
 } from "@humansandmachines/gsv/services/ownership";
-import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 import { InstallationOwnerAuthStore, OwnerAuthError } from "./owner-auth-store";
 import { InstallationOwnerRecovery } from "./owner-recovery";
@@ -65,9 +64,9 @@ export class InstallationOwnerSignIn {
         sessionSecret: await this.auth.unheldSessionSecret(args.attemptId, args.secret), code: args.code });
       return claim.installationId === args.installationId ? { authorized: claim } : { failed: "unavailable" };
     } catch (error) {
-      if (error instanceof OwnerAuthError && (error.code === "invalid" || error.code === "expired" || error.code === "locked")) return { failed: error.code };
-      if (!(error instanceof OwnerAuthError)) console.warn("[Owner] Sign-in verification failed:", exceptionDiagnostics(error));
-      return { failed: "unavailable" };
+      // Anything but a refusal reaches the Kernel, which records it and answers with its reference.
+      if (!(error instanceof OwnerAuthError)) throw error;
+      return { failed: error.code === "invalid" || error.code === "expired" || error.code === "locked" ? error.code : "unavailable" };
     }
   }
 }

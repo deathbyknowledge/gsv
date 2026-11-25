@@ -96,6 +96,15 @@ describe("owner email sign-in for a Kernel", () => {
     expect(await f.signIn.verifyOwnerSignIn({ ...attempt, code: f.code() })).toEqual({ failed: "locked" });
   });
 
+  it("lets an unexpected failure reach the Kernel, which records it, instead of answering a refusal", async () => {
+    const f = await fixture();
+    const space = await f.ship("broken");
+    const attempt = { installationId: space.installationId, attemptId: crypto.randomUUID(), secret: hex() };
+    await f.signIn.sendOwnerSignInCode({ ...attempt, email: f.email, source: f.source });
+    vi.spyOn(f.auth, "unheldSessionSecret").mockRejectedValueOnce(new TypeError("D1 went away"));
+    await expect(f.signIn.verifyOwnerSignIn({ ...attempt, code: f.code() })).rejects.toThrow("D1 went away");
+  });
+
   it("refuses malformed attempts before touching state", async () => {
     const f = await fixture();
     const space = await f.ship("malformed");
