@@ -108,10 +108,10 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     if (!address.includes("@")) { setError(t("session.login.emailRequired")); return; }
     let next: EmailSignInAttempt;
     try {
-      // A dead attempt cannot be mailed again, so it starts over. A start without an answer is repeated instead:
-      // Accounts mails one attempt once, and would not mail a new one for the same email this soon.
-      next = resend && attempt && failure !== "expired" && failure !== "locked" ? attempt
-        : !resend && unanswered?.email === address ? unanswered
+      // A start without an answer is repeated: Accounts mails one attempt once, and would not mail a new one for the
+      // same email this soon. A dead attempt cannot be mailed again, so it starts over.
+      next = unanswered?.email === address ? unanswered
+        : resend && attempt && failure !== "expired" && failure !== "locked" ? attempt
         : createEmailSignInAttempt(address);
     } catch {
       setError(t("session.login.storageUnavailable"));

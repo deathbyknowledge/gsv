@@ -530,10 +530,9 @@ async fn sign_in_by_email(url: &str, email: &str) -> Result<Session, Box<dyn std
         secret,
         credential,
     } = EmailAttempt::new();
-    let started = request_before_sign_in(
-        url,
-        "account.signin.start",
+    let started = repeat_until_answered(
         json!({ "id": id, "secret": secret, "email": email }),
+        |args| request_before_sign_in(url, "account.signin.start", args),
     )
     .await?;
     if !started.ok {
@@ -590,6 +589,25 @@ async fn sign_in_by_email(url: &str, email: &str) -> Result<Session, Box<dyn std
     Err("Too many wrong codes. Run gsv login again for a new one.".into())
 }
 
+/// Repeats a start whose answer was lost. The Ship mails one attempt once, and
+/// would not mail a new attempt to the same email for a minute.
+async fn repeat_until_answered<F, Fut>(
+    args: Value,
+    mut request: F,
+) -> Result<ResponseFrame, Box<dyn std::error::Error>>
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = Result<ResponseFrame, Box<dyn std::error::Error>>>,
+{
+    for _ in 0..EMAIL_CODE_TRIES {
+        match request(args.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(error) => eprintln!("{error}. Trying again."),
+        }
+    }
+    Err("Couldn't reach your Ship. Run gsv login again in a minute.".into())
+}
+
 fn email_sign_in_failed(response: &ResponseFrame) -> String {
     match sign_in_refusal(response) {
         Some("expired") => "That code has expired. Run gsv login again for a new one.".into(),
@@ -639,6 +657,32 @@ mod tests {
             .strip_prefix("gsv_human_")
             .is_some_and(hex));
         assert_ne!(EmailAttempt::new().credential, attempt.credential);
+    }
+
+    #[tokio::test]
+    async fn a_lost_start_is_repeated_as_the_same_attempt() {
+        let sent = std::cell::RefCell::new(Vec::new());
+        let answered = repeat_until_answered(json!({ "id": "attempt-1" }), |args| {
+            sent.borrow_mut().push(args);
+            let lost = sent.borrow().len() == 1;
+            async move {
+                if lost {
+                    Err::<ResponseFrame, Box<dyn std::error::Error>>("connection lost".into())
+                } else {
+                    Ok(serde_json::from_value(json!({ "type": "res", "id": "1", "ok": true, "data": { "accepted": true } }))?)
+                }
+            }
+        })
+        .await
+        .expect("the second try is answered");
+        assert!(answered.ok);
+        assert_eq!(*sent.borrow(), vec![json!({ "id": "attempt-1" }); 2]);
+
+        let never = repeat_until_answered(json!({}), |_| async {
+            Err::<ResponseFrame, Box<dyn std::error::Error>>("connection lost".into())
+        })
+        .await;
+        assert!(never.is_err_and(|error| error.to_string().contains("in a minute")));
     }
 
     #[test]

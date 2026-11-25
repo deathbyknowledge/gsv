@@ -157,6 +157,28 @@ describe("email sign-in", () => {
     expect(second).not.toHaveProperty("resend");
   });
 
+  it("repeats a new code's start whose answer was lost, instead of the dead attempt", async () => {
+    ship();
+    stubBrowser("/chat");
+    const screen = await mount();
+    await act(() => screen.state.view.onEmail("owner@example.com"));
+    await submit(screen);
+    await act(() => screen.state.view.onCode("000000"));
+    requestOnce.mockRejectedValueOnce(new GsvRequestError(429, "Email sign-in failed.", { details: { signIn: "locked" } }));
+    await submit(screen);
+    requestOnce.mockRejectedValueOnce(new Error("Connection interrupted"));
+    await act(() => screen.state.view.onResend());
+    await settle();
+    await act(() => screen.state.view.onResend());
+    await settle();
+    const [dead, lost, retried] = calls("account.signin.start");
+    expect(lost?.id).not.toBe(dead?.id);
+    expect(retried).toEqual(lost);
+    await act(() => screen.state.view.onCode("135790"));
+    await submit(screen);
+    expect(calls("account.signin.redeem").at(-1)).toMatchObject({ id: lost?.id });
+  });
+
   it("signs in with a password where the Ship has no email sign-in", async () => {
     ship({ emailSignIn: false });
     stubBrowser("/chat");
