@@ -42,11 +42,11 @@ function ship({ emailSignIn = true } = {}) {
 }
 
 const roots: ReturnType<typeof createTestRoot>[] = [];
-async function mount() {
+async function mount(ship: SessionSnapshot = snapshot) {
   const root = createTestRoot("email sign-in");
   roots.push(root);
   let state!: ReturnType<typeof useEmailSignIn>;
-  function Harness() { state = useEmailSignIn({ session, snapshot, visible: true }); return null; }
+  function Harness() { state = useEmailSignIn({ session, snapshot: ship, visible: true }); return null; }
   await root.render(<Harness />);
   await settle();
   return { get state() { return state; } };
@@ -123,7 +123,7 @@ describe("email sign-in", () => {
   it("repeats a start whose answer was lost before a reload, instead of resending an attempt Accounts never started", async () => {
     ship();
     stubBrowser("/chat");
-    const lost = createEmailSignInAttempt("owner@example.com");
+    const lost = createEmailSignInAttempt("owner@example.com", url);
     const screen = await mount();
     expect(screen.state.view).toMatchObject({ step: "email", email: "owner@example.com" });
     await submit(screen);
@@ -148,7 +148,7 @@ describe("email sign-in", () => {
   it("finishes from the email's button after a reload lost the start's answer", async () => {
     ship();
     stubBrowser("/chat");
-    const lost = createEmailSignInAttempt("owner@example.com");
+    const lost = createEmailSignInAttempt("owner@example.com", url);
     stubBrowser(`/chat#signin=${lost.id}&code=246810`);
     await mount();
     await settle();
@@ -238,6 +238,17 @@ describe("email sign-in", () => {
     const [expired, fresh] = calls("account.signin.start");
     expect(fresh?.id).not.toBe(expired?.id);
     expect(fresh).not.toHaveProperty("resend");
+  });
+
+  it("keeps an attempt to its own Ship where one app signs in to several, as Desktop does", async () => {
+    ship();
+    stubBrowser("/chat");
+    const other = createEmailSignInAttempt("owner@example.com", "wss://other.example/ws");
+    const screen = await mount();
+    expect(screen.state.view).toMatchObject({ step: "email", email: "" });
+    await act(() => screen.state.view.onEmail("owner@example.com"));
+    await submit(screen);
+    expect(calls("account.signin.start")[0]?.id).not.toBe(other.id);
   });
 
   it("signs in with a password where the Ship has no email sign-in", async () => {

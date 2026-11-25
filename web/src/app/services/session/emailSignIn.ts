@@ -8,6 +8,8 @@ const ATTEMPT_MS = 10 * 60 * 1000;
 const attemptSchema = z.strictObject({
   id: z.uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/), credential: z.string().regex(SESSION_CREDENTIAL_PATTERN),
   email: z.string().min(1).max(254), createdAt: z.number(),
+  /** The Ship it signs in to: Desktop signs in to several from one app, which shares this storage. */
+  url: z.string(),
   /** When the Ship last answered that it sent the code, which is after Accounts sent it. */
   sentAt: z.number().optional(),
 });
@@ -21,19 +23,19 @@ type RequestClient = Pick<GSVClient, "requestOnce">;
  * The attempt this browser started. It is kept in local storage, so the button in the email finishes signing in from
  * another tab of the same browser, and a lost answer can be retried with the same secret and credential.
  */
-export function readEmailSignInAttempt(): EmailSignInAttempt | null {
+export function readEmailSignInAttempt(url: string): EmailSignInAttempt | null {
   try {
     const saved = window.localStorage.getItem(STORAGE);
     const attempt = saved ? attemptSchema.parse(JSON.parse(saved)) : null;
-    return attempt && emailSignInAttemptLive(attempt) ? attempt : null;
+    return attempt && attempt.url === url && emailSignInAttemptLive(attempt) ? attempt : null;
   } catch {
     return null;
   }
 }
 
 /** Saved before anything is sent; a browser that cannot keep it cannot sign in this way. */
-export function createEmailSignInAttempt(email: string): EmailSignInAttempt {
-  const attempt = { id: crypto.randomUUID(), secret: createPairingSecret(), credential: createSessionCredential(), email: email.trim(), createdAt: Date.now() };
+export function createEmailSignInAttempt(email: string, url: string): EmailSignInAttempt {
+  const attempt = { id: crypto.randomUUID(), secret: createPairingSecret(), credential: createSessionCredential(), email: email.trim(), createdAt: Date.now(), url };
   window.localStorage.setItem(STORAGE, JSON.stringify(attempt));
   return attempt;
 }

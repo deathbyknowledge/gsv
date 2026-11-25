@@ -39,10 +39,13 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
   const [options, setOptions] = useState<{ url: string; available: boolean } | null>(null);
   const [method, setMethod] = useState<"email" | "password">("email");
   // A saved attempt the Ship never answered may still have mailed its code; sending repeats its start.
-  const [saved] = useState(readEmailSignInAttempt);
-  const [attempt, setAttempt] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? null : saved);
+  const [saved] = useState(() => readEmailSignInAttempt(snapshot.url));
+  const [kept, setAttempt] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? null : saved);
   // A start whose answer was lost may still have mailed its code.
-  const [unanswered, setUnanswered] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? saved : null);
+  const [keptUnanswered, setUnanswered] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? saved : null);
+  // Only this Ship's: Desktop moves between Ships without leaving this screen.
+  const attempt = kept?.url === snapshot.url ? kept : null;
+  const unanswered = keptUnanswered?.url === snapshot.url ? keptUnanswered : null;
   const [email, setEmail] = useState(saved?.email ?? "");
   const [code, setCode] = useState("");
   const [notice, setNotice] = useState<string | null>(attempt ? t("session.login.codeSent", { email: attempt.email }) : null);
@@ -117,7 +120,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
       // same email this soon. A dead attempt cannot be mailed again, so it starts over.
       next = unanswered?.email === address && emailSignInAttemptLive(unanswered) ? unanswered
         : resend && attempt && failure !== "expired" && failure !== "locked" && emailSignInAttemptLive(attempt) ? attempt
-        : createEmailSignInAttempt(address);
+        : createEmailSignInAttempt(address, snapshot.url);
     } catch {
       setError(t("session.login.storageUnavailable"));
       return;
