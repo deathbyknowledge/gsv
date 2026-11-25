@@ -1,12 +1,15 @@
 use chrono::{TimeZone, Utc};
-use cliclack::password;
+use cliclack::{input, password};
 use gsv::config::CliConfig;
-use gsv::connection::GatewayRpcError;
+use gsv::connection::{Connection, GatewayRpcError};
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::protocol::ResponseFrame;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::future::Future;
 use std::io::{self, IsTerminal};
+use std::time::Duration;
+use uuid::Uuid;
 
 struct LoginRetryOptions<'a> {
     url: &'a str,
@@ -151,7 +154,10 @@ fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Op
     normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
 }
 
-const DEFAULT_USER_SESSION_TTL_HOURS: u32 = 8;
+/// Thirty days, as long as an email sign-in lasts.
+pub(crate) const DEFAULT_USER_SESSION_TTL_HOURS: u32 = 720;
+const BEFORE_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(30);
+const EMAIL_CODE_TRIES: usize = 3;
 
 #[derive(Debug, Deserialize)]
 struct LoginTokenCreatePayload {
@@ -300,10 +306,7 @@ async fn resolve_interactive_gateway_auth(
     if !can_prompt_interactively() {
         return Err("You're not signed in. Sign in with: gsv login".into());
     }
-    let password = prompt_secret(&format!("Password for {}", space_name(url)))?
-        .ok_or("A password is needed to sign in")?;
-    let session =
-        issue_user_session(url, username, password, DEFAULT_USER_SESSION_TTL_HOURS).await?;
+    let session = prompt_sign_in(url, username, DEFAULT_USER_SESSION_TTL_HOURS).await?;
     let auth = save_session(&session, None)?;
     eprintln!(
         "{}",
@@ -372,15 +375,13 @@ pub(crate) async fn sign_in(
             .then(|| normalize_auth_field(cfg.gateway_username()))
             .flatten()
     });
-    let password = match normalize_auth_field(request.password) {
-        Some(password) => password,
+    let session = match normalize_auth_field(request.password) {
+        Some(password) => issue_user_session(&url, username, password, request.ttl_hours).await?,
         None if can_prompt_interactively() => {
-            prompt_secret(&format!("Password for {}", space_name(&url)))?
-                .ok_or("A password is needed to sign in")?
+            prompt_sign_in(&url, username, request.ttl_hours).await?
         }
         None => return Err("Give the password with --password when not in a terminal".into()),
     };
-    let session = issue_user_session(&url, username, password, request.ttl_hours).await?;
     save_session(&session, Some(&url))?;
     Ok((session, url))
 }
@@ -434,6 +435,179 @@ pub(crate) enum SignOut {
     ClearedLocally,
 }
 
+/// Asks how to sign in: with a code sent to the owner's email where the Ship
+/// takes it, or with a password. Root always uses its password.
+async fn prompt_sign_in(
+    url: &str,
+    username: Option<String>,
+    ttl_hours: u32,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    if username.as_deref() != Some("root") && offers_email_sign_in(url).await {
+        let email: String = input(format!("Email for {}", space_name(url)))
+            .placeholder("or press Enter to use a password")
+            .required(false)
+            .interact()?;
+        if let Some(email) = normalize_auth_field(Some(email)) {
+            return sign_in_by_email(url, &email).await;
+        }
+    }
+    let password = prompt_secret(&format!("Password for {}", space_name(url)))?
+        .ok_or("A password is needed to sign in")?;
+    issue_user_session(url, username, password, ttl_hours).await
+}
+
+/// One request to the Ship before signing in.
+async fn request_before_sign_in(
+    url: &str,
+    call: &str,
+    args: Value,
+) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
+    let connection = tokio::time::timeout(
+        BEFORE_SIGN_IN_TIMEOUT,
+        Connection::connect_without_handshake(url, |_| {}),
+    )
+    .await
+    .map_err(|_elapsed| format!("Couldn't reach {}", space_name(url)))??;
+    connection
+        .request_with_timeout(call, Some(args), BEFORE_SIGN_IN_TIMEOUT)
+        .await
+}
+
+/// A Ship that can't say falls back to a password.
+async fn offers_email_sign_in(url: &str) -> bool {
+    request_before_sign_in(url, "account.recovery.options", json!({}))
+        .await
+        .ok()
+        .filter(|response| response.ok)
+        .and_then(|response| response.data)
+        .and_then(|data| data.get("emailSignIn").and_then(Value::as_bool))
+        == Some(true)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailSession {
+    username: String,
+    token_id: String,
+    expires_at: Option<i64>,
+}
+
+/// What proves the code was asked for here, and the session's credential.
+struct EmailAttempt {
+    id: String,
+    secret: String,
+    credential: String,
+}
+
+impl EmailAttempt {
+    fn new() -> Self {
+        let hex = || format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        Self {
+            id: Uuid::new_v4().to_string(),
+            secret: hex(),
+            credential: format!("gsv_human_{}", hex()),
+        }
+    }
+}
+
+/// Why the Ship refused an email sign-in, as it names the reason.
+fn sign_in_refusal(response: &ResponseFrame) -> Option<&str> {
+    response
+        .error
+        .as_ref()?
+        .details
+        .as_ref()?
+        .get("signIn")?
+        .as_str()
+}
+
+/// Signs in to the personal account with a code sent to the owner's email.
+/// The session is opened from a credential made here, so a lost answer is
+/// retried with the same request and gives back the same session.
+async fn sign_in_by_email(url: &str, email: &str) -> Result<Session, Box<dyn std::error::Error>> {
+    let EmailAttempt {
+        id,
+        secret,
+        credential,
+    } = EmailAttempt::new();
+    let started = request_before_sign_in(
+        url,
+        "account.signin.start",
+        json!({ "id": id, "secret": secret, "email": email }),
+    )
+    .await?;
+    if !started.ok {
+        return Err(email_sign_in_failed(&started).into());
+    }
+    eprintln!(
+        "If {email} is this Ship's email, a six-digit code is on its way. It expires in ten minutes."
+    );
+    for _ in 0..EMAIL_CODE_TRIES {
+        let code: String = input("Code from the email")
+            .placeholder("123456")
+            .validate(|value: &String| {
+                if value.chars().filter(|c| !c.is_whitespace()).count() == 6 {
+                    Ok(())
+                } else {
+                    Err("Enter the six-digit code")
+                }
+            })
+            .interact()?;
+        let code: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+        let redeemed = match request_before_sign_in(
+            url,
+            "account.signin.redeem",
+            json!({
+                "id": id, "secret": secret, "code": code, "credential": credential,
+                "label": format!("gsv-cli@{}", std::env::consts::OS),
+            }),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("{error}. Enter the code again to retry.");
+                continue;
+            }
+        };
+        if redeemed.ok {
+            let session = serde_json::from_value::<EmailSession>(
+                redeemed.data.ok_or("Your Ship returned no session")?,
+            )
+            .map_err(|error| format!("Your Ship returned an unreadable session: {error}"))?;
+            return Ok(Session {
+                username: session.username,
+                token: credential,
+                token_id: session.token_id,
+                expires_at: session.expires_at,
+            });
+        }
+        if sign_in_refusal(&redeemed) != Some("invalid") {
+            return Err(email_sign_in_failed(&redeemed).into());
+        }
+        eprintln!("That code didn't work. Check it and try again.");
+    }
+    Err("Too many wrong codes. Run gsv login again for a new one.".into())
+}
+
+fn email_sign_in_failed(response: &ResponseFrame) -> String {
+    match sign_in_refusal(response) {
+        Some("expired") => "That code has expired. Run gsv login again for a new one.".into(),
+        Some("locked") => "Too many wrong codes. Run gsv login again for a new one.".into(),
+        Some("unavailable") => {
+            "Email sign-in isn't working right now. Try again in a moment, or use your password."
+                .into()
+        }
+        _ => format!(
+            "Email sign-in failed: {}",
+            response
+                .error
+                .as_ref()
+                .map_or("no reason given", |error| error.message.as_str())
+        ),
+    }
+}
+
 pub(crate) fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut prompt = password(prompt).allow_empty();
     let value = prompt.interact()?;
@@ -448,6 +622,42 @@ pub(crate) fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std:
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn an_email_attempt_has_the_shapes_the_ship_accepts() {
+        let attempt = EmailAttempt::new();
+        let hex = |value: &str| {
+            value.len() == 64
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+        };
+        assert!(Uuid::parse_str(&attempt.id).is_ok());
+        assert!(hex(&attempt.secret));
+        assert!(attempt
+            .credential
+            .strip_prefix("gsv_human_")
+            .is_some_and(hex));
+        assert_ne!(EmailAttempt::new().credential, attempt.credential);
+    }
+
+    #[test]
+    fn a_refused_email_sign_in_says_what_to_do() {
+        let refused = |details: Value| -> ResponseFrame {
+            serde_json::from_value(json!({
+                "type": "res", "id": "1", "ok": false,
+                "error": { "code": 400, "message": "Email sign-in failed. Check the code, or request a new one.", "details": details },
+            }))
+            .expect("a response frame")
+        };
+        assert_eq!(
+            sign_in_refusal(&refused(json!({ "signIn": "invalid" }))),
+            Some("invalid")
+        );
+        assert!(email_sign_in_failed(&refused(json!({ "signIn": "expired" }))).contains("expired"));
+        assert!(email_sign_in_failed(&refused(json!({ "signIn": "locked" }))).contains("Too many"));
+        assert!(email_sign_in_failed(&refused(json!({}))).contains("Check the code"));
+    }
 
     #[tokio::test]
     async fn explicit_credentials_reach_the_command_without_a_setup_probe() {

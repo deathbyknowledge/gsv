@@ -36,10 +36,16 @@ pub(crate) async fn login(
         .map(|at| (at - render::now_ms() + 1_800_000) / 3_600_000)
         .filter(|hours| *hours > 0)
         .map(|hours| {
-            format!(
-                " The session lasts {}.",
+            let length = if hours >= 48 {
+                render::count(
+                    usize::try_from((hours + 12) / 24).unwrap_or(0),
+                    "day",
+                    "days",
+                )
+            } else {
                 render::count(usize::try_from(hours).unwrap_or(0), "hour", "hours")
-            )
+            };
+            format!(" The session lasts {length}.")
         })
         .unwrap_or_default();
     println!(

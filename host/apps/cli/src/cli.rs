@@ -201,8 +201,8 @@ pub(crate) enum Commands {
         #[arg(long)]
         password: Option<String>,
 
-        /// How long the session lasts, in hours
-        #[arg(long, default_value_t = 8)]
+        /// How long a password sign-in lasts, in hours (an email sign-in lasts 30 days)
+        #[arg(long, default_value_t = crate::auth_flow::DEFAULT_USER_SESSION_TTL_HOURS)]
         ttl_hours: u32,
     },
 
