@@ -38,10 +38,12 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
   const [link, setLink] = useState(takeEmailSignInLink);
   const [options, setOptions] = useState<{ url: string; available: boolean } | null>(null);
   const [method, setMethod] = useState<"email" | "password">("email");
-  const [attempt, setAttempt] = useState<EmailSignInAttempt | null>(readEmailSignInAttempt);
+  // A saved attempt the Ship never answered may still have mailed its code; sending repeats its start.
+  const [saved] = useState(readEmailSignInAttempt);
+  const [attempt, setAttempt] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? null : saved);
   // A start whose answer was lost may still have mailed its code.
-  const [unanswered, setUnanswered] = useState<EmailSignInAttempt | null>(null);
-  const [email, setEmail] = useState(attempt?.email ?? "");
+  const [unanswered, setUnanswered] = useState<EmailSignInAttempt | null>(saved?.sentAt === undefined ? saved : null);
+  const [email, setEmail] = useState(saved?.email ?? "");
   const [code, setCode] = useState("");
   const [notice, setNotice] = useState<string | null>(attempt ? t("session.login.codeSent", { email: attempt.email }) : null);
   const [error, setError] = useState<string | null>(null);
@@ -96,10 +98,11 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
   useEffect(() => {
     if (!link || !available || snapshot.phase !== "locked") return;
     setLink(null);
-    if (attempt?.id === link.id) {
+    const linked = [attempt, unanswered].find((current) => current?.id === link.id);
+    if (linked) {
       setMethod("email");
       setCode(link.code);
-      void signIn(attempt, link.code);
+      void signIn(linked, link.code);
     } else {
       setError(t("session.login.linkElsewhere"));
     }

@@ -5,6 +5,7 @@ import { GsvRequestError } from "@humansandmachines/gsv/client";
 import { SESSION_CREDENTIAL_PATTERN } from "@humansandmachines/gsv/protocol";
 import type { SessionClient, SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { createTestRoot } from "../../testing/testHarness";
+import { createEmailSignInAttempt } from "../../services/session/emailSignIn";
 import { useEmailSignIn } from "./useEmailSignIn";
 
 const url = "wss://ship.example/ws";
@@ -117,6 +118,28 @@ describe("email sign-in", () => {
     const [lost, retried] = calls("account.signin.start");
     expect(retried).toEqual(lost);
     expect(screen.state.view.step).toBe("code");
+  });
+
+  it("repeats a start whose answer was lost before a reload, instead of resending an attempt Accounts never started", async () => {
+    ship();
+    stubBrowser("/chat");
+    const lost = createEmailSignInAttempt("owner@example.com");
+    const screen = await mount();
+    expect(screen.state.view).toMatchObject({ step: "email", email: "owner@example.com" });
+    await submit(screen);
+    expect(calls("account.signin.start")).toEqual([{ id: lost.id, secret: lost.secret, email: lost.email }]);
+    expect(screen.state.view.step).toBe("code");
+  });
+
+  it("finishes from the email's button after a reload lost the start's answer", async () => {
+    ship();
+    stubBrowser("/chat");
+    const lost = createEmailSignInAttempt("owner@example.com");
+    stubBrowser(`/chat#signin=${lost.id}&code=246810`);
+    await mount();
+    await settle();
+    expect(calls("account.signin.redeem").at(-1)).toMatchObject({ id: lost.id, code: "246810" });
+    expect(adoptSession).toHaveBeenCalledOnce();
   });
 
   it("finishes from the email's button in the browser that asked, and scrubs the code from the address", async () => {
