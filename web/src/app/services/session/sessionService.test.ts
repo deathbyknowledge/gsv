@@ -246,6 +246,23 @@ describe("account setup", () => {
     service.dispose?.();
   });
 
+  it("retries setup with the same session credential when this browser cannot save it", async () => {
+    installWindow();
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details: { setupRecovery: true, setupFeatures: ["language", "email-sign-in"] } })
+      .mockRejectedValueOnce(new Error("Connection interrupted"))
+      .mockResolvedValueOnce({ ...setupResult, session: { tokenId: "token-1", expiresAt: 2_000 } });
+    const full = { getItem: () => null, setItem: () => { throw new DOMException("Storage is full", "QuotaExceededError"); }, removeItem: () => {} };
+    const service = createSessionService(client, { storage: full, onboarding: { token: onboardingToken, complete: vi.fn(), discard: vi.fn() } });
+    await service.start();
+    await expect(service.setup({ timezone: "Europe/Madrid" })).rejects.toThrow("Connection interrupted");
+    await service.setup({ timezone: "Europe/Madrid" });
+    const [lost, answered] = client.requestOnce.mock.calls.filter(([, call]) => call === "sys.setup").map(([, , args]) => args);
+    expect(answered).toEqual(lost);
+    expect(service.snapshot().phase).toBe("ready");
+    service.dispose?.();
+  });
+
   it("retains setup authorization and the cause when the feature probe fails", async () => {
     installWindow();
     const client = createSetupClient();

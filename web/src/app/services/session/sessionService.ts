@@ -333,6 +333,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken(storage);
+  // Held here as well, so a retry in this tab repeats the same setup where this browser cannot save it.
+  let currentSetupCredential: string | null = null;
   /** What the Ship said setup accepts when the setup link opened; setup sends only those. */
   let probedSetupFeatures: string[] | null = null;
   let installationOnboardingToken = options.onboarding ? options.onboarding.token
@@ -798,7 +800,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const url = gatewayUrl();
     const username = input.username?.trim() ?? "";
     const password = input.password?.trim();
-    const credential = password === undefined ? setupCredential(storage) : undefined;
+    const credential = password === undefined ? currentSetupCredential ??= setupCredential(storage) : undefined;
     // What the Ship said about its setup still holds when this attempt fails, so the screen retries the same way.
     const facts: SetupFacts = snapshot.phase === "setup"
       ? { arrivedFromSignup: snapshot.arrivedFromSignup, setupConsentRequired: snapshot.setupConsentRequired, setupEmailSignIn: snapshot.setupEmailSignIn }
@@ -870,6 +872,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     storeValue(STORAGE_USERNAME, result.user.username, storage);
     if (credential && result.session) {
       removeValue(STORAGE_SETUP_CREDENTIAL, storage);
+      currentSetupCredential = null;
       await adoptSession({ username: result.user.username, tokenId: result.session.tokenId, token: credential, expiresAt: result.session.expiresAt });
     } else {
       await login({ username: result.user.username, password });
