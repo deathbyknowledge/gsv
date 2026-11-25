@@ -51,6 +51,8 @@ async function mount() {
   return { get state() { return state; } };
 }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+/** Accounts mails the same address again only after a minute. */
+const aMinuteLater = () => act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
 const submit = async (screen: { state: ReturnType<typeof useEmailSignIn> }) => {
   // SAFETY: the form's submit handler only prevents the browser's default.
   await act(() => screen.state.view.onSubmit({ preventDefault() {} } as Event));
@@ -63,6 +65,7 @@ beforeEach(() => { storage = new Map(); requestOnce.mockReset(); adoptSession.mo
 afterEach(async () => {
   for (const root of roots.splice(0)) await root.unmount();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("email sign-in", () => {
@@ -140,7 +143,8 @@ describe("email sign-in", () => {
     expect(calls("account.signin.redeem")).toHaveLength(0);
   });
 
-  it("names what to do about a refused code, and starts over once the code is dead", async () => {
+  it("names what to do about a refused code, and starts over once the code is dead and Accounts would mail again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     ship();
     stubBrowser("/chat");
     const screen = await mount();
@@ -149,7 +153,9 @@ describe("email sign-in", () => {
     await act(() => screen.state.view.onCode("000000"));
     requestOnce.mockRejectedValueOnce(new GsvRequestError(429, "Email sign-in failed.", { details: { signIn: "locked" } }));
     await submit(screen);
-    expect(screen.state.view).toMatchObject({ error: expect.stringMatching(/Too many/), canResend: true });
+    expect(screen.state.view).toMatchObject({ error: expect.stringMatching(/Too many/), canResend: false });
+    await aMinuteLater();
+    expect(screen.state.view.canResend).toBe(true);
     await act(() => screen.state.view.onResend());
     await settle();
     const [first, second] = calls("account.signin.start");
@@ -158,6 +164,7 @@ describe("email sign-in", () => {
   });
 
   it("repeats a new code's start whose answer was lost, instead of the dead attempt", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     ship();
     stubBrowser("/chat");
     const screen = await mount();
@@ -166,6 +173,7 @@ describe("email sign-in", () => {
     await act(() => screen.state.view.onCode("000000"));
     requestOnce.mockRejectedValueOnce(new GsvRequestError(429, "Email sign-in failed.", { details: { signIn: "locked" } }));
     await submit(screen);
+    await aMinuteLater();
     requestOnce.mockRejectedValueOnce(new Error("Connection interrupted"));
     await act(() => screen.state.view.onResend());
     await settle();

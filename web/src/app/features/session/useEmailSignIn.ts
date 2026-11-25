@@ -7,7 +7,7 @@ import {
 } from "../../services/session/emailSignIn";
 import { useT, type TextKey } from "../../i18n/locale";
 
-/** Accounts waits this long before it mails the same address again. */
+/** Accounts waits this long after it mails an address before it mails it again, even for a new attempt. */
 const RESEND_AFTER_MS = 60_000;
 const FAILURE_TEXT = {
   invalid: "session.login.codeInvalid", expired: "session.login.codeExpired",
@@ -60,7 +60,8 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     return () => { current = false; };
   }, [visible, loaded, session.client, snapshot.url]);
 
-  // The resend action becomes available when Accounts would mail again.
+  // The resend action becomes available when Accounts would mail again, counted from the Ship's answer, which comes after
+  // Accounts sent the code.
   useEffect(() => {
     if (!attempt) return;
     const wait = attempt.createdAt + RESEND_AFTER_MS - Date.now();
@@ -120,7 +121,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     setBusy(true); setError(null); setFailure(null);
     try {
       await sendEmailSignInCode(session.client, snapshot.url, next, next === attempt);
-      setAttempt(next === attempt ? { ...next, createdAt: Date.now() } : next);
+      setAttempt({ ...next, createdAt: Date.now() });
       setUnanswered(null);
       setCode("");
       setNotice(t(resend ? "session.login.resent" : "session.login.codeSent", { email: address }));
@@ -139,7 +140,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     notice,
     error,
     busy,
-    canResend: attempt !== null && (failure === "expired" || failure === "locked" || attempt.createdAt + RESEND_AFTER_MS <= Date.now()),
+    canResend: attempt !== null && attempt.createdAt + RESEND_AFTER_MS <= Date.now(),
     onEmail: (value) => { setError(null); setEmail(value); },
     onCode: (value) => { setError(null); setCode(value); },
     onSubmit: (event) => {

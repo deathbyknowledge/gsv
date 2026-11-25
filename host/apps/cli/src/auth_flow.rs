@@ -586,7 +586,7 @@ async fn sign_in_by_email(url: &str, email: &str) -> Result<Session, Box<dyn std
         }
         eprintln!("That code didn't work. Check it and try again.");
     }
-    Err("Too many wrong codes. Run gsv login again for a new one.".into())
+    Err(TOO_MANY_CODES.into())
 }
 
 /// Repeats a start whose answer was lost. The Ship mails one attempt once, and
@@ -608,10 +608,13 @@ where
     Err("Couldn't reach your Ship. Run gsv login again in a minute.".into())
 }
 
+/// Accounts mails the same email again only after a minute, even for a new attempt.
+const TOO_MANY_CODES: &str = "Too many wrong codes. Run gsv login again in a minute for a new one.";
+
 fn email_sign_in_failed(response: &ResponseFrame) -> String {
     match sign_in_refusal(response) {
         Some("expired") => "That code has expired. Run gsv login again for a new one.".into(),
-        Some("locked") => "Too many wrong codes. Run gsv login again for a new one.".into(),
+        Some("locked") => TOO_MANY_CODES.into(),
         Some("unavailable") => {
             "Email sign-in isn't working right now. Try again in a moment, or use your password."
                 .into()
@@ -699,7 +702,10 @@ mod tests {
             Some("invalid")
         );
         assert!(email_sign_in_failed(&refused(json!({ "signIn": "expired" }))).contains("expired"));
-        assert!(email_sign_in_failed(&refused(json!({ "signIn": "locked" }))).contains("Too many"));
+        // Accounts mails the same email again only after a minute, even for a new attempt.
+        assert!(
+            email_sign_in_failed(&refused(json!({ "signIn": "locked" }))).contains("in a minute")
+        );
         assert!(email_sign_in_failed(&refused(json!({}))).contains("Check the code"));
     }
 
