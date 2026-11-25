@@ -233,6 +233,8 @@ describe("account setup", () => {
     await service.start();
     expect(service.snapshot()).toMatchObject({ phase: "setup", setupEmailSignIn: true });
     await expect(service.setup({ timezone: "Europe/Madrid" })).rejects.toThrow("Connection interrupted");
+    // The screen keeps setting up without a password, so its retry repeats the same request.
+    expect(service.snapshot()).toMatchObject({ phase: "setup", setupEmailSignIn: true });
     await service.setup({ timezone: "Europe/Madrid" });
     const [lost, answered] = client.requestOnce.mock.calls.filter(([, call]) => call === "sys.setup").map(([, , args]) => args);
     expect(answered).toEqual(lost);

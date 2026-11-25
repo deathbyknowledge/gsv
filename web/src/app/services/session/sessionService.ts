@@ -799,6 +799,10 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const username = input.username?.trim() ?? "";
     const password = input.password?.trim();
     const credential = password === undefined ? setupCredential(storage) : undefined;
+    // What the Ship said about its setup still holds when this attempt fails, so the screen retries the same way.
+    const facts: SetupFacts = snapshot.phase === "setup"
+      ? { arrivedFromSignup: snapshot.arrivedFromSignup, setupConsentRequired: snapshot.setupConsentRequired, setupEmailSignIn: snapshot.setupEmailSignIn }
+      : setupFacts(signupArrival);
 
     setSnapshot({
       phase: "authenticating",
@@ -831,7 +835,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
             installationOnboardingToken = null;
           } catch (storageError) {
             if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "setup", url,
-              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError), ...setupFacts(signupArrival) });
+              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError), ...facts });
             throw storageError;
           }
         }
@@ -843,7 +847,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
           username: username || snapshot.username,
           connectionId: null,
           message: normalizeMessage(error),
-          ...setupFacts(signupArrival),
+          ...facts,
           ...recovery,
         });
       }
