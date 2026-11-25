@@ -100,6 +100,9 @@ describe("owner email sign-in for a Kernel", () => {
     const f = await fixture();
     const space = await f.ship("broken");
     const attempt = { installationId: space.installationId, attemptId: crypto.randomUUID(), secret: hex() };
+    vi.spyOn(f.auth, "issue").mockRejectedValueOnce(new TypeError("D1 went away"));
+    await expect(f.signIn.sendOwnerSignInCode({ ...attempt, email: f.email, source: f.source })).rejects.toThrow("D1 went away");
+    expect(f.delivered).toHaveLength(0);
     await f.signIn.sendOwnerSignInCode({ ...attempt, email: f.email, source: f.source });
     vi.spyOn(f.auth, "unheldSessionSecret").mockRejectedValueOnce(new TypeError("D1 went away"));
     await expect(f.signIn.verifyOwnerSignIn({ ...attempt, code: f.code() })).rejects.toThrow("D1 went away");

@@ -93,8 +93,13 @@ export class InstallationOwnerEmailHttp {
   /** A recovery attempt is its own code challenge; a form that names another one learns nothing more. */
   private async sendRecoveryCode(challenge: ChallengeForm, handle: string, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
     if (challenge.ownerAttemptId === challenge.challengeId) {
-      await this.recovery.sendCode({ ship: { handle: handle.trim().toLowerCase() }, attemptId: challenge.challengeId, browserSecret,
-        email: challenge.email, ip, resend });
+      try {
+        await this.recovery.sendCode({ ship: { handle: handle.trim().toLowerCase() }, attemptId: challenge.challengeId, browserSecret,
+          email: challenge.email, ip, resend });
+      } catch (error) {
+        // This page answers every email the same way, even after an unexpected failure.
+        console.warn("[Owner] Recovery request failed:", exceptionDiagnostics(error));
+      }
     } else {
       await new Promise((resolve) => setTimeout(resolve, this.options.recoveryFloorMs ?? RECOVERY_RESPONSE_FLOOR_MS));
     }

@@ -1,5 +1,4 @@
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
-import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { InstallationOwnerAuthStore, OwnerAuthError } from "./owner-auth-store";
 import { InstallationOwnerStore, OwnerAttemptUnavailableError, type OwnerRecoveryShip } from "./owner-store";
 import { sendOwnerVerification } from "./owner-verification";
@@ -33,7 +32,7 @@ export class InstallationOwnerRecovery {
 
   /**
    * The same answer whether or not this email owns this Ship, and whatever limit or delivery problem applied: only the
-   * owner's inbox learns that the attempt was real.
+   * owner's inbox learns that the attempt was real. An unexpected failure reaches the caller after the same wait.
    */
   async sendCode(input: OwnerRecoveryCode): Promise<void> {
     const answer = new Promise((resolve) => setTimeout(resolve, this.floorMs));
@@ -50,7 +49,10 @@ export class InstallationOwnerRecovery {
       }, input.signIn ? { label: "sign-in", link: origin ? (code) => signInLink(origin, input.attemptId, code) : undefined } : undefined);
       if (issued.deliveryStatus === "failed") console.warn("[Owner] Recovery code delivery failed");
     } catch (error) {
-      if (!(error instanceof OwnerAuthError) && !(error instanceof OwnerAttemptUnavailableError)) console.warn("[Owner] Recovery request failed:", exceptionDiagnostics(error));
+      if (!(error instanceof OwnerAuthError) && !(error instanceof OwnerAttemptUnavailableError)) {
+        await answer;
+        throw error;
+      }
     }
     await answer;
   }
