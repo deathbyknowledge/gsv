@@ -250,6 +250,15 @@ export class InstallationOwnerAuthStore {
     return receipt;
   }
 
+  /**
+   * The session secret for a verification no browser takes a session from, such as email sign-in to a Ship. Only
+   * Accounts can compute it, so the session it names is never presented; deriving it keeps a retried verification
+   * idempotent.
+   */
+  async unheldSessionSecret(challengeId: string, browserSecret: string): Promise<string> {
+    return this.mac("unheld-session", JSON.stringify([identifier(challengeId), secret(browserSecret)]));
+  }
+
   async session(sessionSecret: string, now = Date.now()): Promise<OwnerAuthSession | null> {
     const row = await this.db.prepare(`SELECT s.principal_id, e.email_normalized, s.authenticated_at, s.expires_at
       FROM owner_auth_sessions s JOIN principals p ON p.id = s.principal_id JOIN principal_email_credentials e ON e.principal_id = p.id

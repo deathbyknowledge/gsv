@@ -115,7 +115,7 @@ describe("native owner email HTTP", () => {
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(1);
     expect(f.delivered[0]).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
-      replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code",
+      replyTo: "hello@humansandmachin.es", subject: `${f.code()} is your Ship sign-in code`,
       text: `Enter this code in Ship to continue:\n\n${f.code()}\n\nThis code expires in 10 minutes. Don’t share it with anyone.\n\nIf you didn’t request this code, you can ignore this email.\n\nShip` });
     expect(f.delivered[0].html).toContain(`>${f.code()}</strong>`);
     expect(cookies.has(SESSION)).toBe(false);

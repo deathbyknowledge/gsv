@@ -3,8 +3,9 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { escapeHtml as html } from "./admin/page";
 import { hasExpectedOrigin, noStoreHeaders, readRequestBody } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
-import { InstallationOwnerStore, OwnerAttemptUnavailableError } from "./owner-store";
+import { InstallationOwnerStore } from "./owner-store";
 import { ownerPage, randomOwnerPageSecret as randomSecret } from "./owner-page";
+import { InstallationOwnerRecovery, RECOVERY_RESPONSE_FLOOR_MS } from "./owner-recovery";
 import { sha256Hex } from "./tokens";
 import { sendOwnerVerification } from "./owner-verification";
 import type { OwnerEmailSender } from "./owner-verification-email";
@@ -13,15 +14,17 @@ type Purpose = "login" | "link" | "recover";
 type ChallengeForm = { challengeId: string; purpose: Purpose; ownerAttemptId?: string; email: string };
 const SESSION_COOKIE = "__Host-gsv-owner-session";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** Longer than a normal send, so mailing the real owner takes no longer to answer than mailing nobody. */
-const RECOVERY_RESPONSE_FLOOR_MS = 1500;
 
 /** Accounts authenticates owners independently of any space or its messaging configuration. */
 export class InstallationOwnerEmailHttp {
+  private readonly recovery: InstallationOwnerRecovery;
+
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
     private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly gateway: InstallationRecoveryGatewayService, private readonly origin: string,
-    private readonly options: { existingIdentityProvider?: boolean; signup?: boolean; recoveryFloorMs?: number } = {}) {}
+    private readonly options: { existingIdentityProvider?: boolean; signup?: boolean; recoveryFloorMs?: number } = {}) {
+    this.recovery = new InstallationOwnerRecovery(auth, owners, mail, sender, options.recoveryFloorMs ?? RECOVERY_RESPONSE_FLOOR_MS);
+  }
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
@@ -87,24 +90,14 @@ export class InstallationOwnerEmailHttp {
     { cookies: [setCookie(browserCookie(challengeId), browserSecret, 600), setCookie(pendingCookie(challengeId), randomSecret(), 600)], nonce });
   }
 
-  /**
-   * The same answer whether or not this email owns this handle, and whatever limit or delivery
-   * problem applied: only the owner's inbox learns that the attempt was real.
-   */
+  /** A recovery attempt is its own code challenge; a form that names another one learns nothing more. */
   private async sendRecoveryCode(challenge: ChallengeForm, handle: string, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
-    const answer = new Promise((resolve) => setTimeout(resolve, this.options.recoveryFloorMs ?? RECOVERY_RESPONSE_FLOOR_MS));
-    try {
-      if (!resend) {
-        if (challenge.ownerAttemptId !== challenge.challengeId) throw new OwnerAttemptUnavailableError("Recovery attempt mismatch");
-        await this.owners.beginRecovery(handle.trim().toLowerCase(), challenge.challengeId);
-        await this.owners.startEmailAuthentication(challenge.challengeId, { browserSecretHash: await sha256Hex(browserSecret) });
-      }
-      const issued = await sendOwnerVerification(this.auth, this.mail, this.sender, { ...challenge, browserSecret, ip, resend });
-      if (issued.deliveryStatus === "failed") console.warn("[Owner] Recovery code delivery failed");
-    } catch (error) {
-      if (!(error instanceof OwnerAuthError) && !(error instanceof OwnerAttemptUnavailableError)) console.warn("[Owner] Recovery request failed:", exceptionDiagnostics(error));
+    if (challenge.ownerAttemptId === challenge.challengeId) {
+      await this.recovery.sendCode({ ship: { handle: handle.trim().toLowerCase() }, attemptId: challenge.challengeId, browserSecret,
+        email: challenge.email, ip, resend });
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, this.options.recoveryFloorMs ?? RECOVERY_RESPONSE_FLOOR_MS));
     }
-    await answer;
     return recoveryCodePage(challenge, "If this is the email for this Ship, we’ve sent it a six-digit code. It can take a minute to arrive and expires after ten minutes.");
   }
 
@@ -122,8 +115,16 @@ export class InstallationOwnerEmailHttp {
 
   private async verify(challenge: ChallengeForm, code: string, browserSecret: string, sessionSecret: string): Promise<Response> {
     try {
+      if (challenge.purpose === "recover") {
+        if (challenge.ownerAttemptId !== challenge.challengeId) return expired();
+        const recovered = await this.recovery.verify({ attemptId: challenge.challengeId, browserSecret, sessionSecret, code });
+        await this.gateway.authorizeRootRecovery(recovered.claim);
+        const location = new URL("/recover", recovered.canonicalOrigin);
+        location.hash = new URLSearchParams({ id: recovered.claim.attemptId, secret: browserSecret }).toString();
+        return redirect(location.href, [setCookie(SESSION_COOKIE, sessionSecret, cookieAge(recovered.sessionExpiresAt))]);
+      }
       const verified = await this.auth.verify({ ...challenge, code, browserSecret, sessionSecret });
-      const sessionCookie = setCookie(SESSION_COOKIE, sessionSecret, Math.max(0, Math.floor((verified.sessionExpiresAt - Date.now()) / 1000)));
+      const sessionCookie = setCookie(SESSION_COOKIE, sessionSecret, cookieAge(verified.sessionExpiresAt));
       if (challenge.purpose === "login") {
         // Only this person's own directory rows choose the destination; signing in here opens no Ship.
         const reachable = (await this.owners.spaces(verified.principalId)).filter((space) => space.state === "active");
@@ -133,18 +134,10 @@ export class InstallationOwnerEmailHttp {
       if (!receipt || !challenge.ownerAttemptId) return expired();
       const hash = await sha256Hex(browserSecret);
       const attempt = await this.owners.verifyPrincipal(challenge.ownerAttemptId, hash, verified.principalId);
-      if (challenge.purpose === "link") {
-        if (attempt.state !== "complete") await this.gateway.confirmOwnerLinkAuthorization({ installationId: attempt.installation_id, attemptId: attempt.id });
-        await this.owners.completeLink(attempt.id, hash);
-      }
+      if (attempt.state !== "complete") await this.gateway.confirmOwnerLinkAuthorization({ installationId: attempt.installation_id, attemptId: attempt.id });
+      await this.owners.completeLink(attempt.id, hash);
       const destination = await this.owners.destination(attempt);
-      const location = new URL(challenge.purpose === "link" ? "/?owner=linked" : "/recover", destination.canonicalOrigin);
-      if (challenge.purpose === "recover") {
-        await this.gateway.authorizeRootRecovery({ installationId: destination.installationId, attemptId: attempt.id,
-          purpose: "root-password-reset", secretHash: hash, expiresAt: attempt.expires_at });
-        location.hash = new URLSearchParams({ id: attempt.id, secret: browserSecret }).toString();
-      }
-      return redirect(location.href, [sessionCookie]);
+      return redirect(new URL("/?owner=linked", destination.canonicalOrigin).href, [sessionCookie]);
     } catch (error) {
       if (challenge.purpose === "recover") {
         if (!(error instanceof OwnerAuthError)) console.warn("[Owner] Recovery verification failed:", exceptionDiagnostics(error));
@@ -207,6 +200,7 @@ function cookie(request: Request, name: string): string | undefined {
   const value = request.headers.get("cookie")?.split(";").map(part => part.trim()).find(part => part.startsWith(`${name}=`))?.slice(name.length + 1);
   return value && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
 }
+function cookieAge(expiresAt: number): number { return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)); }
 function setCookie(name: string, value: string, age: number): string { return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${age}`; }
 function redirect(location: string, cookies: string[] = []): Response {
   const headers = noStoreHeaders({ location });

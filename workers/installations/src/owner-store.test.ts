@@ -150,11 +150,11 @@ describe("verified space ownership", () => {
 
   it("recovers only the current real owner and rejects an unrelated subject even with a verified email", async () => {
     const f = await fixture();
-    await expect(f.store.beginRecovery(f.other.handle, crypto.randomUUID())).rejects.toThrow("unavailable");
+    await expect(f.store.beginRecovery({ handle: f.other.handle }, crypto.randomUUID())).rejects.toThrow("unavailable");
     const link = await f.begin();
     const verified = await f.verify(link.id, link.input.secretHash);
     await f.store.completeLink(link.id, verified.browserSecretHash);
-    const recovery = await f.store.beginRecovery(f.installation.handle, crypto.randomUUID());
+    const recovery = await f.store.beginRecovery({ handle: f.installation.handle }, crypto.randomUUID());
     const browserSecretHash = await sha256Hex("recovery-browser");
     await f.store.startAuthentication(recovery.id, { browserSecretHash, verifier: "verifier", nonce: "nonce" });
     await expect(f.store.verify(recovery.id, browserSecretHash, { ...f.identity, subject: "unrelated", email: `${crypto.randomUUID()}@example.com` })).rejects.toThrow("does not own");
@@ -174,7 +174,7 @@ describe("verified space ownership", () => {
     }
     const restarted = new InstallationOwnerStore(env.INSTALLATIONS_DB, f.registry);
     for (const [index, { space, identity }] of owners.entries()) {
-      const attempt = await restarted.beginRecovery(space.handle, crypto.randomUUID());
+      const attempt = await restarted.beginRecovery({ handle: space.handle }, crypto.randomUUID());
       const browserSecretHash = await sha256Hex(crypto.randomUUID());
       await restarted.startAuthentication(attempt.id, { browserSecretHash, verifier: "verifier", nonce: "nonce" });
       await expect(restarted.verify(attempt.id, browserSecretHash, owners[1 - index].identity)).rejects.toThrow("does not own");
@@ -203,7 +203,7 @@ describe("verified space ownership", () => {
       const hostname = new URL(space.canonicalOrigin).hostname;
       const resolved = await f.accounts.resolveHostname(hostname);
       expect(resolved).toMatchObject({ found: true, installationId: space.installationId });
-      const attempt = await restarted.beginRecovery(space.handle, crypto.randomUUID());
+      const attempt = await restarted.beginRecovery({ handle: space.handle }, crypto.randomUUID());
       const browserSecretHash = await sha256Hex(crypto.randomUUID());
       await restarted.startAuthentication(attempt.id, { browserSecretHash, verifier: "verifier", nonce: "nonce" });
       const recovered = await restarted.verify(attempt.id, browserSecretHash, f.identity);

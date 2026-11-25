@@ -19,6 +19,8 @@ export type OwnerAttempt = {
   expires_at: number;
 };
 
+export type OwnerRecoveryShip = { handle: string } | { installationId: string };
+
 /** The expected answer when a handle has no linked owner or an attempt no longer applies. */
 export class OwnerAttemptUnavailableError extends Error {}
 
@@ -40,15 +42,17 @@ export class InstallationOwnerStore {
     return attempt;
   }
 
-  async beginRecovery(handle: string, id: string, now = Date.now()): Promise<OwnerAttempt> {
+  /** A person names the Ship by its handle; the Kernel names its own installation. */
+  async beginRecovery(ship: OwnerRecoveryShip, id: string, now = Date.now()): Promise<OwnerAttempt> {
+    const [column, value] = "handle" in ship ? ["handle", ship.handle] as const : ["id", ship.installationId] as const;
     await this.db.prepare(`INSERT INTO installation_owner_attempts
       (id, installation_id, purpose, expected_owner_id, state, created_at, expires_at)
       SELECT ?, id, 'recover', owner_principal_id, 'pending', ?, ? FROM installations
-      WHERE handle = ? AND state = 'active' AND owner_principal_id != ? ON CONFLICT(id) DO NOTHING`).bind(
-      id, now, now + OWNER_ATTEMPT_TTL_MS, handle, this.registryPrincipalId).run();
+      WHERE ${column} = ? AND state = 'active' AND owner_principal_id != ? ON CONFLICT(id) DO NOTHING`).bind(
+      id, now, now + OWNER_ATTEMPT_TTL_MS, value, this.registryPrincipalId).run();
     const attempt = await this.get(id);
-    const valid = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND handle = ? AND state = 'active'
-      AND owner_principal_id = ?`).bind(attempt?.installation_id ?? "", handle, attempt?.expected_owner_id ?? "").first();
+    const valid = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND ${column} = ? AND state = 'active'
+      AND owner_principal_id = ?`).bind(attempt?.installation_id ?? "", value, attempt?.expected_owner_id ?? "").first();
     if (!attempt || attempt.purpose !== "recover" || attempt.expires_at <= now || !valid) throw new OwnerAttemptUnavailableError("Owner recovery is unavailable");
     return attempt;
   }
@@ -157,6 +161,12 @@ export class InstallationOwnerStore {
     ]);
     const current = await this.get(id);
     if (current?.state !== "complete" || current.browser_secret_hash !== browserSecretHash) throw new Error("Owner linking is unavailable");
+  }
+
+  async canonicalOrigin(installationId: string): Promise<string | null> {
+    const row = await this.db.prepare("SELECT canonical_origin FROM installations WHERE id = ? AND state = 'active'")
+      .bind(installationId).first<{ canonical_origin: string }>();
+    return row?.canonical_origin ?? null;
   }
 
   async destination(attempt: OwnerAttempt): Promise<{ canonicalOrigin: string; installationId: string }> {
