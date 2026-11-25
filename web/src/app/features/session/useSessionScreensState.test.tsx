@@ -57,7 +57,7 @@ async function setupScreen(path = "/", preceding: HistoryEntry[] = [{ url: "http
       sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
     },
     snapshot: () => snapshot, subscribe: () => () => {},
-    setup, login, lock: async () => {}, start: async () => {},
+    setup, login, adoptSession: vi.fn(), lock: async () => {}, start: async () => {},
   };
   let state!: ReturnType<typeof useSessionScreensState>;
   function Harness() { state = useSessionScreensState({ session, snapshot }); return null; }

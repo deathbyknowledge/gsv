@@ -1,16 +1,16 @@
 import { InstallationOwnerAuthStore, type IssuedOwnerCode, type OwnerCodeRequest } from "./owner-auth-store";
-import { ownerVerificationEmail, type OwnerEmailSender } from "./owner-verification-email";
+import { ownerVerificationEmail, type OwnerEmailPresentation, type OwnerEmailSender } from "./owner-verification-email";
 
 /** Both browser and native sign-in share the durable delivery lease and receipt. */
 export async function sendOwnerVerification(auth: InstallationOwnerAuthStore, mail: SendEmail, sender: OwnerEmailSender,
-  input: OwnerCodeRequest): Promise<Pick<IssuedOwnerCode, "challengeId" | "expiresAt" | "retryAt" | "deliveryStatus"> & { attemptedDelivery: boolean }> {
+  input: OwnerCodeRequest, presentation?: OwnerEmailPresentation): Promise<Pick<IssuedOwnerCode, "challengeId" | "expiresAt" | "retryAt" | "deliveryStatus"> & { attemptedDelivery: boolean }> {
   const issued = await auth.issue(input);
   let deliveryStatus = issued.deliveryStatus;
   if (issued.sendRequired && issued.deliveryId) {
     let sent = false;
     try {
       const message: EmailMessageBuilder = { from: { email: sender.from, name: "Ship" }, to: issued.email,
-        ...ownerVerificationEmail(input.purpose, issued.code, issued.expiresAt) };
+        ...ownerVerificationEmail(input.purpose, issued.code, issued.expiresAt, presentation) };
       if (sender.replyTo) message.replyTo = sender.replyTo;
       await mail.send(message);
       sent = true;

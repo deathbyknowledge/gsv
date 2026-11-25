@@ -14,6 +14,8 @@ type SetupScreenProps = {
   space: string;
   /** The owner was sent here straight from signup. */
   arrivedFromSignup?: boolean;
+  /** The owner signs in by email, so setup asks for no password. */
+  emailSignIn?: boolean;
   step: "credentials" | "consent";
   /** False when signup already collected the terms agreement. */
   consentRequired: boolean;
@@ -32,7 +34,7 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, emailSignIn = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const t = useT();
   const consentId = useId();
   const [noticeDismissed, setNoticeDismissed] = useState(false);
@@ -49,10 +51,10 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
         <h1 id="setup-heading" class={credentials ? "gsv-setup-greeting" : undefined} data-setup-heading tabIndex={-1}>{credentials
           ? rich(t("session.setup.welcome"), { space: <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span> })
           : t("session.setup.beforeYouBegin")}</h1>
-        {credentials ? <p>{t("session.setup.choosePassword")}</p> : null}
+        {credentials ? <p>{t(emailSignIn ? "session.setup.emailSignIn" : "session.setup.choosePassword")}</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
-        {credentials ? <>
+        {credentials ? emailSignIn ? null : <>
           <input type="hidden" name="username" autoComplete="username" value={space} />
           <TextInput label={t("session.setup.password")} type="password" value={password} disabled={busy} clearable={false}
             status={fieldErrors.password ? "error" : "none"} message={fieldErrors.password}

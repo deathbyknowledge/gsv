@@ -125,6 +125,14 @@ records nothing. The latest cause is retained only in the Kernel's private
 `managed_setup_failure` KV record, bounded to 8,192 characters for operator
 inspection; exception text never enters the response or telemetry.
 
+Email sign-in follows the same rule. When starting or redeeming a sign-in fails
+for a reason other than a refused code, Gateway emits `account.signin.failed`
+with a diagnostic ID, the call (`start` or `redeem`) and an allowed error type,
+and the answer carries the same ID. The latest cause is kept only in the
+Kernel's private `email_sign_in_failure` KV record, bounded to 8,192
+characters. A refused code, or a Ship without email sign-in, records nothing,
+and neither the record nor the event includes the email.
+
 ripgit answers an error that escapes its Worker or a Repository object with
 `500` and a JSON body that names the failure kind, a fresh diagnostic ID and the
 cause, bounded to 1,024 bytes. It logs the whole cause as an error, and the same

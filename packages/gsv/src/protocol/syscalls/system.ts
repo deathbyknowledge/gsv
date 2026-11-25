@@ -102,6 +102,29 @@ export type UserPermissions = {
  */
 export type AccountKind = "human" | "agent";
 
+/**
+ * One email sign-in attempt for the personal account. The client generates the UUID and the 64-hex secret and keeps
+ * them until the attempt ends; Accounts sends a code to the owner's email only when `email` is that owner's address.
+ */
+export type AccountSignInStartArgs = {
+  id: string;
+  secret: string;
+  email: string;
+  resend?: boolean;
+};
+
+/**
+ * Spends a verified sign-in code on a session for the personal account. `credential` is a `gsv_human_` token the
+ * client generates and keeps before calling, so an identical retry after a lost reply signs in with the same token.
+ */
+export type AccountSignInRedeemArgs = {
+  id: string;
+  secret: string;
+  code: string;
+  credential: string;
+  label?: string;
+};
+
 export type AccountCreateArgs = {
   kind: "agent";
   /** `^[a-z_][a-z0-9_-]{0,31}$`, globally unique across users and groups. */
@@ -146,7 +169,10 @@ export type AccountListResult = {
 export type SysSetupArgs = {
   /** Existing clients may supply a local name; otherwise the Kernel derives it from the space. */
   username?: string;
-  password: string;
+  /** Omitted when setup advertises `email-sign-in`: the owner signs in by email and may set a password later. */
+  password?: string;
+  /** A `gsv_human_` session credential the client keeps before calling, required when `password` is omitted. */
+  credential?: string;
   onboardingToken?: string;
   rootPassword?: string;
   /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
@@ -246,6 +272,8 @@ export type SysSetupResult = {
   rootLocked: boolean;
   bootstrap?: SysBootstrapResult;
   machineToken?: SysIssuedToken & { kind: "machine"; peerId: string };
+  /** The session `credential` opened, for setup without a password. */
+  session?: { tokenId: string; expiresAt: number };
 };
 
 export type SysBootstrapArgs = Record<string, never>;

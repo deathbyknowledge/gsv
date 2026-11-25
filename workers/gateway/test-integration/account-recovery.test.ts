@@ -74,6 +74,6 @@ describe("clean-space owner root recovery", () => {
     await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "inst_integration_default", webSockets: "hibernate" });
     expect(await oneShot.requestOnce(url, "account.recovery.redeem", redemption)).toEqual({ username: "person" });
     await expect(oneShot.requestOnce(url, "account.recovery.redeem", { ...redemption, proof: crypto.randomUUID() + crypto.randomUUID() })).rejects.toMatchObject({ code: 400 });
-    await expect(oneShot.requestOnce(url, "account.recovery.options", {})).resolves.toEqual({ emailUrl: "https://accounts.example/owner/recover?handle=default" });
+    await expect(oneShot.requestOnce(url, "account.recovery.options", {})).resolves.toEqual({ emailUrl: "https://accounts.example/owner/recover?handle=default", emailSignIn: true });
   });
 });

@@ -132,7 +132,17 @@
 .gsv-auth-link:hover { color: var(--accent-bright); text-decoration: underline; }
 .gsv-auth-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .gsv-login-recovery-link { align-self: flex-end; }
-.gsv-recovery-account { padding: 0; border: 0; background: none; cursor: pointer; text-align: left; }
+.gsv-recovery-account, button.gsv-auth-link { padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; text-align: left; }
+button.gsv-auth-link:disabled { opacity: .45; cursor: default; text-decoration: none; }
+.gsv-login-links { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; }
+.gsv-login-links .gsv-login-recovery-link { margin-left: auto; }
+.gsv-login-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
 .gsv-recovery-body {
   display: flex;
   flex-direction: column;

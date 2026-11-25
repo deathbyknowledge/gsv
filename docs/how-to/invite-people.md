@@ -9,7 +9,8 @@ An operator can host separate Ships for a [whole team](/how-to/organisations).
 
 Open your operator's signup page or choose **Create your Ship** in Desktop.
 Choose a handle, enter your email and agree to the terms. Verify your email, then
-set your password. Registration needs no invite code when the operator enables
+activate your Ship; you sign in with that email, so there is no password to choose.
+Registration needs no invite code when the operator enables
 it. One verified email can create one Ship. Sign in with the same email to reopen it.
 
 A friend's invitation link names them on the signup page. When your Ship opens,
@@ -19,9 +20,17 @@ If activation is interrupted, sign in with the same email and continue activatio
 
 ## Sign in
 
-Open your Ship and enter your password. Activation derives the internal account name
-from your handle. Existing Ships keep their account identity, home directory,
-credentials and connections.
+Open your Ship, enter the email you signed up with, then the six-digit code we send
+to it. The **Sign in** button in that email works too, in the browser where you asked
+for the code. The page only says a code is on its way "if this is this Ship's email".
+A sign-in lasts 30 days on that device. The command line signs in the same way:
+`gsv login` asks for your email, then the code.
+
+To sign in with a password instead, add one in **Settings → Account**, then choose
+**Sign in with a password**. Ships set up by an operator without an owner email, and
+the administrator, always sign in with a password. Activation derives the internal
+account name from your handle. Existing Ships keep their account identity, home
+directory, credentials and connections.
 
 ## Recover personal access
 
@@ -40,7 +49,8 @@ A reset revokes your sessions and messenger connections; sign in again and
 reconnect those messengers. Your data, account identity and running work remain.
 If your administrator password is still the one you chose at signup, it changes to
 the new password too, so the old one stops working everywhere. An administrator
-password you set separately stays as it is.
+password you set separately stays as it is. A Ship activated without a password has
+no administrator password until you reset it this way.
 
 The administrator sign-in has broader permissions. Ordinary sign-in to your
 account does not grant administrator access. The emailed link can reset the

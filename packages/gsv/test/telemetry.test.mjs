@@ -59,6 +59,17 @@ describe("telemetry contract", () => {
       assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, [field]: "private" } } }));
     }
   });
+  it("reports unexpected sign-in failures by reference, without the cause or the email", () => {
+    const event = {
+      stream: "operational", name: "account.signin.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", call: "redeem", errorType: "TypeError" },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const extra of [{ cause: "private" }, { email: "private@example.com" }, { call: "private" }, { errorType: "private-provider-value" }]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
+    }
+  });
   it("distinguishes an aborted delegation from a failed delegation", () => {
     for (const outcome of ["aborted", "failed"]) {
       const record = createTelemetryRecord({

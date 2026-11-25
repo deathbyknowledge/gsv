@@ -2164,7 +2164,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. A human owner's sign-in starts their pending welcome in the background; later sign-ins recover its wake without reopening handled work. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner first signs in or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner first signs in or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. Where setup advertises the `email-sign-in` feature (a managed Ship whose owner verified their email at signup), `password` may be omitted for a `gsv_human_` `credential` the client keeps: the person and root get no password, the credential becomes a 30-day session returned as `session`, and a retry proves itself with that session instead of a password. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual` and registers it as a public system repository. The gateway's bundled skills are served read-only at `/sys/skills.d`, not copied into homes. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Values are coerced with `String(value)`. |
@@ -2191,7 +2191,7 @@ Runtime behavior:
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. A link made through a shared messenger also carries the name and handle that messenger reported and when it connected. |
 
-`sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
+`sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch, as are the account recovery and email sign-in calls below. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
 Pairing creation uses a client-persisted UUID and 32 random bytes encoded as 64
 lowercase hex characters. The receiving client persists a separate random
@@ -2266,8 +2266,8 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username?: string; password: string; rootPassword?: string; timezone?: string; language?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[]; deployment?: PublicDeploymentConfig }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
+    args: { username?: string; password?: string; credential?: string; rootPassword?: string; timezone?: string; language?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    result: { server: { version: string; release: string; features?: string[]; deployment?: PublicDeploymentConfig }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null }; session?: { tokenId: string; expiresAt: number } };
   };
 
   "sys.bootstrap": {
@@ -2395,14 +2395,20 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
-  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string; emailSignIn?: true } };
   "account.recovery.redeem": {
     args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
     result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
+  "account.signin.start": { args: { id: string; secret: string; email: string; resend?: boolean }; result: { accepted: true } };
+  "account.signin.redeem": {
+    args: { id: string; secret: string; code: string; credential: string; label?: string };
+    result: { username: string; tokenId: string; expiresAt: number };
+  };
   "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };
+  "account.password.status": { args: Record<string, never>; result: { set: boolean } };
 };
 ```
 
@@ -2433,8 +2439,26 @@ proof, password or account cannot reuse a consumed claim. Secrets are excluded f
 the ledger.
 
 `account.recovery.options` is available before connection authentication and
-returns the operator's owner recovery page for this Ship, when one is configured.
-The link is navigation only and says nothing about who owns the Ship.
+returns the operator's owner recovery page for this Ship, when one is configured,
+and `emailSignIn: true` when the Ship also takes email sign-in. Neither says
+anything about who owns the Ship.
+
+Email sign-in opens a session for the personal account from a code sent to the
+owner's verified email. `account.signin.start` and `account.signin.redeem` are
+available before connection authentication. The client generates a UUID, a
+64-hex secret and a `gsv_human_` session credential and keeps them before it
+calls. `start` answers `accepted` whatever email it is given; Accounts mails a
+six-digit code, valid for ten minutes, only when the email is the Ship's owner,
+under the same limits as owner recovery, and `resend: true` asks again for the
+same attempt. `redeem` asks Accounts to verify the code for this installation,
+records the resulting one-time owner claim, and spends it on a 30-day human
+session whose token is the client's credential. The claim fences the personal
+account's credential generation, so a password reset or revocation since the
+code was verified wins. An identical retry returns the same session without
+asking Accounts again; another credential cannot reuse the claim. A refused
+code answers with `details.signIn`: `invalid`, `expired`, `locked` (429) or
+`unavailable`. Signing in revokes nothing. Secrets and credentials are excluded
+from the ledger.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
@@ -2452,11 +2476,16 @@ Redemption rechecks the exact link generation and account credential epoch, then
 atomically replaces the member password, revokes existing credentials and messenger
 links, and commits the receipt. Identical retries cannot overwrite later credentials.
 
-`account.password.set` requires a root human session with credential provenance;
-a Process acting as root cannot invoke it. It resets the sole personal account.
+`account.password.set` from a root human session with credential provenance
+resets the sole personal account; a Process acting as root cannot invoke it.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. Contacts connect separate spaces.
+Processes. Contacts connect separate spaces. From the personal account's own
+credential session, it sets that account's first password when it has none, as
+after setup without a password; it revokes nothing and leaves root unchanged.
+An account that already has a password is reset by owner email recovery instead.
+`account.password.status` tells a signed-in person whether their own account has
+a password.
 
 ## AI: `ai.*`
 

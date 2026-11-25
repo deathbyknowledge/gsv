@@ -21,18 +21,32 @@ type ResolvedManagedInstallation = Extract<
 export type ManagedInstallationLifecycleBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService;
   GSV_OWNER_SIGNUP_URL?: string;
+  INSTALLATION_OWNERSHIP?: unknown;
 };
 
-/** The optional `sys.setup` arguments this Ship accepts. */
-export function setupFeatures(): string[] {
-  return ["language"];
+/** The operator runs owner email for this deployment, and the Kernel can ask Accounts for its owner's codes. */
+export function emailSignInConfigured(bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "INSTALLATION_OWNERSHIP">): boolean {
+  return Boolean(bindings.GSV_OWNER_SIGNUP_URL && bindings.INSTALLATION_OWNERSHIP);
+}
+
+/** Setup needs no password when the owner verified their email at signup and can sign in with it. */
+export function setupTakesEmailSignIn(
+  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "INSTALLATION_OWNERSHIP">,
+  installation: ResolvedManagedInstallation,
+): boolean {
+  return Boolean(installation.ownerSetupRecovery) && emailSignInConfigured(bindings);
+}
+
+/** The optional `sys.setup` arguments this Ship accepts; `email-sign-in` means `password` may be omitted. */
+export function setupFeatures(emailSignIn = false): string[] {
+  return emailSignIn ? ["language", "email-sign-in"] : ["language"];
 }
 
 export function setupRecoveryDetails(
-  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL">,
+  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "INSTALLATION_OWNERSHIP">,
   installation: ResolvedManagedInstallation,
 ): SetupRecoveryDetails {
-  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures() };
+  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures(setupTakesEmailSignIn(bindings, installation)) };
   if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
     details.setupUrl = bindings.GSV_OWNER_SIGNUP_URL;
   }

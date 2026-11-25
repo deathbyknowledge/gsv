@@ -49,7 +49,7 @@ it.each(["https://accounts.example.com", "https://owners.example.com", "https://
       async send(message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> {
         if (!("subject" in message)) throw new Error("Expected composed mail");
         expect(message).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
-          replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code" });
+          replyTo: "hello@humansandmachin.es", subject: expect.stringMatching(/^\d{6} is your Ship sign-in code$/) });
         code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
         return { messageId: crypto.randomUUID() };
       },

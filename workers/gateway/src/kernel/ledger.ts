@@ -179,6 +179,7 @@ export function ledgerArgsOf(frame: RequestFrame): JsonLike {
   // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
   return (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
     || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
+    || frame.call === "account.signin.start" || frame.call === "account.signin.redeem"
     ? { id: frame.args.id }
     : frame.call === "account.password.set" ? { uid: frame.args.uid }
     : frame.call === "sys.pair.create"

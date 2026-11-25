@@ -33,7 +33,7 @@ async function ownerFixture(purpose: "link" | "recover") {
   const proof = await sha256Hex(browserSecret());
   const now = f.now + OWNER_CODE_RESEND_MS;
   if (purpose === "link") await owner.beginLink({ attemptId: id, installationId: reserved.installationId, secretHash: proof }, now);
-  else await owner.beginRecovery(reserved.handle, id, now);
+  else await owner.beginRecovery({ handle: reserved.handle }, id, now);
   await owner.startEmailAuthentication(id, { browserSecretHash: await sha256Hex(f.input.browserSecret), linkSecretHash: proof }, now);
   const input = { ...f.input, challengeId: crypto.randomUUID(), purpose, ownerAttemptId: id };
   return { ...f, now, input, owner, reserved, registryId };
@@ -184,7 +184,7 @@ describe("native owner email authentication", () => {
     const attempt = "20000000-0000-4000-8000-000000000001";
     const recover = { ...input, challengeId: attempt, purpose: "recover" as const, ownerAttemptId: attempt };
     const start = async (now: number) => {
-      await owners.beginRecovery(space.handle, attempt, now);
+      await owners.beginRecovery({ handle: space.handle }, attempt, now);
       await owners.startEmailAuthentication(attempt, { browserSecretHash: await sha256Hex(input.browserSecret) }, now);
     };
     const now = f.now + OWNER_CODE_RESEND_MS;
@@ -341,7 +341,7 @@ describe("native owner email authentication", () => {
     const other = await accounts.reserveInstallation({ principalId: f.receipt.principalId,
       operationId: crypto.randomUUID(), handle: `other-${crypto.randomUUID().slice(0, 8)}` });
     await db.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(other.installationId).run();
-    const otherAttempt = await f.owner.beginRecovery(other.handle, crypto.randomUUID(), f.now);
+    const otherAttempt = await f.owner.beginRecovery({ handle: other.handle }, crypto.randomUUID(), f.now);
     const otherBrowser = browserSecret();
     await f.owner.startEmailAuthentication(otherAttempt.id, { browserSecretHash: await sha256Hex(otherBrowser) }, f.now);
     const otherInput = { ...f.input, challengeId: crypto.randomUUID(), browserSecret: otherBrowser,

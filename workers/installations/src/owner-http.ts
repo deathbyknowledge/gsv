@@ -34,7 +34,7 @@ export class InstallationOwnerHttp {
         const form = new URLSearchParams(new TextDecoder().decode(await readRequestBody(request, 4096)));
         const id = path === "/owner/link" ? form.get("id") ?? "" : crypto.randomUUID();
         if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid attempt");
-        if (path === "/owner/recover") await this.store.beginRecovery(form.get("handle") ?? "", id);
+        if (path === "/owner/recover") await this.store.beginRecovery({ handle: form.get("handle") ?? "" }, id);
         const browserSecret = oauth.generateRandomState();
         const attempt = await this.store.startAuthentication(id, {
           linkSecretHash: await sha256Hex(form.get("secret") ?? ""), browserSecretHash: await sha256Hex(browserSecret),

@@ -123,6 +123,7 @@ export function integrationGatewayConfig(options: {
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
+      ...(options.managedServices ? [] : [{ binding: "INSTALLATION_OWNERSHIP", service: DEPENDENCY_WORKER, entrypoint: "IntegrationOwnerSignIn" }]),
       { binding: "REQUEST_REPORTS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationRequestReports" },
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };

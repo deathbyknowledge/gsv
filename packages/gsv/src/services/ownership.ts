@@ -5,11 +5,44 @@ export type BeginInstallationOwnerLinkInput = {
   secretHash: string;
 };
 
+/**
+ * An email sign-in attempt the Kernel forwards for its own installation. `secret` is the client's attempt secret;
+ * `source` is an opaque per-client rate-limit key.
+ */
+export type OwnerSignInCodeInput = {
+  installationId: string;
+  attemptId: string;
+  secret: string;
+  email: string;
+  source: string;
+  resend?: boolean;
+  /** The address the sign-in started on; the email's button opens it when it is one of the Ship's active hostnames. */
+  origin?: string;
+};
+
+export type OwnerSignInVerifyInput = {
+  installationId: string;
+  attemptId: string;
+  secret: string;
+  code: string;
+};
+
+export type OwnerSignInVerification =
+  | { authorized: AuthorizeRootRecoveryInput }
+  | { failed: "invalid" | "expired" | "locked" | "unavailable" };
+
 export interface InstallationOwnershipService {
   beginInstallationOwnerLink(input: BeginInstallationOwnerLinkInput): Promise<{ url: string; expiresAt: number }>;
+  /** Mails a sign-in code when `email` is the owner's; the answer is the same either way. */
+  sendOwnerSignInCode(input: OwnerSignInCodeInput): Promise<{ accepted: true }>;
+  /** Verifies the code and returns the one-time claim the Kernel records and then spends on a session. */
+  verifyOwnerSignIn(input: OwnerSignInVerifyInput): Promise<OwnerSignInVerification>;
 }
 
-/** The verified owner's one-time password reset. The `root-password-reset` wire name predates one-person Ships: the Kernel lets its receiver spend the claim on either account. */
+/**
+ * The verified owner's one-time claim. The `root-password-reset` wire name predates one-person Ships and email sign-in:
+ * the Kernel lets its receiver spend the claim on a new password for either account or on a personal session.
+ */
 export type AuthorizeRootRecoveryInput = {
   installationId: string;
   attemptId: string;

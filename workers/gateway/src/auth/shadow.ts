@@ -82,6 +82,16 @@ export function isLocked(entry: Pick<ShadowEntry, "hash">): boolean {
   return entry.hash === "" || entry.hash === "!" || entry.hash === "*";
 }
 
+/**
+ * A person who signs in by email and has not chosen a password. The account is not locked, so it stays a person's
+ * account, and no password verifies against it.
+ */
+export const UNSET_PASSWORD_HASH = "$unset$";
+
+export function isPasswordUnset(entry: Pick<ShadowEntry, "hash">): boolean {
+  return entry.hash === UNSET_PASSWORD_HASH;
+}
+
 export function makeShadowEntry(
   username: string,
   hash: string,

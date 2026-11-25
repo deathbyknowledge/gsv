@@ -44,6 +44,19 @@ chosen account's credentials change. Accounts authorizes; only the Kernel change
 credentials. An owner session alone is never enough. Resetting one account doesn't
 change the other, so root keeps its own password after a personal reset.
 
+Email sign-in to the personal account rests on the same verification. The client
+makes the attempt's secret and a session credential and keeps both. Accounts mails
+a code only to the space's verified owner and turns a correct one into a one-time
+claim for that attempt; the Kernel spends the claim on a single 30-day session
+whose token is the client's credential. A lost answer is retried with the same
+request and gets the same session; another credential can't spend the claim, and
+the claim fails once the personal credentials change. Accounts never sees the
+session credential. The email's button opens the address the sign-in started on
+when it is one of the space's active hostnames, since only that browser holds the
+attempt's secret, and the canonical address otherwise. A space activated this way has no password for either account:
+a first personal password needs a signed-in person, not a Process, and leaves root
+without one, and root gets a password only through administrator recovery.
+
 `sys.connect` is the WebSocket login syscall. The request identifies the peer
 program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:

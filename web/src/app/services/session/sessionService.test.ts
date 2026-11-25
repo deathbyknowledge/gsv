@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { SysSetupResult } from "@humansandmachines/gsv/protocol";
+import { SESSION_CREDENTIAL_PATTERN, type SysSetupResult } from "@humansandmachines/gsv/protocol";
 import { createSessionService, type SessionClient } from "./sessionService";
 
 type StatusListener = (status: GsvClientStatus) => void;
@@ -86,8 +86,9 @@ describe("account setup", () => {
     const discard = vi.fn();
     const failure = { code: 401, message: "Installation setup link is invalid or expired",
       details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
-    // Setup, then the probe that finds the Ship waiting for recovery.
-    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
+    // The setup link's probe, setup, then the probe that finds the Ship waiting for recovery.
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details: { setupRecovery: true } })
+      .mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
     const service = createSessionService(client, { onboarding: { token: onboardingToken, discard, complete } });
     await service.start();
     await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
@@ -102,7 +103,8 @@ describe("account setup", () => {
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
     const client = createSetupClient();
     const failure = { code: 401, details: { setupRecovery: true } };
-    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
+    // The setup link's probe finds an active Ship, then setup is refused.
+    client.requestOnce.mockRejectedValueOnce({ code: 401 }).mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
     const service = createSessionService(client);
     await service.start();
     expect(service.snapshot().phase).toBe("setup");
@@ -201,7 +203,7 @@ describe("account setup", () => {
   ])("negotiates the initial language with a $name Gateway", async ({ code, details, supported }) => {
     installWindow();
     const client = createSetupClient();
-    // Setup's probe for the arguments the Ship accepts.
+    // The setup link's probe for the arguments the Ship accepts, which setup reuses.
     client.requestOnce.mockRejectedValueOnce({ code, details });
     const complete = vi.fn();
     const discard = vi.fn();
@@ -216,6 +218,48 @@ describe("account setup", () => {
     expect(service.snapshot().phase).toBe("ready");
     expect(complete).toHaveBeenCalledOnce();
     expect(discard).not.toHaveBeenCalled();
+    service.dispose?.();
+  });
+
+  it("sets up without a password where the owner signs in by email, retrying with the same session credential", async () => {
+    installWindow();
+    const client = createSetupClient();
+    // The setup link's probe, a lost answer, then the Ship's answer with the session it opened.
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details: { setupRecovery: true, setupFeatures: ["language", "email-sign-in"] } })
+      .mockRejectedValueOnce(new Error("Connection interrupted"))
+      .mockResolvedValueOnce({ ...setupResult, session: { tokenId: "token-1", expiresAt: 2_000 } });
+    const complete = vi.fn();
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete, discard: vi.fn() } });
+    await service.start();
+    expect(service.snapshot()).toMatchObject({ phase: "setup", setupEmailSignIn: true });
+    await expect(service.setup({ timezone: "Europe/Madrid" })).rejects.toThrow("Connection interrupted");
+    // The screen keeps setting up without a password, so its retry repeats the same request.
+    expect(service.snapshot()).toMatchObject({ phase: "setup", setupEmailSignIn: true });
+    await service.setup({ timezone: "Europe/Madrid" });
+    const [lost, answered] = client.requestOnce.mock.calls.filter(([, call]) => call === "sys.setup").map(([, , args]) => args);
+    expect(answered).toEqual(lost);
+    expect(answered).toEqual({ timezone: "Europe/Madrid", onboardingToken, credential: expect.stringMatching(SESSION_CREDENTIAL_PATTERN) });
+    expect(client.connect).toHaveBeenCalledWith(expect.objectContaining({ username: "alice", token: answered?.credential }));
+    expect(service.snapshot().phase).toBe("ready");
+    expect(complete).toHaveBeenCalledOnce();
+    expect(window.localStorage.getItem("gsv.ui.setup-credential.v1")).toBeNull();
+    service.dispose?.();
+  });
+
+  it("retries setup with the same session credential when this browser cannot save it", async () => {
+    installWindow();
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details: { setupRecovery: true, setupFeatures: ["language", "email-sign-in"] } })
+      .mockRejectedValueOnce(new Error("Connection interrupted"))
+      .mockResolvedValueOnce({ ...setupResult, session: { tokenId: "token-1", expiresAt: 2_000 } });
+    const full = { getItem: () => null, setItem: () => { throw new DOMException("Storage is full", "QuotaExceededError"); }, removeItem: () => {} };
+    const service = createSessionService(client, { storage: full, onboarding: { token: onboardingToken, complete: vi.fn(), discard: vi.fn() } });
+    await service.start();
+    await expect(service.setup({ timezone: "Europe/Madrid" })).rejects.toThrow("Connection interrupted");
+    await service.setup({ timezone: "Europe/Madrid" });
+    const [lost, answered] = client.requestOnce.mock.calls.filter(([, call]) => call === "sys.setup").map(([, , args]) => args);
+    expect(answered).toEqual(lost);
+    expect(service.snapshot().phase).toBe("ready");
     service.dispose?.();
   });
 

@@ -1,4 +1,6 @@
-import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
+import { hashPassword, isLocked, makeShadowEntry, UNSET_PASSWORD_HASH } from "../../auth/shadow";
+import { SESSION_CREDENTIAL_PATTERN } from "@humansandmachines/gsv/protocol/pairing";
+import { EMAIL_SIGN_IN_SESSION_MS } from "../account-recovery";
 import type { KernelContext } from "../context";
 import { kernelPeerContext } from "../peer";
 import { SERVER_RELEASE } from "../../version";
@@ -39,9 +41,12 @@ export class SetupStepError extends Error {
   }
 }
 
-type SetupIdentity = {
-  username: string;
-  password: string;
+/** A person sets up with a password, or, where their Ship takes email sign-in, with the session they sign in with. */
+type SetupIdentity = { username: string } & ({ password: string; credential?: never } | { password?: never; credential: string });
+
+export type SetupOptions = {
+  /** The owner verified their email at signup and this Ship takes email sign-in, so setup needs no password. */
+  emailSignIn?: boolean;
 };
 
 type SetupMachineConfig = {
@@ -123,7 +128,7 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
   }
 }
 
-function parseSetupIdentity(args: SysSetupArgs, ctx: KernelContext): SetupIdentity {
+function parseSetupIdentity(args: SysSetupArgs, ctx: KernelContext, options: SetupOptions = {}): SetupIdentity {
   const handle = ctx.installationIdentity?.handle ?? "owner";
   const defaultUsername = USERNAME_RE.test(handle) && !["root", "users", "drivers", "services", "ship", "crew"].includes(handle) ? handle : "owner";
   const requestedUsername = args.username ?? ctx.auth.getHumanAccount()?.username ?? defaultUsername;
@@ -137,7 +142,13 @@ function parseSetupIdentity(args: SysSetupArgs, ctx: KernelContext): SetupIdenti
   }
   const username = requestedUsername;
 
-  const password = readRequiredString(args.password, "password");
+  if (args.password === undefined && args.credential !== undefined) {
+    if (!options.emailSignIn) throw new Error("password is required");
+    if (!SESSION_CREDENTIAL_PATTERN.test(args.credential)) throw new Error("credential is invalid");
+    return { username, credential: args.credential };
+  }
+  if (args.credential !== undefined) throw new Error("credential is only for setup without a password");
+  const password = readRequiredString(args.password ?? "", "password");
   if (password.length < 8) {
     throw new Error("password must be at least 8 characters");
   }
@@ -268,6 +279,7 @@ function setupServerBuild(
 export async function handleSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
+  options: SetupOptions = {},
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
   const requestedUsername = args.username?.trim()
@@ -280,7 +292,8 @@ export async function handleSysSetup(
     throw new Error("System already initialized");
   }
 
-  const { username, password } = parseSetupIdentity(args, ctx);
+  const identity = parseSetupIdentity(args, ctx, options);
+  const { username } = identity;
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
   const ai = resolveSetupAiConfig(
@@ -331,6 +344,7 @@ export async function handleSysSetup(
   });
   let bootstrap: SysSetupResult["bootstrap"];
   let machineToken: SysSetupResult["machineToken"];
+  let session: SysSetupResult["session"];
 
   try {
     if (ctx.env.RIPGIT) {
@@ -354,7 +368,7 @@ export async function handleSysSetup(
         shell: "/bin/init",
       });
 
-      const hashedPassword = await hashPassword(password);
+      const hashedPassword = identity.password === undefined ? UNSET_PASSWORD_HASH : await hashPassword(identity.password);
       auth.setShadow(makeShadowEntry(username, hashedPassword));
 
       // Private primary group (gid = uid) owned by this user.
@@ -374,6 +388,11 @@ export async function handleSysSetup(
         await auth.setPassword("root", hashedPassword);
       }
 
+      if (identity.credential !== undefined) {
+        const issued = auth.storePreparedToken(await auth.prepareToken({ uid, kind: "human", label: "gsv-ui-session",
+          expiresAt: Date.now() + EMAIL_SIGN_IN_SESSION_MS }, identity.credential));
+        session = { tokenId: issued.tokenId, expiresAt: issued.expiresAt ?? 0 };
+      }
     });
 
     await timeSetupStep(timings, "write-system-config", () => {
@@ -458,6 +477,7 @@ export async function handleSysSetup(
       rootLocked,
       bootstrap,
       machineToken,
+      ...(session ? { session } : undefined),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -473,7 +493,8 @@ export async function recoverCompletedSysSetup(
   ctx: KernelContext,
   source = ctx.connection?.state.source ?? null,
 ): Promise<SysSetupResult> {
-  const { username, password } = parseSetupIdentity(args, ctx);
+  const identity = parseSetupIdentity(args, ctx, { emailSignIn: args.credential !== undefined });
+  const { username } = identity;
   const humans = ctx.auth.getPasswdEntries().filter((entry) => {
     const shadow = ctx.auth.getShadowByUsername(entry.username);
     return entry.uid >= 1000 && shadow && !isLocked(shadow);
@@ -482,9 +503,13 @@ export async function recoverCompletedSysSetup(
   if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
     throw new Error("System already initialized");
   }
-  const authenticated = await ctx.auth.authenticate(username, password, source);
-  if (!authenticated.ok && authenticated.waitMs !== undefined) throw new Error(authenticated.error);
-  if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
+  // A retry proves itself with what the first attempt set: the password, or the session its credential opened.
+  const session = identity.credential === undefined ? null : await ctx.auth.humanSession(identity.credential);
+  if (identity.password !== undefined) {
+    const authenticated = await ctx.auth.authenticate(username, identity.password, source);
+    if (!authenticated.ok && authenticated.waitMs !== undefined) throw new Error(authenticated.error);
+    if (!authenticated.ok || authenticated.identity.uid !== user.uid) throw new Error("Installation setup credentials do not match");
+  } else if (session?.uid !== user.uid) {
     throw new Error("Installation setup credentials do not match");
   }
 
@@ -529,11 +554,9 @@ export async function recoverCompletedSysSetup(
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   return {
     server: setupServerBuild(ctx, serverFeatures),
-    user: {
-      ...authenticated.identity,
-      cwd: authenticated.identity.home,
-    },
+    user: { uid: user.uid, gid: user.gid, gids: ctx.auth.resolveGids(username, user.gid), username, home: user.home, cwd: user.home },
     rootLocked: rootShadow ? isLocked(rootShadow) : true,
     machineToken,
+    ...(session ? { session: { tokenId: session.tokenId, expiresAt: session.expiresAt ?? 0 } } : undefined),
   };
 }

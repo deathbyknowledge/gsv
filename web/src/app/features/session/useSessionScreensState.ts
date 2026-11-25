@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { SessionMessage, SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { useT, type TextKey } from "../../i18n/locale";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
+import { useEmailSignIn } from "./useEmailSignIn";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
@@ -27,7 +28,9 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
   const setupHistoryLength = useRef(0);
-  const setupErrors = validateSetupAccount({ password: setupPassword, passwordConfirm: setupPasswordConfirm });
+  // Setup without a password, where the owner signs in by email, has no password to check.
+  const setupEmailSignIn = snapshot.setupEmailSignIn === true;
+  const setupErrors = setupEmailSignIn ? {} : validateSetupAccount({ password: setupPassword, passwordConfirm: setupPasswordConfirm });
   // Self-signup agreed to the terms before arriving; operator-created spaces still confirm them here.
   const setupConsentRequired = snapshot.setupConsentRequired !== false;
   const screenRef = useRef<HTMLElement>(null);
@@ -36,6 +39,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     : snapshot.phase === "setup-recovery" ? "setup-recovery"
     : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
     : snapshot.phase === "booting" ? "booting" : "login";
+  const emailSignIn = useEmailSignIn({ session, snapshot, visible: visibleView === "login" || visibleView === "booting" });
+  const loginMethod = administrator ? "password" : emailSignIn.method;
 
   useEffect(() => {
     const releaseSubmit = () => { setupSubmitPressed.current = false; };
@@ -130,8 +135,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     const prefix = visibleView === "setup" ? "setup" : "session";
     const username = root.querySelector<HTMLInputElement>(`[data-${prefix}-username]`);
     if (username && !username.value) username.focus({ preventScroll: true });
-    else root.querySelector<HTMLInputElement>(`[data-${prefix}-password]`)?.focus({ preventScroll: true });
-  }, [busy, visibleView, setupStep, setupValidationAttempt]);
+    else root.querySelector<HTMLInputElement>(`[data-${prefix}-code], [data-${prefix}-email], [data-${prefix}-password]`)?.focus({ preventScroll: true });
+  }, [busy, visibleView, setupStep, setupValidationAttempt, loginMethod, emailSignIn.loaded, emailSignIn.view.step]);
 
   useEffect(() => {
     if (snapshot.phase !== "authenticating") setPendingAction(null);
@@ -161,7 +166,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     event.preventDefault();
     setupSubmitPressed.current = false;
     if (busy) return;
-    const account = { password: setupPassword };
+    const account = setupEmailSignIn ? {} : { password: setupPassword };
     setSetupTouched({ password: true, passwordConfirm: true });
     if (Object.keys(setupErrors).length > 0) {
       if (setupStep === "consent") window.history.back();
@@ -194,8 +199,13 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     screenRef,
     visibleView,
     busy,
+    /** The sign-in form waits for the Ship to say whether it takes email sign-in. */
+    loginLoading: visibleView === "booting" || (visibleView === "login" && !emailSignIn.loaded),
     login: {
       error: loginValidationError ? t(loginValidationError) : messageText(snapshot.phase === "locked" ? snapshot.message : null),
+      method: loginMethod,
+      email: emailSignIn.available && !administrator ? emailSignIn.view : null,
+      onMethod: emailSignIn.choose,
       administrator,
       password: loginPassword,
       onAdministrator: (value: boolean) => { setAdministrator(value); setLoginPassword(""); setLoginValidationError(null); },
@@ -203,6 +213,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       onSubmit: submitLogin,
     },
     setup: {
+      emailSignIn: setupEmailSignIn,
       step: setupStep,
       consentRequired: setupConsentRequired,
       error: messageText(snapshot.phase === "setup" ? snapshot.message : null),

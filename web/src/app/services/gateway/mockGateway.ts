@@ -4,10 +4,13 @@
  * Development only. GatewayProvider installs it when the page runs on the Vite dev server with
  * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
- * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
+ * session lands straight in Zen signed in; with storage cleared, any username and password sign in, and so does any
+ * six-digit email code except 000000. Settings → Account adds a first password once per tab.
  * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
  * Kernel does, a quiet beat, a long think, then the welcome landing whole.
  * `?fresh=starters` is a fresh space whose welcome is the starters sketch (see /starters below).
+ * `?fresh=setup` is a fresh space that first sets up without a password, as an owner who signed up by email does;
+ * signing out afterwards shows email sign-in.
  * `?fresh=0` returns to the seeded conversation.
  * Of the config, this browser keeps only the Language preference, so Settings can switch the
  * interface language; other settings refuse to save.
@@ -80,6 +83,7 @@ import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
+const SET_UP_FLAG = "gsv.ui.mock.set-up";
 const FIRST_RUN_SEEN = "gsv.mock.first_run_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
@@ -101,16 +105,18 @@ export function mockGatewayRequested(): boolean {
 }
 
 /** A fresh space sticks to the tab like the mock itself, and so does the welcome it was asked for. */
-function freshRequested(): "welcome" | "starters" | null {
+function freshRequested(): "welcome" | "starters" | "setup" | null {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1" || asked === "starters") {
+    if (asked === "1" || asked === "starters" || asked === "setup") {
       window.sessionStorage.setItem(FRESH_FLAG, asked);
+      window.sessionStorage.removeItem(SET_UP_FLAG);
       window.localStorage.removeItem(FIRST_RUN_SEEN);
+      if (asked === "setup") forgetSeededSession();
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     const kept = window.sessionStorage.getItem(FRESH_FLAG);
-    return kept === "starters" ? "starters" : kept === "1" ? "welcome" : null;
+    return kept === "starters" || kept === "setup" ? kept : kept === "1" ? "welcome" : null;
   } catch {
     return null;
   }
@@ -118,7 +124,7 @@ function freshRequested(): "welcome" | "starters" | null {
 
 export function createMockGatewayClient(peer: GsvPeerInfo): GSVClient {
   try {
-    if (!window.localStorage.getItem(SESSION_TOKEN_KEY)) {
+    if (fresh !== "setup" && !window.localStorage.getItem(SESSION_TOKEN_KEY)) {
       window.localStorage.setItem(SESSION_TOKEN_KEY, JSON.stringify({ username: "esteve", tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", expiresAt: null }));
     }
   } catch {
@@ -739,6 +745,8 @@ let noticeRules: NoticeRule[] = [
 ];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
+/** A `?fresh=setup` space waits for setup, once per tab. */
+const settingUp = () => fresh === "setup" && window.sessionStorage.getItem(SET_UP_FLAG) === null;
 /* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
 let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number; actorName?: string; actorHandle?: string; linkedAt?: number }[] = fresh ? [] : [
   { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
@@ -1275,14 +1283,18 @@ function respond<T>(id: string, data: T): string {
   return JSON.stringify({ type: "res", id, ok: true, data });
 }
 
-function refuse(id: string, code: number, message: string): string {
-  return JSON.stringify({ type: "res", id, ok: false, error: { code, message } });
+function refuse(id: string, code: number, message: string, details?: JsonValue): string {
+  return JSON.stringify({ type: "res", id, ok: false, error: { code, message, ...(details === undefined ? undefined : { details }) } });
 }
+
+/** Whether this tab's owner added a password in Settings. */
+let mockPasswordSet = false;
 
 /* a case may answer later, as the real Kernel does for work that hashes or waits; the socket delivers either */
 function route(socket: MockSocket, id: string, call: string, args: JsonValue): string | Promise<string> {
   switch (call) {
     case "sys.connect":
+      if (settingUp()) return refuse(id, 425, "Setup required", { setupMode: true, setupFeatures: ["language", "email-sign-in"] });
       world.sockets.add(socket);
       // Signing in wakes a fresh Ship for its welcome, as the Kernel does.
       if (fresh) void wake();
@@ -1307,7 +1319,19 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       window.localStorage.setItem(storage, value);
       return respond(id, { ok: true });
     }
+    case "sys.setup":
+      window.sessionStorage.setItem(SET_UP_FLAG, "1");
+      return respond(id, { server: { version: "0.6.0", release: "mock" }, rootLocked: false,
+        user: { uid: OWNER.uid, gid: OWNER.uid, gids: [OWNER.uid], username: OWNER.username, home: OWNER.home, cwd: OWNER.home },
+        session: { tokenId: SEEDED_TOKEN_ID, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 } });
     case "account.list": return respond(id, { accounts });
+    case "account.recovery.options": return respond(id, { emailSignIn: true });
+    case "account.signin.start": return respond(id, { accepted: true });
+    case "account.signin.redeem": return z.object({ code: z.string() }).parse(args).code === "000000"
+      ? refuse(id, 400, "Email sign-in failed. Check the code, or request a new one.", { signIn: "invalid" })
+      : respond(id, { username: OWNER.username, tokenId: SEEDED_TOKEN_ID, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    case "account.password.status": return respond(id, { set: mockPasswordSet });
+    case "account.password.set": mockPasswordSet = true; return respond(id, { updated: true });
     case "event.source.list": return respond(id, { sources: mockEventSources });
     case "event.source.update": {
       // SAFETY: the Settings page in this tab sends these shapes.

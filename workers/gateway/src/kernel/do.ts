@@ -954,7 +954,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ) {
         return new Response("WebSocket upgrade required", { status: 426 });
       }
-      const initial: ConnectionState = { step: "pending" };
+      // Routing reached this Kernel only through one of its accepted hostnames.
+      const initial: ConnectionState = { step: "pending", origin: url.origin };
       const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
       if (source) initial.source = source;
       const country = telemetryEnabled(this.bindings) ? connectionCountry(request) : undefined;

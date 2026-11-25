@@ -6,7 +6,7 @@ export type RecoveryAccount = "personal" | "administrator";
 export type AccountRecoveryAttempt = { id: string; secret: string; proof: string; account?: RecoveryAccount };
 const RECOVERY_STORAGE = "gsv.ui.account-recovery.v1";
 const attemptSchema = z.strictObject({ id: z.uuid(), secret: z.string().min(32).max(256), proof: z.string().min(32).max(256), account: z.enum(["personal", "administrator"]).optional() });
-const optionsSchema = z.object({ emailUrl: z.url({ protocol: /^https?$/ }).optional() });
+const optionsSchema = z.object({ emailUrl: z.url({ protocol: /^https?$/ }).optional(), emailSignIn: z.literal(true).optional() });
 const personalUnavailableSchema = z.object({ details: z.object({ recovery: z.literal("personal-unavailable") }) });
 
 /** Persist the receiver's proof before a redeem request; a lost reply never permits a second receiver. */
@@ -45,8 +45,8 @@ export function isPersonalAccountUnavailable(error: Error): boolean {
   return personalUnavailableSchema.safeParse(error).success;
 }
 
-/** Where this Ship's owner email recovery starts, if it has one. A failed read offers the alternatives instead. */
-export async function readRecoveryOptions(client: Pick<GSVClient, "requestOnce">, url: string): Promise<{ emailUrl?: string }> {
+/** Where this Ship's owner email recovery starts, and whether it takes email sign-in. A failed read offers the alternatives instead. */
+export async function readRecoveryOptions(client: Pick<GSVClient, "requestOnce">, url: string): Promise<{ emailUrl?: string; emailSignIn?: true }> {
   try {
     const options = optionsSchema.safeParse(await client.requestOnce(url, "account.recovery.options", {}));
     return options.success ? options.data : {};

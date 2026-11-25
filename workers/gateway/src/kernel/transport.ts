@@ -1,4 +1,5 @@
 import { ownerRecoveryOptions, PersonalAccountUnavailableError } from "./account-recovery";
+import { emailSignInFailed, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
 import { hasCapability } from "./capabilities";
 import {
   z,
@@ -84,6 +85,8 @@ const FRESH_ADMISSION_CALLS = new Set<string>([
   "account.recovery.redeem",
   "account.recovery.code.start",
   "account.recovery.code.redeem",
+  "account.signin.start",
+  "account.signin.redeem",
 ]);
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
@@ -299,6 +302,19 @@ async handleReq(
           this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
         } catch {
           this.sendError(connection, frame.id, 400, "Recovery failed. Check the code and password, or request a new code.");
+        }
+        return;
+      }
+
+      if (frame.call === "account.signin.start" || frame.call === "account.signin.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = frame.call === "account.signin.start" ? await startEmailSignIn(frame.args, ctx) : await redeemEmailSignIn(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch (error) {
+          const failed = emailSignInFailed(frame.call === "account.signin.start" ? "start" : "redeem",
+            error instanceof Error ? error : new Error(String(error)), this.host, this.host.ctx.storage);
+          this.sendError(connection, frame.id, failed.status, "Email sign-in failed. Check the code, or request a new one.", failed.details);
         }
         return;
       }

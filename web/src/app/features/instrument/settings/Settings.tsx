@@ -14,7 +14,7 @@ import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
 import { MessengerConnections } from "./MessengerConnections";
 import { Mcp } from "./Mcp";
-import { OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
+import { AccountPassword, OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
 import { Logs } from "./Logs";
 import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
 import { rich, useT, type TextKey } from "../../../i18n/locale";
@@ -96,6 +96,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess, onOpenSou
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           <section hidden={section !== "account"} aria-labelledby="settings-account-title">
             <PageHeading id="settings-account-title" title={t("settings.account.title")} description={t("settings.account.intro")} />
+            {account.uid !== 0 && <AccountPassword active={active && section === "account"} />}
             <h2>{t("settings.account.deleteTitle")}</h2>
             <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:privacy@humansandmachin.es">privacy@humansandmachin.es</a> })}</p>
             <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>

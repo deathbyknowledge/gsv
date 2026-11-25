@@ -391,6 +391,17 @@ describe("handleSysSetup", () => {
     )).rejects.toThrow("username must match");
   });
 
+  it("takes a session credential instead of a password only where setup takes email sign-in", async () => {
+    const { ctx, auth } = createCtx();
+    const credential = `gsv_human_${"a".repeat(64)}`;
+    await expect(handleSysSetup({ username: "person", credential }, ctx)).rejects.toThrow("password is required");
+    await expect(handleSysSetup({ username: "person", credential: "gsv_machine_" + "a".repeat(64) }, ctx, { emailSignIn: true })).rejects.toThrow("credential is invalid");
+    await expect(handleSysSetup({ username: "person", password: "test-password", credential }, ctx, { emailSignIn: true }))
+      .rejects.toThrow("only for setup without a password");
+    await expect(handleSysSetup({ username: "person" }, ctx, { emailSignIn: true })).rejects.toThrow("password is required");
+    expect(auth.addUser).not.toHaveBeenCalled();
+  });
+
   it("rejects a personal agent username that matches the first user", async () => {
     const { ctx, auth } = createCtx();
 
