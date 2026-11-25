@@ -17,6 +17,8 @@ export type KernelConnectionState = {
   observedProcessIds?: string[];
   /** The keyed hash of the client's address, which paces its sign-in attempts. */
   source?: string;
+  /** The accepted address the client reached this Ship on. */
+  origin?: string;
   /** Trusted edge country, retained only until the pending sign-in completes. */
   country?: string;
 };
@@ -31,6 +33,7 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   credentialEpoch: z.number().int().nonnegative().optional(),
   observedProcessIds: z.array(z.string()).optional(),
   source: z.string().optional(),
+  origin: z.string().optional(),
   country: z.optional(ipCountrySchema),
 }) satisfies z.ZodType<KernelConnectionState>;
 

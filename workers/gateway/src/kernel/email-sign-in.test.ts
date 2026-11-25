@@ -114,6 +114,15 @@ describe("email sign-in to the personal account", () => {
     });
   });
 
+  it("tells Accounts the address the sign-in started on, so the email's button opens where its secret is", async () => {
+    await fixture(async ({ ctx, ownership }) => {
+      // SAFETY: the start reads only the connection's address and source.
+      const connected = { ...ctx, connection: { state: { step: "pending", origin: "https://person.ship.space", source: "client-1" } } } as KernelContext;
+      await startEmailSignIn({ id: crypto.randomUUID(), secret: hex(), email: "owner@example.com" }, connected);
+      expect(ownership.sendOwnerSignInCode).toHaveBeenCalledWith(expect.objectContaining({ origin: "https://person.ship.space", source: "client-1" }));
+    });
+  });
+
   it("asks Accounts for nothing while the Ship is still being set up", async () => {
     await fixture(async ({ ctx, auth, ownership }) => {
       auth.setShadow(makeShadowEntry("root", "!"));

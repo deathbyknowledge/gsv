@@ -62,6 +62,26 @@ describe("owner email sign-in for a Kernel", () => {
     expect(await f.auth.session(await sha256Hex(attempt.secret))).toBeNull();
   });
 
+  it("links to the address the sign-in started on when it is one of the Ship's, so the browser that asked holds its secret", async () => {
+    const f = await fixture();
+    const space = await f.ship("alias");
+    const canonical = new URL(space.canonicalOrigin);
+    const alias = new URL(space.canonicalOrigin);
+    alias.hostname = `alias-${canonical.hostname}`;
+    await env.INSTALLATIONS_DB.prepare("INSERT INTO hostnames (normalized_hostname, installation_id, kind, state, created_at) VALUES (?, ?, 'alias', 'active', ?)")
+      .bind(alias.hostname, space.installationId, Date.now()).run();
+    const send = async (origin: string) => {
+      await f.signIn.sendOwnerSignInCode({ installationId: space.installationId, attemptId: crypto.randomUUID(), secret: hex(), email: f.email,
+        source: crypto.randomUUID(), origin });
+      return f.delivered.at(-1)?.text ?? "";
+    };
+    expect(await send(alias.origin)).toContain(`${alias.origin}/chat#signin=`);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 61_000 });
+    // Any other address gets the Ship's own.
+    expect(await send("https://elsewhere.example")).toContain(`${space.canonicalOrigin}/chat#signin=`);
+    vi.useRealTimers();
+  });
+
   it("answers a stranger the same way without mailing anyone or authorizing a claim", async () => {
     const f = await fixture();
     const space = await f.ship("stranger");

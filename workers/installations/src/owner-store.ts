@@ -163,10 +163,18 @@ export class InstallationOwnerStore {
     if (current?.state !== "complete" || current.browser_secret_hash !== browserSecretHash) throw new Error("Owner linking is unavailable");
   }
 
-  async canonicalOrigin(installationId: string): Promise<string | null> {
-    const row = await this.db.prepare("SELECT canonical_origin FROM installations WHERE id = ? AND state = 'active'")
-      .bind(installationId).first<{ canonical_origin: string }>();
-    return row?.canonical_origin ?? null;
+  /**
+   * Where a sign-in's email button opens: the address the sign-in started on, whose browser holds the attempt's secret,
+   * when it is one of the installation's active hostnames on its canonical scheme and port; otherwise its canonical origin.
+   */
+  async signInOrigin(installationId: string, requested?: string): Promise<string | null> {
+    const url = requested === undefined ? null : new URL(requested);
+    const row = await this.db.prepare(`SELECT canonical_origin, EXISTS (SELECT 1 FROM hostnames h WHERE h.installation_id = i.id
+        AND h.normalized_hostname = ? AND h.state = 'active') AS accepted FROM installations i WHERE i.id = ? AND i.state = 'active'`)
+      .bind(url?.hostname ?? "", installationId).first<{ canonical_origin: string; accepted: number }>();
+    if (!row) return null;
+    const canonical = new URL(row.canonical_origin);
+    return url && row.accepted && url.protocol === canonical.protocol && url.port === canonical.port ? url.origin : row.canonical_origin;
   }
 
   async destination(attempt: OwnerAttempt): Promise<{ canonicalOrigin: string; installationId: string }> {

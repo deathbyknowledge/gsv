@@ -42,7 +42,9 @@ export function ownerIdentityEnabled(env: InstallationOwnerEnvironment): boolean
 }
 
 const signInAttempt = z.object({ installationId: z.string().min(1).max(128), attemptId: z.uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/) });
-const signInCode = signInAttempt.extend({ email: z.string().max(254), source: z.string().min(1).max(96), resend: z.boolean().optional() });
+const signInCode = signInAttempt.extend({
+  email: z.string().max(254), source: z.string().min(1).max(96), resend: z.boolean().optional(), origin: z.url().max(2048).optional(),
+});
 const signInVerify = signInAttempt.extend({ code: z.string().regex(/^\d{6}$/) });
 
 /**
@@ -55,7 +57,7 @@ export class InstallationOwnerSignIn {
   async sendOwnerSignInCode(input: OwnerSignInCodeInput): Promise<{ accepted: true }> {
     const args = signInCode.parse(input);
     await this.recovery.sendCode({ ship: { installationId: args.installationId }, attemptId: args.attemptId, browserSecret: args.secret,
-      email: args.email, ip: `kernel:${args.source}`, resend: args.resend ?? false, signIn: true });
+      email: args.email, ip: `kernel:${args.source}`, resend: args.resend ?? false, signIn: { origin: args.origin } });
     return { accepted: true };
   }
 

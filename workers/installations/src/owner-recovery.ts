@@ -17,7 +17,7 @@ export type OwnerRecoveryCode = {
   ip: string;
   resend: boolean;
   /** Email sign-in: the mail also links to the Ship, where the client that asked can finish without the code. */
-  signIn?: boolean;
+  signIn?: { origin?: string };
 };
 
 export type VerifiedOwnerRecovery = { claim: AuthorizeRootRecoveryInput; canonicalOrigin: string; sessionExpiresAt: number };
@@ -42,7 +42,7 @@ export class InstallationOwnerRecovery {
         throw new OwnerAttemptUnavailableError("Owner recovery is unavailable");
       }
       if (!input.resend) await this.owners.startEmailAuthentication(input.attemptId, { browserSecretHash: await sha256Hex(input.browserSecret) });
-      const origin = input.signIn ? await this.owners.canonicalOrigin(attempt.installation_id) : null;
+      const origin = input.signIn ? await this.owners.signInOrigin(attempt.installation_id, input.signIn.origin) : null;
       const issued = await sendOwnerVerification(this.auth, this.mail, this.sender, {
         challengeId: input.attemptId, purpose: "recover", ownerAttemptId: input.attemptId, email: input.email,
         browserSecret: input.browserSecret, ip: input.ip, resend: input.resend,

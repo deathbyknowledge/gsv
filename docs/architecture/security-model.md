@@ -51,7 +51,9 @@ claim for that attempt; the Kernel spends the claim on a single 30-day session
 whose token is the client's credential. A lost answer is retried with the same
 request and gets the same session; another credential can't spend the claim, and
 the claim fails once the personal credentials change. Accounts never sees the
-session credential. A space activated this way has no password for either account:
+session credential. The email's button opens the address the sign-in started on
+when it is one of the space's active hostnames, since only that browser holds the
+attempt's secret, and the canonical address otherwise. A space activated this way has no password for either account:
 a first personal password needs a signed-in person, not a Process, and leaves root
 without one, and root gets a password only through administrator recovery.
 

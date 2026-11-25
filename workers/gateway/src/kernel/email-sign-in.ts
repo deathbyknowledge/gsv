@@ -28,7 +28,8 @@ export async function startEmailSignIn(input: ArgsOf<"account.signin.start">, ct
   // A Ship that is still being set up has no personal account to sign in to; it answers the same way.
   if (ctx.auth.isSetupMode()) return { accepted: true };
   await ownership.sendOwnerSignInCode({ installationId: ctx.installationId, attemptId: args.id, secret: args.secret, email: args.email,
-    source: ctx.connection?.state.source ?? "unknown", ...(args.resend ? { resend: true } : undefined) });
+    source: ctx.connection?.state.source ?? "unknown", ...(args.resend ? { resend: true } : undefined),
+    ...(ctx.connection?.state.origin ? { origin: ctx.connection.state.origin } : undefined) });
   return { accepted: true };
 }
 

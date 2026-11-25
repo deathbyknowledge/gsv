@@ -16,6 +16,8 @@ export type OwnerSignInCodeInput = {
   email: string;
   source: string;
   resend?: boolean;
+  /** The address the sign-in started on; the email's button opens it when it is one of the Ship's active hostnames. */
+  origin?: string;
 };
 
 export type OwnerSignInVerifyInput = {
