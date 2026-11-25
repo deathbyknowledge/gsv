@@ -551,6 +551,14 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
     properties: z.strictObject({ diagnosticId: z.string().check(z.uuid()) }),
   }),
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("account.signin.failed"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      call: z.enum(["start", "redeem"]),
+      errorType: telemetryErrorTypeSchema,
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("installation.setup.failed"),
     properties: z.strictObject({
       diagnosticId: z.string().check(z.uuid()),
@@ -680,6 +688,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
   "memory.review.admission.failed": ["gateway"],
+  "account.signin.failed": ["gateway"],
   "installation.setup.failed": ["gateway", "accounts"],
   "ripgit.request.failed": ["ripgit"],
   "inference.client.finished": ["gateway", "inference"],

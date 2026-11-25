@@ -1,10 +1,8 @@
 import { ownerRecoveryOptions, PersonalAccountUnavailableError } from "./account-recovery";
-import { EmailSignInError, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
+import { emailSignInFailed, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
 import { hasCapability } from "./capabilities";
-import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import {
   z,
-  ZodError,
 } from "zod";
 import type {
   Frame,
@@ -314,10 +312,9 @@ async handleReq(
           const data = frame.call === "account.signin.start" ? await startEmailSignIn(frame.args, ctx) : await redeemEmailSignIn(frame.args, ctx);
           this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
         } catch (error) {
-          const reason = error instanceof EmailSignInError ? error.reason : error instanceof PersonalAccountUnavailableError ? "unavailable" : null;
-          if (reason === null && !(error instanceof ZodError)) console.warn("[Kernel] Email sign-in failed:", exceptionDiagnostics(error));
-          this.sendError(connection, frame.id, reason === "locked" ? 429 : 400, "Email sign-in failed. Check the code, or request a new one.",
-            { signIn: reason ?? "unavailable" });
+          const failed = emailSignInFailed(frame.call === "account.signin.start" ? "start" : "redeem",
+            error instanceof Error ? error : new Error(String(error)), this.host, this.host.ctx.storage);
+          this.sendError(connection, frame.id, failed.status, "Email sign-in failed. Check the code, or request a new one.", failed.details);
         }
         return;
       }

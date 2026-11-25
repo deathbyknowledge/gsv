@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { InstallationOwnershipService, OwnerSignInVerification } from "@humansandmachines/gsv/services/ownership";
 import { createSessionCredential } from "@humansandmachines/gsv/protocol/pairing";
 import { hashPassword, makeShadowEntry, UNSET_PASSWORD_HASH } from "../auth/shadow";
@@ -7,7 +8,7 @@ import { testPeer } from "../test-support/peers";
 import { AuthStore } from "./auth-store";
 import { AccountRecoveryStore, EMAIL_SIGN_IN_SESSION_MS, ownerRecoveryOptions, sha256 } from "./account-recovery";
 import type { KernelContext } from "./context";
-import { EmailSignInError, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
+import { EMAIL_SIGN_IN_FAILURE_KEY, EmailSignInError, emailSignInFailed, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
 
 const INSTALLATION = "installation_sign_in";
 const hex = () => `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
@@ -31,7 +32,8 @@ function accounts() {
   return ownership;
 }
 
-async function fixture(work: (f: { ctx: KernelContext; auth: AuthStore; recovery: AccountRecoveryStore; ownership: ReturnType<typeof accounts>; sql: SqlStorage }) => Promise<void>,
+async function fixture(work: (f: { ctx: KernelContext; auth: AuthStore; recovery: AccountRecoveryStore; ownership: ReturnType<typeof accounts>; sql: SqlStorage;
+  storage: DurableObjectStorage }) => Promise<void>,
   options: { personal?: string; root?: string } = {}) {
   await runWithRealKernelSql(async (sql, storage) => {
     const auth = new AuthStore(sql);
@@ -44,7 +46,7 @@ async function fixture(work: (f: { ctx: KernelContext; auth: AuthStore; recovery
     // SAFETY: email sign-in reads only these Kernel owners; the rest of the context is unused.
     const ctx = { auth, accountRecovery: recovery, installationId: INSTALLATION, installationIdentity: { handle: "person" }, connection: null,
       env: { INSTALLATION_OWNERSHIP: ownership, GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/" } } as KernelContext;
-    await work({ ctx, auth, recovery, ownership, sql });
+    await work({ ctx, auth, recovery, ownership, sql, storage });
   });
 }
 
@@ -118,6 +120,33 @@ describe("email sign-in to the personal account", () => {
       auth.removeUser("person");
       await expect(startEmailSignIn({ id: crypto.randomUUID(), secret: hex(), email: "owner@example.com" }, ctx)).resolves.toEqual({ accepted: true });
       expect(ownership.sendOwnerSignInCode).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps the cause of an unexpected failure for the operator, and answers with only its reference", async () => {
+    await fixture(async ({ ctx, ownership, storage }) => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const kernel = { env: { ...ctx.env, GSV_TELEMETRY_ENABLED: true }, installationId: INSTALLATION };
+      ownership.sendOwnerSignInCode.mockRejectedValueOnce(new TypeError("private Accounts detail"));
+      const error = await startEmailSignIn({ id: crypto.randomUUID(), secret: hex(), email: "owner@example.com" }, ctx).then(() => null, (cause: Error) => cause);
+      const failed = emailSignInFailed("start", error ?? new Error("started"), kernel, storage);
+
+      const record = z.strictObject({ diagnosticId: z.uuid(), call: z.literal("start"), recordedAt: z.number(), cause: z.string().max(8192) })
+        .parse(storage.kv.get(EMAIL_SIGN_IN_FAILURE_KEY));
+      expect(record.cause).toContain("private Accounts detail");
+      expect(failed).toEqual({ status: 400, details: { signIn: "unavailable", diagnosticId: record.diagnosticId } });
+      expect(log).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        component: "gateway", installationId: INSTALLATION,
+        event: { stream: "operational", name: "account.signin.failed", properties: { diagnosticId: record.diagnosticId, call: "start", errorType: "TypeError" } },
+      }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private");
+
+      // A refusal names what to do about it, and nothing failed.
+      storage.kv.delete(EMAIL_SIGN_IN_FAILURE_KEY);
+      expect(emailSignInFailed("redeem", new EmailSignInError("locked"), kernel, storage)).toEqual({ status: 429, details: { signIn: "locked" } });
+      expect(storage.kv.get(EMAIL_SIGN_IN_FAILURE_KEY)).toBeUndefined();
+      expect(log).toHaveBeenCalledOnce();
+      log.mockRestore();
     });
   });
 
