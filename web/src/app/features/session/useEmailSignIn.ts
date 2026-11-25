@@ -39,6 +39,8 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
   const [options, setOptions] = useState<{ url: string; available: boolean } | null>(null);
   const [method, setMethod] = useState<"email" | "password">("email");
   const [attempt, setAttempt] = useState<EmailSignInAttempt | null>(readEmailSignInAttempt);
+  // A start whose answer was lost may still have mailed its code.
+  const [unanswered, setUnanswered] = useState<EmailSignInAttempt | null>(null);
   const [email, setEmail] = useState(attempt?.email ?? "");
   const [code, setCode] = useState("");
   const [notice, setNotice] = useState<string | null>(attempt ? t("session.login.codeSent", { email: attempt.email }) : null);
@@ -106,8 +108,11 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     if (!address.includes("@")) { setError(t("session.login.emailRequired")); return; }
     let next: EmailSignInAttempt;
     try {
-      // A dead attempt cannot be mailed again, so it starts over.
-      next = resend && attempt && failure !== "expired" && failure !== "locked" ? attempt : createEmailSignInAttempt(address);
+      // A dead attempt cannot be mailed again, so it starts over. A start without an answer is repeated instead:
+      // Accounts mails one attempt once, and would not mail a new one for the same email this soon.
+      next = resend && attempt && failure !== "expired" && failure !== "locked" ? attempt
+        : !resend && unanswered?.email === address ? unanswered
+        : createEmailSignInAttempt(address);
     } catch {
       setError(t("session.login.storageUnavailable"));
       return;
@@ -116,9 +121,11 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     try {
       await sendEmailSignInCode(session.client, snapshot.url, next, next === attempt);
       setAttempt(next === attempt ? { ...next, createdAt: Date.now() } : next);
+      setUnanswered(null);
       setCode("");
       setNotice(t(resend ? "session.login.resent" : "session.login.codeSent", { email: address }));
     } catch (cause) {
+      if (next !== attempt) setUnanswered(next);
       refused(cause instanceof Error ? cause : null);
     } finally {
       setBusy(false);
@@ -144,7 +151,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     onResend: () => { if (!busy) void send(true); },
     onOtherEmail: () => {
       forgetEmailSignInAttempt();
-      setAttempt(null); setCode(""); setNotice(null); setError(null); setFailure(null);
+      setAttempt(null); setUnanswered(null); setCode(""); setNotice(null); setError(null); setFailure(null);
     },
   };
   return {

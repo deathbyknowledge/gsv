@@ -102,6 +102,20 @@ describe("email sign-in", () => {
     expect(adoptSession).toHaveBeenCalledOnce();
   });
 
+  it("repeats the same start when its answer is lost, since Accounts mails one attempt once", async () => {
+    ship();
+    stubBrowser("/chat");
+    const screen = await mount();
+    await act(() => screen.state.view.onEmail("owner@example.com"));
+    requestOnce.mockRejectedValueOnce(new Error("Connection interrupted"));
+    await submit(screen);
+    expect(screen.state.view).toMatchObject({ step: "email", error: "Connection interrupted" });
+    await submit(screen);
+    const [lost, retried] = calls("account.signin.start");
+    expect(retried).toEqual(lost);
+    expect(screen.state.view.step).toBe("code");
+  });
+
   it("finishes from the email's button in the browser that asked, and scrubs the code from the address", async () => {
     ship();
     stubBrowser("/chat");
