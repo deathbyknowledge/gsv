@@ -3,11 +3,13 @@ import { createPairingSecret, createSessionCredential, SESSION_CREDENTIAL_PATTER
 import { z } from "zod";
 
 const STORAGE = "gsv.ui.email-sign-in.v1";
-/** As long as the code lasts. */
+/** As long as its code lasts: Accounts counts from the first send, and sending the code again does not extend it. */
 const ATTEMPT_MS = 10 * 60 * 1000;
 const attemptSchema = z.strictObject({
   id: z.uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/), credential: z.string().regex(SESSION_CREDENTIAL_PATTERN),
   email: z.string().min(1).max(254), createdAt: z.number(),
+  /** When the Ship last answered that it sent the code, which is after Accounts sent it. */
+  sentAt: z.number().optional(),
 });
 const failureSchema = z.object({ details: z.object({ signIn: z.enum(["invalid", "expired", "locked", "unavailable"]) }) });
 
@@ -23,7 +25,7 @@ export function readEmailSignInAttempt(): EmailSignInAttempt | null {
   try {
     const saved = window.localStorage.getItem(STORAGE);
     const attempt = saved ? attemptSchema.parse(JSON.parse(saved)) : null;
-    return attempt && attempt.createdAt > Date.now() - ATTEMPT_MS ? attempt : null;
+    return attempt && emailSignInAttemptLive(attempt) ? attempt : null;
   } catch {
     return null;
   }
@@ -34,6 +36,18 @@ export function createEmailSignInAttempt(email: string): EmailSignInAttempt {
   const attempt = { id: crypto.randomUUID(), secret: createPairingSecret(), credential: createSessionCredential(), email: email.trim(), createdAt: Date.now() };
   window.localStorage.setItem(STORAGE, JSON.stringify(attempt));
   return attempt;
+}
+
+/** Whether the attempt's code can still be used. It was made before its first send, so this ends no later than the code. */
+export function emailSignInAttemptLive(attempt: EmailSignInAttempt): boolean {
+  return attempt.createdAt > Date.now() - ATTEMPT_MS;
+}
+
+/** The attempt after the Ship answered that its code was sent; a browser that cannot keep this still has it in memory. */
+export function recordEmailSignInSent(attempt: EmailSignInAttempt): EmailSignInAttempt {
+  const sent = { ...attempt, sentAt: Date.now() };
+  try { window.localStorage.setItem(STORAGE, JSON.stringify(sent)); } catch {}
+  return sent;
 }
 
 export function forgetEmailSignInAttempt(): void {

@@ -2,8 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { readRecoveryOptions } from "../../services/session/accountRecovery";
 import {
-  createEmailSignInAttempt, emailSignInFailure, forgetEmailSignInAttempt, readEmailSignInAttempt, redeemEmailSignIn,
-  sendEmailSignInCode, takeEmailSignInLink, type EmailSignInAttempt, type EmailSignInFailure,
+  createEmailSignInAttempt, emailSignInAttemptLive, emailSignInFailure, forgetEmailSignInAttempt, readEmailSignInAttempt,
+  recordEmailSignInSent, redeemEmailSignIn, sendEmailSignInCode, takeEmailSignInLink, type EmailSignInAttempt, type EmailSignInFailure,
 } from "../../services/session/emailSignIn";
 import { useT, type TextKey } from "../../i18n/locale";
 
@@ -62,13 +62,14 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
 
   // The resend action becomes available when Accounts would mail again, counted from the Ship's answer, which comes after
   // Accounts sent the code.
+  const resendAt = attempt ? (attempt.sentAt ?? attempt.createdAt) + RESEND_AFTER_MS : null;
   useEffect(() => {
-    if (!attempt) return;
-    const wait = attempt.createdAt + RESEND_AFTER_MS - Date.now();
+    if (resendAt === null) return;
+    const wait = resendAt - Date.now();
     if (wait <= 0) return;
     const timer = window.setTimeout(() => setClock((tick) => tick + 1), wait);
     return () => window.clearTimeout(timer);
-  }, [attempt]);
+  }, [resendAt]);
 
   // A refusal says what to do about it; any other failure keeps its own message.
   const refused = (cause: Error | null) => {
@@ -112,7 +113,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
       // A start without an answer is repeated: Accounts mails one attempt once, and would not mail a new one for the
       // same email this soon. A dead attempt cannot be mailed again, so it starts over.
       next = unanswered?.email === address ? unanswered
-        : resend && attempt && failure !== "expired" && failure !== "locked" ? attempt
+        : resend && attempt && failure !== "expired" && failure !== "locked" && emailSignInAttemptLive(attempt) ? attempt
         : createEmailSignInAttempt(address);
     } catch {
       setError(t("session.login.storageUnavailable"));
@@ -121,7 +122,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     setBusy(true); setError(null); setFailure(null);
     try {
       await sendEmailSignInCode(session.client, snapshot.url, next, next === attempt);
-      setAttempt({ ...next, createdAt: Date.now() });
+      setAttempt(recordEmailSignInSent(next));
       setUnanswered(null);
       setCode("");
       setNotice(t(resend ? "session.login.resent" : "session.login.codeSent", { email: address }));
@@ -140,7 +141,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     notice,
     error,
     busy,
-    canResend: attempt !== null && attempt.createdAt + RESEND_AFTER_MS <= Date.now(),
+    canResend: resendAt !== null && resendAt <= Date.now(),
     onEmail: (value) => { setError(null); setEmail(value); },
     onCode: (value) => { setError(null); setCode(value); },
     onSubmit: (event) => {

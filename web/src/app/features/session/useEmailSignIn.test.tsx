@@ -187,6 +187,22 @@ describe("email sign-in", () => {
     expect(calls("account.signin.redeem").at(-1)).toMatchObject({ id: lost?.id });
   });
 
+  it("starts over for a new code once the attempt's ten minutes are over, without trying the old code first", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    ship();
+    stubBrowser("/chat");
+    const screen = await mount();
+    await act(() => screen.state.view.onEmail("owner@example.com"));
+    await submit(screen);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(screen.state.view.canResend).toBe(true);
+    await act(() => screen.state.view.onResend());
+    await settle();
+    const [expired, fresh] = calls("account.signin.start");
+    expect(fresh?.id).not.toBe(expired?.id);
+    expect(fresh).not.toHaveProperty("resend");
+  });
+
   it("signs in with a password where the Ship has no email sign-in", async () => {
     ship({ emailSignIn: false });
     stubBrowser("/chat");
