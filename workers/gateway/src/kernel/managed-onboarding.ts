@@ -23,6 +23,7 @@ import {
   ManagedInstallationGate,
   resolveManagedInstallationById,
   setupRecoveryDetails,
+  setupTakesEmailSignIn,
 } from "../installation/lifecycle";
 import type {
   GatewayEnv,
@@ -166,7 +167,9 @@ async handleManagedSysSetup(
       let data: SysSetupResult;
       try {
         if (this.host.auth.isSetupMode()) {
-          data = await handleKernelSetup(setupArgs, ctx);
+          const emailSignIn = setupArgs.password === undefined
+            && setupTakesEmailSignIn(this.host.env, await resolveManagedInstallationById(this.host.env, this.host.installationId));
+          data = await handleKernelSetup(setupArgs, ctx, { emailSignIn });
         } else {
           const pending = this.pendingManagedOnboarding;
           if (

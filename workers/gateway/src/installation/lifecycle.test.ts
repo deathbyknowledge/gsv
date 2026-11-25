@@ -25,6 +25,17 @@ describe("managed installation lifecycle", () => {
       details: { setupRecovery: true, setupUrl, setupFeatures: ["language"] } });
   });
 
+  it("lets an owner who verified their email at signup set up without a password where the Ship takes email sign-in", async () => {
+    const setupUrl = "https://accounts.example/owner/signup/?resume=1";
+    const provisioning = { found: true as const, installationId: "inst_setup", handle: "setup", canonicalOrigin: "https://setup.example",
+      state: "provisioning" as const, ownerSetupRecovery: true as const };
+    await expect(managedInstallationWorkGate({ GSV_OWNER_SIGNUP_URL: setupUrl, INSTALLATION_OWNERSHIP: {}, INSTALLATION_DIRECTORY: directory(provisioning) }, "inst_setup"))
+      .resolves.toMatchObject({ details: { setupFeatures: ["language", "email-sign-in"] } });
+    const { ownerSetupRecovery: _operatorIssued, ...operatorIssued } = provisioning;
+    await expect(managedInstallationWorkGate({ GSV_OWNER_SIGNUP_URL: setupUrl, INSTALLATION_OWNERSHIP: {}, INSTALLATION_DIRECTORY: directory(operatorIssued) }, "inst_setup"))
+      .resolves.toMatchObject({ details: { setupFeatures: ["language"] } });
+  });
+
   it("does not offer owner-email recovery for an operator-issued installation", async () => {
     await expect(managedInstallationWorkGate({
       GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1",

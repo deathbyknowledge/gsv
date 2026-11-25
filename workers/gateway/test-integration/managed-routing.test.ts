@@ -7,6 +7,7 @@ import {
 import type { IntegrationState } from "./fixtures/dependencies";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createManagedGatewayTestHarness } from "./harness";
 
 describe("managed installation routing integration", () => {
@@ -161,6 +162,71 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first" });
     await expectManagedRpcOk(socket, "login-after-setup", "sys.connect", connect);
     socket.close(1000, "test complete");
+  });
+
+  it("sets up without a password for an owner who signed up by email, who then signs in by email", async () => {
+    await beginProvisioning(harness, "first");
+    const setupSocket = await openManagedSocket(harness, "first");
+    const peer = (id: string) => ({ id, version: "test", platform: "browser" });
+    await expect(managedRpc(setupSocket, "probe", "sys.connect", { protocol: 4, peer: peer("email-probe") })).resolves.toMatchObject({
+      ok: false, error: { code: 503, details: { setupRecovery: true, setupFeatures: ["language", "email-sign-in"] } },
+    });
+    const credential = () => `gsv_human_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+    await expect(managedRpc(setupSocket, "no-credential", "sys.setup", { onboardingToken: "integration-onboarding-first" }))
+      .resolves.toMatchObject({ ok: false, error: { message: "password is required" } });
+    const setupSession = credential();
+    const setup = { credential: setupSession, onboardingToken: "integration-onboarding-first" };
+    await failNextOnboardingCompletion(harness, "first", "after-activation");
+    await expect(managedRpc(setupSocket, "passwordless-setup", "sys.setup", setup)).resolves.toMatchObject({
+      ok: false, error: { code: 503, message: "Installation setup could not be activated" } });
+    // The retry proves itself with the session the first attempt opened, and gets that session back.
+    const created = await expectManagedRpcOk(setupSocket, "passwordless-setup-retry", "sys.setup", setup);
+    expect(created.data).toMatchObject({ rootLocked: false, session: { tokenId: expect.any(String) } });
+    await expect(managedRpc(setupSocket, "another-credential", "sys.setup", { ...setup, credential: credential() }))
+      .resolves.toMatchObject({ ok: false });
+    setupSocket.close(1000, "test complete");
+
+    const connect = (id: string, auth: JsonObject) => ({ protocol: 4, peer: peer(id), auth });
+    const owner = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(owner, "setup-session", "sys.connect", connect("setup-session", { token: setupSession }));
+    await expect(managedRpc(owner, "status-unset", "account.password.status", {})).resolves.toMatchObject({ ok: true, data: { set: false } });
+
+    const signIn = await openManagedSocket(harness, "first");
+    await expect(managedRpc(signIn, "options", "account.recovery.options", {})).resolves.toMatchObject({ ok: true, data: { emailSignIn: true } });
+    const attempt = { id: crypto.randomUUID(), secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "") };
+    await expectManagedRpcOk(signIn, "start", "account.signin.start", { ...attempt, email: "owner@example.com" });
+    const session = credential();
+    await expect(managedRpc(signIn, "wrong-code", "account.signin.redeem", { ...attempt, code: "000000", credential: session }))
+      .resolves.toMatchObject({ ok: false, error: { code: 400, details: { signIn: "invalid" } } });
+    const redeemed = await expectManagedRpcOk(signIn, "redeem", "account.signin.redeem", { ...attempt, code: "246810", credential: session });
+    expect(redeemed.data).toMatchObject({ username: "first", tokenId: expect.any(String) });
+    expect(z.object({ expiresAt: z.number() }).parse(redeemed.data).expiresAt).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
+    await expect(managedRpc(signIn, "redeem-other-credential", "account.signin.redeem", { ...attempt, code: "246810", credential: credential() }))
+      .resolves.toMatchObject({ ok: false, error: { code: 400 } });
+    await harness.getWorker("gsv-managed").evictDurableObject("KERNEL", { name: "inst_integration_first", webSockets: "hibernate" });
+    const afterEviction = await openManagedSocket(harness, "first");
+    await expect(managedRpc(afterEviction, "redeem-retry", "account.signin.redeem", { ...attempt, code: "246810", credential: session }))
+      .resolves.toMatchObject({ ok: true, data: redeemed.data });
+    const stranger = { id: crypto.randomUUID(), secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "") };
+    await expectManagedRpcOk(afterEviction, "stranger-start", "account.signin.start", { ...stranger, email: "someone@example.com" });
+    await expect(managedRpc(afterEviction, "stranger-redeem", "account.signin.redeem", { ...stranger, code: "246810", credential: credential() }))
+      .resolves.toMatchObject({ ok: false, error: { details: { signIn: "invalid" } } });
+
+    const signedIn = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(signedIn, "email-session", "sys.connect", connect("email-session", { token: session }));
+    await expectManagedRpcOk(signedIn, "first-password", "account.password.set", { password: "chosen-password" });
+    await expect(managedRpc(signedIn, "status-set", "account.password.status", {})).resolves.toMatchObject({ ok: true, data: { set: true } });
+    await expect(managedRpc(signedIn, "second-password", "account.password.set", { password: "another-password" }))
+      .resolves.toMatchObject({ ok: false });
+    const byPassword = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(byPassword, "password", "sys.connect", connect("password", { password: "chosen-password" }));
+    // Choosing a password signs nothing out, and the administrator keeps no password of its own.
+    const stillSignedIn = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(stillSignedIn, "kept-session", "sys.connect", connect("kept-session", { token: session }));
+    const root = await openManagedSocket(harness, "first");
+    await expect(managedRpc(root, "root", "sys.connect", connect("root", { username: "root", password: "chosen-password" })))
+      .resolves.toMatchObject({ ok: false, error: { code: 401 } });
+    for (const socket of [owner, signIn, afterEviction, signedIn, byPassword, stillSignedIn, root]) socket.close(1000, "test complete");
   });
 
   it("requires a replacement operator link rather than offering owner-email recovery", async () => {

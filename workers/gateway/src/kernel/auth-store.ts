@@ -15,7 +15,7 @@
 import type { PasswdEntry } from "../auth/passwd";
 import { parsePasswd, serializePasswd } from "../auth/passwd";
 import type { ShadowEntry } from "../auth/shadow";
-import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
+import { parseShadow, serializeShadow, isLocked, isPasswordUnset, makeShadowEntry, hashToken, verify } from "../auth/shadow";
 import { passwordWaitMessage, type PasswordAttempts } from "./password-attempts";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
@@ -127,13 +127,14 @@ export class AuthStore {
 
   /**
    * Signup gives root the personal password, so resetting one that root still shares changes root
-   * too: the old password must open nothing afterwards. Returns whether root changed.
+   * too: the old password must open nothing afterwards. Returns whether root changed. Having no
+   * password yet is not a shared password, so root keeps none.
    */
   replacePersonalPassword(uid: number, passwordHash: string, reason: string): boolean {
     const user = this.getPasswdByUid(uid);
     const previous = user && this.getShadowByUsername(user.username);
     const root = this.getShadowByUsername("root");
-    const shared = Boolean(previous && root && root.hash === previous.hash && !this.isAccountDisabled(0));
+    const shared = Boolean(previous && root && root.hash === previous.hash && !isPasswordUnset(root) && !this.isAccountDisabled(0));
     this.replaceHumanPassword(uid, passwordHash, reason);
     if (shared) this.replaceHumanPassword(0, passwordHash, reason);
     return shared;
@@ -584,6 +585,15 @@ export class AuthStore {
     );
 
     return issued;
+  }
+
+  /** The live person's session a client-kept credential opened, for a client retrying a lost answer. */
+  async humanSession(credential: string): Promise<{ tokenId: string; uid: number; expiresAt: number | null } | null> {
+    const row = this.sql.exec<{ token_id: string; uid: number; expires_at: number | null }>(
+      `SELECT token_id, uid, expires_at FROM auth_tokens WHERE token_hash = ? AND kind = 'human' AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ?)`, await hashToken(credential), Date.now()).toArray()[0];
+    if (!row || this.isAccountDisabled(row.uid)) return null;
+    return { tokenId: row.token_id, uid: row.uid, expiresAt: row.expires_at };
   }
 
   listTokens(uid?: number): AuthTokenRecord[] {

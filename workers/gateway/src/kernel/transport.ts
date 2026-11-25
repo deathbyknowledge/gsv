@@ -1,7 +1,10 @@
 import { ownerRecoveryOptions, PersonalAccountUnavailableError } from "./account-recovery";
+import { EmailSignInError, redeemEmailSignIn, startEmailSignIn } from "./email-sign-in";
 import { hasCapability } from "./capabilities";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import {
   z,
+  ZodError,
 } from "zod";
 import type {
   Frame,
@@ -84,6 +87,8 @@ const FRESH_ADMISSION_CALLS = new Set<string>([
   "account.recovery.redeem",
   "account.recovery.code.start",
   "account.recovery.code.redeem",
+  "account.signin.start",
+  "account.signin.redeem",
 ]);
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
@@ -299,6 +304,20 @@ async handleReq(
           this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
         } catch {
           this.sendError(connection, frame.id, 400, "Recovery failed. Check the code and password, or request a new code.");
+        }
+        return;
+      }
+
+      if (frame.call === "account.signin.start" || frame.call === "account.signin.redeem") {
+        try {
+          const ctx = this.host.buildContext(connection);
+          const data = frame.call === "account.signin.start" ? await startEmailSignIn(frame.args, ctx) : await redeemEmailSignIn(frame.args, ctx);
+          this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
+        } catch (error) {
+          const reason = error instanceof EmailSignInError ? error.reason : error instanceof PersonalAccountUnavailableError ? "unavailable" : null;
+          if (reason === null && !(error instanceof ZodError)) console.warn("[Kernel] Email sign-in failed:", exceptionDiagnostics(error));
+          this.sendError(connection, frame.id, reason === "locked" ? 429 : 400, "Email sign-in failed. Check the code, or request a new one.",
+            { signIn: reason ?? "unavailable" });
         }
         return;
       }

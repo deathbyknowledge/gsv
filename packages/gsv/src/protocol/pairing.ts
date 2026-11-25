@@ -46,6 +46,13 @@ export function createPairingCredential(): string {
   return `gsv_machine_${createPairingSecret()}`;
 }
 
+export const SESSION_CREDENTIAL_PATTERN = /^gsv_human_[a-f0-9]{64}$/;
+
+/** A human session token the client generates and keeps before asking its Ship to accept it. */
+export function createSessionCredential(): string {
+  return `gsv_human_${createPairingSecret()}`;
+}
+
 export function encodeDevicePairingCode(gatewayUrl: string, pairing: DevicePairing, secret: string): string {
   const value: DevicePairingCode = { version: 1, gatewayUrl: pairingGatewayUrl(gatewayUrl),
     username: pairing.username, id: pairing.id, secret, targetId: pairing.targetId, label: pairing.label, expiresAt: pairing.expiresAt };

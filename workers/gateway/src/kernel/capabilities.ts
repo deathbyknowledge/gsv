@@ -94,6 +94,8 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.pair.cancel",
     "account.create",
     "account.list",
+    "account.password.set",
+    "account.password.status",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["adapter.*"]],                                   // services
