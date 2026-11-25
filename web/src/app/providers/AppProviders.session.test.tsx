@@ -43,6 +43,9 @@ function createSessionHarness() {
     setup: async () => {
       throw new Error("Not used by this test");
     },
+    adoptSession: async () => {
+      throw new Error("Not used by this test");
+    },
     lock: async () => {},
     start,
   };

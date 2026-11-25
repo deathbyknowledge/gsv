@@ -18,7 +18,7 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
   const { visibleView } = state;
   return <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "ready"} ref={state.screenRef}>
     <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
-      <LoginScreen visible={visibleView === "login" || visibleView === "booting"} loading={visibleView === "booting"}
+      <LoginScreen visible={visibleView === "login" || visibleView === "booting"} loading={state.loginLoading}
         busy={state.busy} space={new URL(snapshot.url).host} {...state.login} />
       <SetupScreen visible={visibleView === "setup"} busy={state.busy} space={new URL(snapshot.url).host}
         arrivedFromSignup={snapshot.arrivedFromSignup === true} {...state.setup} />

@@ -1,11 +1,13 @@
 import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
 import { z } from "zod";
-import type {
-  ConnectArgs,
-  ConnectResult,
-  ServerBuild,
-  SysSetupArgs,
-  SysSetupResult,
+import {
+  createSessionCredential,
+  SESSION_CREDENTIAL_PATTERN,
+  type ConnectArgs,
+  type ConnectResult,
+  type ServerBuild,
+  type SysSetupArgs,
+  type SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TextKey } from "../../i18n/locale";
 import { clearLinkPreviewCache } from "../chat/backend/linkPreviewCache";
@@ -19,6 +21,8 @@ const STORAGE_USERNAME = "gsv.ui.gateway.username";
 /** The stored session; the public profile's `web/public/social/home.js` reads it to send this Ship's owner from its address to the app. */
 export const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
 const STORAGE_PENDING_REVOKES = "gsv.ui.session.pending-revokes.v1";
+/** The session credential a setup without a password asked for; a retry after a lost answer repeats it. */
+const STORAGE_SETUP_CREDENTIAL = "gsv.ui.setup-credential.v1";
 const SESSION_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_TOKEN_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SESSION_TOKEN_REFRESH_RETRY_MS = 60_000;
@@ -34,7 +38,7 @@ const SETUP_PROBE_ARGS: ConnectArgs = {
   },
 };
 
-type PersistedSessionToken = {
+export type PersistedSessionToken = {
   username: string;
   tokenId: string;
   token: string;
@@ -87,6 +91,8 @@ export type SessionSnapshot = {
   arrivedFromSignup?: boolean;
   /** Whether setup still collects the terms agreement; self-signup already did. */
   setupConsentRequired?: boolean;
+  /** Setup needs no password: the owner signs in by email and may set one later. */
+  setupEmailSignIn?: boolean;
 };
 
 export type SessionLoginInput = {
@@ -111,6 +117,9 @@ export type SessionService = {
   snapshot: () => SessionSnapshot;
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
+  /** Signs in with a session the Ship opened from a credential this client kept, such as an email sign-in. */
+  adoptSession: (session: PersistedSessionToken) => Promise<ConnectResult>;
+  /** Without `password`, the Ship opens a session instead, where setup advertises `email-sign-in`. */
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
   lock: (reason?: TextKey) => Promise<void>;
   start: () => Promise<void>;
@@ -208,7 +217,7 @@ function isSetupRequiredError(value: SessionWireValue): boolean {
   return error.data.details?.setupMode === true;
 }
 
-type SetupFacts = Pick<SessionSnapshot, "arrivedFromSignup" | "setupConsentRequired">;
+type SetupFacts = Pick<SessionSnapshot, "arrivedFromSignup" | "setupConsentRequired" | "setupEmailSignIn">;
 
 /** Setup presentation facts: the Kernel's answer wins; otherwise a signup arrival already agreed to the terms. */
 function setupFacts(signupArrival: boolean, value?: SessionWireValue): SetupFacts {
@@ -217,6 +226,7 @@ function setupFacts(signupArrival: boolean, value?: SessionWireValue): SetupFact
   return {
     arrivedFromSignup: signupArrival,
     setupConsentRequired: details?.consentRequired ?? !signupArrival,
+    setupEmailSignIn: details?.setupFeatures?.includes("email-sign-in") ?? false,
   };
 }
 
@@ -307,6 +317,15 @@ async function setupFeatures(client: SessionClient, url: string): Promise<string
   }
 }
 
+/** Kept until setup succeeds, so a retry proves itself with the session the first attempt may have opened. */
+function setupCredential(storage?: SessionStorage): string {
+  const saved = readStored(STORAGE_SETUP_CREDENTIAL, storage);
+  if (saved && SESSION_CREDENTIAL_PATTERN.test(saved)) return saved;
+  const credential = createSessionCredential();
+  storeValue(STORAGE_SETUP_CREDENTIAL, credential, storage);
+  return credential;
+}
+
 export function createSessionService(client: SessionClient, options: SessionServiceOptions = {}): SessionService {
   const gatewayUrl = () => options.url ?? deriveGatewayUrlFromOrigin();
   const storage = options.storage;
@@ -314,6 +333,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken(storage);
+  /** What the Ship said setup accepts when the setup link opened; setup sends only those. */
+  let probedSetupFeatures: string[] | null = null;
   let installationOnboardingToken = options.onboarding ? options.onboarding.token
     : options.onboarding === false ? null : readInstallationOnboardingToken();
   const signupArrival = options.onboarding ? options.onboarding.signup === true
@@ -776,7 +797,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const setupGeneration = reconnectGeneration;
     const url = gatewayUrl();
     const username = input.username?.trim() ?? "";
-    const password = input.password.trim();
+    const password = input.password?.trim();
+    const credential = password === undefined ? setupCredential(storage) : undefined;
 
     setSnapshot({
       phase: "authenticating",
@@ -789,10 +811,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
     let result: SysSetupResult;
     try {
       const { language, ...args } = input;
-      const features = language !== undefined ? await setupFeatures(client, url) : [];
+      const features = language !== undefined ? probedSetupFeatures ?? await setupFeatures(client, url) : [];
       if (disposed || setupGeneration !== reconnectGeneration) throw new Error("Session ended");
       result = await client.requestOnce(url, "sys.setup", {
         ...args,
+        ...(credential ? { credential } : undefined),
         ...(language !== undefined && features.includes("language") ? { language } : undefined),
         ...(installationOnboardingToken
           ? { onboardingToken: installationOnboardingToken }
@@ -841,8 +864,22 @@ export function createSessionService(client: SessionClient, options: SessionServ
     if (setupGeneration !== reconnectGeneration) return result;
 
     storeValue(STORAGE_USERNAME, result.user.username, storage);
-    await login({ username: result.user.username, password });
+    if (credential && result.session) {
+      removeValue(STORAGE_SETUP_CREDENTIAL, storage);
+      await adoptSession({ username: result.user.username, tokenId: result.session.tokenId, token: credential, expiresAt: result.session.expiresAt });
+    } else {
+      await login({ username: result.user.username, password });
+    }
     return result;
+  };
+
+  const adoptSession = async (session: PersistedSessionToken): Promise<ConnectResult> => {
+    // Kept as the current session first, so signing in rotates it like any other and revokes this one.
+    await withSessionTokenLock(() => {
+      currentSessionToken = session;
+      storePersistedToken(session, storage);
+    });
+    return await login({ username: session.username, token: session.token });
   };
 
   const lock = async (reason: TextKey = "session.status.locked"): Promise<void> => {
@@ -887,8 +924,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const persisted = currentSessionToken = readPersistedToken(storage);
 
     if (installationOnboardingToken) {
-      // The link opens setup directly.
-      setSnapshot({ phase: "setup", url, username: snapshot.username, connectionId: null, message: null, ...setupFacts(signupArrival) });
+      // The link opens setup directly, once the Ship says whether setup needs a password.
+      probedSetupFeatures = await setupFeatures(client, url).catch(() => null);
+      if (disposed || generation !== reconnectGeneration) return;
+      setSnapshot({ phase: "setup", url, username: snapshot.username, connectionId: null, message: null,
+        ...setupFacts(signupArrival), setupEmailSignIn: probedSetupFeatures?.includes("email-sign-in") ?? false });
       return;
     }
 
@@ -930,6 +970,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       };
     },
     login,
+    adoptSession,
     setup,
     lock,
     start,
