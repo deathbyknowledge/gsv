@@ -36,7 +36,8 @@ the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
 agreement, and select **Continue**. Your handle (`@alex`) and its address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
-then pick a password and select **Activate Ship**. Your Ship publishes a public
+then select **Activate Ship**. You sign in with a code sent to that email, so there
+is no password to choose; you can add one any time in **Settings → Account**. Your Ship publishes a public
 profile named by your handle, so people can find you and send you a message request;
 the first time you open **People**, you can add a picture and a few words to it
 (see [Your profile](../how-to/contact-people.md#your-profile)). No registration invite is needed, and the terms you agreed to
@@ -95,7 +96,7 @@ The web app has five views:
 - **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds **Preferences**, **When things happen**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
+- **Settings** holds **Preferences**, **When things happen**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**, where you can add a password if you sign in by email. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 Each view is a tab in the header with an icon and its name; on phones and
 narrow windows the tabs show their icons alone. A dot on **People** marks unread

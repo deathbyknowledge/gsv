@@ -30,8 +30,9 @@ Kernel at all. Both remain in their own records.
 | `tokens`, `costNanoUsd` | From `message.usage` on an `ai.text.generate` result: its `totalTokens`, and `cost.total` in USD converted to nano-USD |
 
 `args` is the input as sent, the whole of it, so the ledger answers "what
-exactly ran" on its own. Nothing is interpreted or redacted: the ledger is the
-owner's own record, read by that owner and by root, and it records a command
+exactly ran" on its own. Nothing is interpreted or redacted, except the secrets
+that authorize sign-in, recovery, passwords and pairing, which those calls keep to
+their attempt id or account. The ledger is the owner's own record, read by that owner and by root, and it records a command
 the way an endpoint sensor records a command line. A credential handed to a
 syscall as an argument is recorded like anything else. A line is cut at 16 KB
 of JSON text with the cut marked, which holds nearly every command, script and

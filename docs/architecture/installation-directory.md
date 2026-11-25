@@ -92,8 +92,8 @@ Inside a Kernel or Process, the gate remembers an `active` answer for one
 minute and shares one directory lookup among concurrent requests, so ordinary
 traffic does not query Accounts per frame. A refusal is never remembered and
 clears an earlier confirmation. Calls that authenticate or grant credentials
-(`sys.connect`, device pairing and account recovery, and the recovery and
-owner-link authorizations Accounts requests) always ask Accounts. Deletion
+(`sys.connect`, device pairing, account recovery and email sign-in, and the
+recovery and owner-link authorizations Accounts requests) always ask Accounts. Deletion
 quiescence clears the confirmation. A lookup that fails or takes longer than
 two seconds is recorded as a diagnostic and fails closed with a retryable
 "Ship is briefly unreachable" error, because an outage cannot be told apart
@@ -277,7 +277,11 @@ root's. Verification mail is independent of the space being recovered.
 
 The Ship's sign-in page finds the owner page through `account.recovery.options`,
 built from `GSV_OWNER_SIGNUP_URL`'s origin and the Ship's own handle. Like the
-setup link, it carries no authority. The owner page gives the same answer whether
+setup link, it carries no authority. Its `emailSignIn` field offers email sign-in,
+which uses the same verification: `account.signin.start` has Accounts mail a code
+to the owner, and `account.signin.redeem` turns a correct code into a one-time claim
+that the Kernel spends on a personal session. A space with `ownerSetupRecovery`
+advertises the `email-sign-in` setup feature and activates without a password. The owner page gives the same answer whether
 or not an email owns a handle, including when a send limit applied.
 
 ## Schema

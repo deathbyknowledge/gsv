@@ -72,11 +72,14 @@ gsv status
 `login` takes your Ship's address, such as `gsv login me.ship.space`, and
 remembers it; later logins can omit it. A bare host becomes `wss://HOST/ws`
 (`ws://` for `localhost`), and an `http(s)://` address is converted. The
-address is saved only after a successful sign-in. `login` asks only for the
-password of your personal account; pass `--username root` for administration.
-It creates a short-lived user session with `sys.token.create` (8 hours by
-default) and saves it in `~/.config/gsv/config.toml`. Signing in to a
-different Ship forgets the previous account name.
+address is saved only after a successful sign-in. Where the Ship takes email
+sign-in, `login` asks for your email and then the six-digit code sent to it;
+press Enter at the email prompt to use your password instead. Otherwise it asks
+for the password of your personal account. Pass `--username root` for
+administration, which always uses a password. A password sign-in creates a user
+session with `sys.token.create` (30 days by default, or `--ttl-hours`); an email
+sign-in lasts 30 days. The session is saved in `~/.config/gsv/config.toml`.
+Signing in to a different Ship forgets the previous account name.
 
 `logout` revokes the session on the Ship with `sys.token.revoke`, then clears
 it locally. When the Ship can't be reached, the local session is still cleared
