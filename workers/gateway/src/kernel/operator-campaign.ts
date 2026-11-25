@@ -52,8 +52,11 @@ export async function scheduleOperatorCampaign(
   });
   const timezone = ownerTimezone(host.config, account.uid);
   const base = { timezone, messengers, lastActiveAt: ship.lastActiveAt };
-  const existing = ctx.schedules.list({ ownerUid: account.uid, includeDisabled: true, limit: 500 }).records;
-  if (existing.some((schedule) => schedule.name === input.name)) return { ...base, status: "exists", atMs: null };
+  for (let offset = 0; ; offset += 100) {
+    const page = ctx.schedules.list({ ownerUid: account.uid, includeDisabled: true, limit: 100, offset });
+    if (page.records.some((schedule) => schedule.name === input.name)) return { ...base, status: "exists", atMs: null };
+    if (page.records.length === 0 || offset + page.records.length >= page.count) break;
+  }
   const at = (time: string) => {
     const expression = normalizeScheduleExpression({ kind: "at", localTime: time, timezone }, ctx);
     if (expression.kind !== "at") throw new Error("A local time resolves to a one-shot");
