@@ -4,6 +4,7 @@ import { FS_READ, SYSCALL_TOOL_NAMES } from "./constants";
 export const AGENT_READ_DEFAULT_LINE_LIMIT = 2_000;
 export const AGENT_READ_MAX_BYTES = 64 * 1024;
 
+// read({ path: "/foo", offset: 1, limit: 100 })
 export const FS_READ_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[FS_READ],
   description:
