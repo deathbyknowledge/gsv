@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
 import { InstallationOwnerRecovery } from "./owner-recovery";
-import { InstallationOwnerSignIn } from "./owner-service";
+import { InstallationOwnerSignIn, installationOwnerSignIn } from "./owner-service";
 import { InstallationOwnerStore } from "./owner-store";
 import { AccountStore } from "./store";
 import { sha256Hex } from "./tokens";
@@ -115,5 +115,17 @@ describe("owner email sign-in for a Kernel", () => {
     await expect(f.signIn.sendOwnerSignInCode({ ...attempt, secret: "short", email: f.email, source: f.source })).rejects.toThrow();
     await expect(f.signIn.verifyOwnerSignIn({ ...attempt, attemptId: "not-a-uuid", code: "123456" })).rejects.toThrow();
     expect(f.delivered).toHaveLength(0);
+  });
+});
+
+describe("owner email sign-in from an operator's Accounts", () => {
+  it("serves only the Kernel's deployment-granted binding, and only where owner email is configured", () => {
+    const mail: SendEmail = { send: vi.fn() };
+    const configured = { INSTALLATIONS_DB: env.INSTALLATIONS_DB, OWNER_EMAIL: mail, GSV_OWNER_EMAIL_FROM: "login@ship.space", GSV_OWNER_AUTH_SECRET: "sign-in-test-secret-".repeat(4) };
+    const kernel = { authority: "kernel-owner-link" };
+    expect(installationOwnerSignIn(configured, "principal_registry", kernel)).toBeInstanceOf(InstallationOwnerSignIn);
+    expect(() => installationOwnerSignIn(configured, "principal_registry", undefined)).toThrow("not configured");
+    expect(() => installationOwnerSignIn(configured, "principal_registry", { authority: "other" })).toThrow("not configured");
+    expect(() => installationOwnerSignIn({ ...configured, OWNER_EMAIL: undefined }, "principal_registry", kernel)).toThrow("not configured");
   });
 });

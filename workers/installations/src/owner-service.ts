@@ -31,7 +31,9 @@ export type InstallationOwnerEnvironment = ProductEmailEnvironment & {
   ASSETS?: Fetcher;
 };
 
-export function ownerEmailEnabled(env: InstallationOwnerEnvironment): boolean {
+type OwnerEmailEnvironment = Pick<InstallationOwnerEnvironment, "OWNER_EMAIL" | "GSV_OWNER_EMAIL_FROM" | "GSV_OWNER_EMAIL_REPLY_TO" | "GSV_OWNER_AUTH_SECRET">;
+
+export function ownerEmailEnabled(env: OwnerEmailEnvironment): boolean {
   return Boolean(env.OWNER_EMAIL && env.GSV_OWNER_EMAIL_FROM && env.GSV_OWNER_AUTH_SECRET);
 }
 
@@ -102,10 +104,18 @@ export class InstallationOwnershipEntrypoint extends WorkerEntrypoint<Installati
   }
 
   private signIn(): InstallationOwnerSignIn {
-    if (this.ctx.props?.authority !== "kernel-owner-link" || !ownerEmailEnabled(this.env)) throw new Error("Owner email sign-in is not configured");
-    const auth = new InstallationOwnerAuthStore(this.env.INSTALLATIONS_DB, this.env.GSV_OWNER_AUTH_SECRET!);
-    return new InstallationOwnerSignIn(auth, new InstallationOwnerRecovery(auth,
-      new InstallationOwnerStore(this.env.INSTALLATIONS_DB, OPERATOR_REGISTRY_PRINCIPAL_ID),
-      this.env.OWNER_EMAIL!, { from: this.env.GSV_OWNER_EMAIL_FROM!, replyTo: this.env.GSV_OWNER_EMAIL_REPLY_TO }));
+    return installationOwnerSignIn(this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, this.ctx.props);
   }
+}
+
+/**
+ * Owner email sign-in for the Kernel's deployment-granted binding, where the operator configured owner email. An
+ * operator's own Accounts Worker serves it from its entrypoint with its registry principal.
+ */
+export function installationOwnerSignIn(env: OwnerEmailEnvironment & Pick<InstallationOwnerEnvironment, "INSTALLATIONS_DB">,
+  registryPrincipalId: string, authority: { authority?: string } | undefined): InstallationOwnerSignIn {
+  if (authority?.authority !== "kernel-owner-link" || !ownerEmailEnabled(env)) throw new Error("Owner email sign-in is not configured");
+  const auth = new InstallationOwnerAuthStore(env.INSTALLATIONS_DB, env.GSV_OWNER_AUTH_SECRET!);
+  return new InstallationOwnerSignIn(auth, new InstallationOwnerRecovery(auth, new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId),
+    env.OWNER_EMAIL!, { from: env.GSV_OWNER_EMAIL_FROM!, replyTo: env.GSV_OWNER_EMAIL_REPLY_TO }));
 }
