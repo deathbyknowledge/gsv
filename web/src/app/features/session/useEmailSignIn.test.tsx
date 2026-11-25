@@ -131,6 +131,20 @@ describe("email sign-in", () => {
     expect(screen.state.view.step).toBe("code");
   });
 
+  it("starts over instead of repeating a lost start whose ten minutes are over", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    ship();
+    stubBrowser("/chat");
+    const screen = await mount();
+    await act(() => screen.state.view.onEmail("owner@example.com"));
+    requestOnce.mockRejectedValueOnce(new Error("Connection interrupted"));
+    await submit(screen);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    await submit(screen);
+    const [lost, fresh] = calls("account.signin.start");
+    expect(fresh?.id).not.toBe(lost?.id);
+  });
+
   it("finishes from the email's button after a reload lost the start's answer", async () => {
     ship();
     stubBrowser("/chat");

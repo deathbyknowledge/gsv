@@ -115,7 +115,7 @@ export function useEmailSignIn({ session, snapshot, visible }: { session: Sessio
     try {
       // A start without an answer is repeated: Accounts mails one attempt once, and would not mail a new one for the
       // same email this soon. A dead attempt cannot be mailed again, so it starts over.
-      next = unanswered?.email === address ? unanswered
+      next = unanswered?.email === address && emailSignInAttemptLive(unanswered) ? unanswered
         : resend && attempt && failure !== "expired" && failure !== "locked" && emailSignInAttemptLive(attempt) ? attempt
         : createEmailSignInAttempt(address);
     } catch {
