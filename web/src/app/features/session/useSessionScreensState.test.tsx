@@ -107,6 +107,45 @@ describe("minimal account setup", () => {
     } finally { await screen.unmount(); }
   });
 
+  it("opens a self-signed-up Ship that signs in by email without asking anything, offering only a retry if that fails", async () => {
+    const screen = await setupScreen("/onboarding");
+    try {
+      await screen.change({ phase: "booting", arrivedFromSignup: true });
+      // The Ship has not answered yet, and sign-in is never shown to a new owner.
+      expect(screen.state().openingShip).toBe(true);
+      await screen.change({ phase: "setup", setupConsentRequired: false, setupEmailSignIn: true });
+      const expected = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX" };
+      expect(screen.setup).toHaveBeenCalledExactlyOnceWith(expected);
+      await screen.change({ phase: "authenticating" });
+      expect(screen.state()).toMatchObject({ visibleView: "setup", openingShip: true });
+      await screen.change({ phase: "setup", message: { text: "The Ship could not start." } });
+      expect(screen.state()).toMatchObject({ openingShip: false, setup: { asksNothing: true } });
+      expect(screen.setup).toHaveBeenCalledOnce();
+      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).toHaveBeenLastCalledWith(expected);
+      expect(screen.setup).toHaveBeenCalledTimes(2);
+    } finally { await screen.unmount(); }
+  });
+
+  it("opens each new Ship where one app sets up several, as Desktop does", async () => {
+    const screen = await setupScreen("/onboarding");
+    try {
+      await screen.change({ setupConsentRequired: false, setupEmailSignIn: true, arrivedFromSignup: true });
+      await screen.change({ phase: "ready" });
+      await screen.change({ phase: "setup", url: "wss://other.example/ws" });
+      expect(screen.setup).toHaveBeenCalledTimes(2);
+    } finally { await screen.unmount(); }
+  });
+
+  it("keeps the activate step where the terms still need agreeing", async () => {
+    const screen = await setupScreen("/onboarding");
+    try {
+      await screen.change({ setupConsentRequired: true, setupEmailSignIn: true });
+      expect(screen.state()).toMatchObject({ openingShip: false, setup: { asksNothing: false } });
+      expect(screen.setup).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
   it("defers blur errors until submit when a pointer press does not focus Continue", async () => {
     const screen = await setupScreen();
     try {

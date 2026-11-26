@@ -36,7 +36,7 @@ the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
 agreement, and select **Continue**. Your handle (`@alex`) and its address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
-then select **Activate Ship**. You sign in with a code sent to that email, so there
+and your Ship activates and opens on its own. You sign in with a code sent to that email, so there
 is no password to choose; you can add one any time in **Settings → Account**. Your Ship publishes a public
 profile named by your handle, so people can find you and send you a message request;
 the first time you open **People**, you can add a picture and a few words to it

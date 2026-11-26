@@ -9,8 +9,9 @@
  * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
  * Kernel does, a quiet beat, a long think, then the welcome landing whole.
  * `?fresh=starters` is a fresh space whose welcome is the starters sketch (see /starters below).
- * `?fresh=setup` is a fresh space that first sets up without a password, as an owner who signed up by email does;
- * signing out afterwards shows email sign-in.
+ * `?fresh=setup` is a fresh space that first sets up without a password, as an operator-created space whose owner
+ * signs in by email does; signing out afterwards shows email sign-in. `?fresh=signup` arrives from self-signup
+ * instead, which already agreed to the terms, and `?fresh=signup-error` fails that first setup once.
  * `?fresh=0` returns to the seeded conversation.
  * Of the config, this browser keeps only the Language preference, so Settings can switch the
  * interface language; other settings refuse to save.
@@ -105,18 +106,22 @@ export function mockGatewayRequested(): boolean {
 }
 
 /** A fresh space sticks to the tab like the mock itself, and so does the welcome it was asked for. */
-function freshRequested(): "welcome" | "starters" | "setup" | null {
+type FreshSetup = "setup" | "signup" | "signup-error";
+const FRESH_SETUPS: readonly string[] = ["setup", "signup", "signup-error"] satisfies FreshSetup[];
+const freshSetup = (value: string | null): value is FreshSetup => value !== null && FRESH_SETUPS.includes(value);
+
+function freshRequested(): "welcome" | "starters" | FreshSetup | null {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1" || asked === "starters" || asked === "setup") {
+    if (asked === "1" || asked === "starters" || freshSetup(asked)) {
       window.sessionStorage.setItem(FRESH_FLAG, asked);
       window.sessionStorage.removeItem(SET_UP_FLAG);
       window.localStorage.removeItem(FIRST_RUN_SEEN);
-      if (asked === "setup") forgetSeededSession();
+      if (freshSetup(asked)) forgetSeededSession();
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     const kept = window.sessionStorage.getItem(FRESH_FLAG);
-    return kept === "starters" || kept === "setup" ? kept : kept === "1" ? "welcome" : null;
+    return kept === "starters" || freshSetup(kept) ? kept : kept === "1" ? "welcome" : null;
   } catch {
     return null;
   }
@@ -124,7 +129,7 @@ function freshRequested(): "welcome" | "starters" | "setup" | null {
 
 export function createMockGatewayClient(peer: GsvPeerInfo): GSVClient {
   try {
-    if (fresh !== "setup" && !window.localStorage.getItem(SESSION_TOKEN_KEY)) {
+    if (!freshSetup(fresh) && !window.localStorage.getItem(SESSION_TOKEN_KEY)) {
       window.localStorage.setItem(SESSION_TOKEN_KEY, JSON.stringify({ username: "esteve", tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", expiresAt: null }));
     }
   } catch {
@@ -745,8 +750,10 @@ let noticeRules: NoticeRule[] = [
 ];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
-/** A `?fresh=setup` space waits for setup, once per tab. */
-const settingUp = () => fresh === "setup" && window.sessionStorage.getItem(SET_UP_FLAG) === null;
+/** A fresh setup space waits for setup, once per tab. */
+const settingUp = () => freshSetup(fresh) && window.sessionStorage.getItem(SET_UP_FLAG) === null;
+/** `?fresh=signup-error` fails its first setup, so the retry can be seen. */
+let setupFailures = fresh === "signup-error" ? 1 : 0;
 /* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
 let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number; actorName?: string; actorHandle?: string; linkedAt?: number }[] = fresh ? [] : [
   { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
@@ -1294,7 +1301,8 @@ let mockPasswordSet = false;
 function route(socket: MockSocket, id: string, call: string, args: JsonValue): string | Promise<string> {
   switch (call) {
     case "sys.connect":
-      if (settingUp()) return refuse(id, 425, "Setup required", { setupMode: true, setupFeatures: ["language", "email-sign-in"] });
+      if (settingUp()) return refuse(id, 425, "Setup required", { setupMode: true, setupFeatures: ["language", "email-sign-in"],
+        ...(fresh === "setup" ? undefined : { consentRequired: false }) });
       world.sockets.add(socket);
       // Signing in wakes a fresh Ship for its welcome, as the Kernel does.
       if (fresh) void wake();
@@ -1320,10 +1328,14 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { ok: true });
     }
     case "sys.setup":
-      window.sessionStorage.setItem(SET_UP_FLAG, "1");
-      return respond(id, { server: { version: "0.6.0", release: "mock" }, rootLocked: false,
+      // Activation takes a moment, as a new Ship's does.
+      return new Promise((resolve) => setTimeout(resolve, 1500)).then(() => {
+        if (setupFailures > 0) { setupFailures--; return refuse(id, 503, "The Ship could not start. Try again in a moment."); }
+        window.sessionStorage.setItem(SET_UP_FLAG, "1");
+        return respond(id, { server: { version: "0.6.0", release: "mock" }, rootLocked: false,
         user: { uid: OWNER.uid, gid: OWNER.uid, gids: [OWNER.uid], username: OWNER.username, home: OWNER.home, cwd: OWNER.home },
         session: { tokenId: SEEDED_TOKEN_ID, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 } });
+      });
     case "account.list": return respond(id, { accounts });
     case "account.recovery.options": return respond(id, { emailSignIn: true });
     case "account.signin.start": return respond(id, { accepted: true });

@@ -39,7 +39,15 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     : snapshot.phase === "setup-recovery" ? "setup-recovery"
     : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
     : snapshot.phase === "booting" ? "booting" : "login";
-  const emailSignIn = useEmailSignIn({ session, snapshot, visible: visibleView === "login" || visibleView === "booting" });
+  // Self-signup already agreed to the terms, and email sign-in needs no password, so setup asks nothing and starts at
+  // once. A failure stays on screen with a retry.
+  const setupAsksNothing = setupEmailSignIn && !setupConsentRequired;
+  const setupFailed = snapshot.phase === "setup" && snapshot.message !== null;
+  const openingShip = (visibleView === "setup" && setupAsksNothing && !setupFailed)
+    || (visibleView === "booting" && snapshot.arrivedFromSignup === true);
+  // The Ship whose setup started on its own: Desktop can set up several without leaving this screen.
+  const autoSetupStarted = useRef<string | null>(null);
+  const emailSignIn = useEmailSignIn({ session, snapshot, visible: (visibleView === "login" || visibleView === "booting") && !openingShip });
   const loginMethod = administrator ? "password" : emailSignIn.method;
 
   useEffect(() => {
@@ -162,6 +170,21 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     });
   };
 
+  const startSetup = (account: { password?: string }): void => {
+    setLoginValidationError(null);
+    setPendingAction("setup");
+    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      language: navigator.languages?.[0] || navigator.language || undefined }).catch(() => {
+      // Error is reflected through session snapshot.
+    });
+  };
+
+  useEffect(() => {
+    if (visibleView !== "setup" || !setupAsksNothing || busy || autoSetupStarted.current === snapshot.url) return;
+    autoSetupStarted.current = snapshot.url;
+    startSetup({});
+  }, [visibleView, setupAsksNothing, busy, snapshot.url]);
+
   const submitSetup = (event: Event): void => {
     event.preventDefault();
     setupSubmitPressed.current = false;
@@ -185,12 +208,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupConsentTouched(true);
       if (!setupConsent) return;
     }
-    setLoginValidationError(null);
-    setPendingAction("setup");
-    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-      language: navigator.languages?.[0] || navigator.language || undefined }).catch(() => {
-      // Error is reflected through session snapshot.
-    });
+    startSetup(account);
   };
 
   // The session's own notices are translated; Kernel and storage errors are shown as sent.
@@ -198,6 +216,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   return {
     screenRef,
     visibleView,
+    /** A new owner's Ship is opening: nothing to fill in, no sign-in. */
+    openingShip,
     busy,
     /** The sign-in form waits for the Ship to say whether it takes email sign-in. */
     loginLoading: visibleView === "booting" || (visibleView === "login" && !emailSignIn.loaded),
@@ -214,6 +234,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     },
     setup: {
       emailSignIn: setupEmailSignIn,
+      asksNothing: setupAsksNothing,
       step: setupStep,
       consentRequired: setupConsentRequired,
       error: messageText(snapshot.phase === "setup" ? snapshot.message : null),
