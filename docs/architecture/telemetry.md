@@ -270,6 +270,11 @@ explicit country rather than geolocating their own export request.
   completion, latency, result count and whether the provider confirmed cost.
 - Mail: accepted, duplicate and rejected intake; terminal outbound acceptance,
   failure or unknown delivery; deferred processing; entitlement-refresh health.
+- Entitlements: `entitlements.refresh.finished` reports whether a cache refreshed,
+  found Accounts unavailable or refused its answer. A refused answer names the
+  reason: `schema`, with the first failing field's path and Zod issue code, or
+  `installation-mismatch`. Allowance values and installation IDs from the answer
+  stay out; the same reason is the cause of the caller's allowance error.
 - ripgit: unexpected request failures by route class and failure kind, joined to
   the caller's error by diagnostic ID.
 - Instances: cloud browser timings. `browser.save.finished` reports each save's
