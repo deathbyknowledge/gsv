@@ -2,6 +2,7 @@ import { exceptionDiagnosticsSchema, type ExceptionDiagnostics } from "../../dia
 import type {
   AdapterAccountStatus,
   AdapterConnectConfig,
+  AdapterDeliveryRefusal,
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,
@@ -11,6 +12,7 @@ import type {
 import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
   adapterConnectChallengeSchema,
+  adapterDeliveryRefusalSchema,
   adapterMediaSchema,
   adapterSendActionSchema,
   adapterSurfaceSchema,
@@ -134,6 +136,8 @@ export type AdapterSendResult =
       deliveryId?: string;
       /** True only when retrying the same deliveryId is safe. */
       retryable?: boolean;
+      /** Why the messenger refused it, where the sender can act on it. */
+      reason?: AdapterDeliveryRefusal;
     };
 
 export const adapterSendResultSchema = z.discriminatedUnion("ok", [
@@ -154,6 +158,7 @@ export const adapterSendResultSchema = z.discriminatedUnion("ok", [
     diagnostics: z.optional(exceptionDiagnosticsSchema),
     deliveryId: z.optional(z.string()),
     retryable: z.optional(z.boolean()),
+    reason: z.optional(adapterDeliveryRefusalSchema),
   }),
 ]);
 

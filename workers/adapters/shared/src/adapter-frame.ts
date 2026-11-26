@@ -146,6 +146,7 @@ function publicSendResult(
       deliveryId: context.deliveryId,
       retryable: result.retryable === true,
       diagnostics: result.diagnostics,
+      ...(result.reason === undefined ? undefined : { reason: result.reason }),
     };
   }
   return {

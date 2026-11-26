@@ -4,6 +4,7 @@ import type {
   AdapterSurface,
 } from "../adapter-interface";
 import type {
+  AdapterDeliveryRefusal,
   AdapterMessageDestination,
   AdapterSendArgs,
   AdapterSendResult,
@@ -345,9 +346,10 @@ async function deliverAdapterMessageOwned(
     if (!result.ok) {
       return {
         ok: false,
-        error: publicAdapterDeliveryError(adapter, result.retryable === true),
+        error: publicAdapterDeliveryError(adapter, result.retryable === true, result.reason),
         deliveryId,
         retryable: result.retryable === true,
+        ...(result.reason === undefined ? undefined : { reason: result.reason }),
         diagnostics: sanitizeExceptionDiagnostics(result.diagnostics ?? exceptionDiagnostics(result.error)),
       };
     }
@@ -384,10 +386,17 @@ async function deliverAdapterMessageOwned(
   }
 }
 
-function publicAdapterDeliveryError(adapter: string, retryable: boolean): string {
+/** The Kernel's own words for an adapter failure: provider text stays in diagnostics, and a refusal says what to do. */
+function publicAdapterDeliveryError(adapter: string, retryable: boolean, reason?: AdapterDeliveryRefusal): string {
   const name = adapter === "whatsapp"
     ? "WhatsApp"
     : adapter.charAt(0).toUpperCase() + adapter.slice(1);
+  if (reason === "reply-required") {
+    return `${name} delivers this only after the person writes to you again. Reach them another way, or wait until they write.`;
+  }
+  if (reason === "attachments-need-reply") {
+    return `${name} delivers attachments only after the person writes to you again. Send the text without attachments now, and the attachments once they reply.`;
+  }
   return retryable
     ? `${name} delivery is temporarily unavailable`
     : `${name} rejected the delivery`;

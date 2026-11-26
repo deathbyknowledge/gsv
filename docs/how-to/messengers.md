@@ -226,7 +226,8 @@ Messages are not queued for automatic delivery when you return.
 
 Approval notifications outside the window ask you to review the request in
 Ship. Attachments require an open WhatsApp window or another authorized
-destination.
+destination. When the window is closed, Ship is told why an attachment didn't
+arrive, so it can send the text now and the attachment after you reply.
 
 The operator must configure the matching Meta-approved `gsv_message` template
 before out-of-window messages can be sent. It uses one body parameter and no

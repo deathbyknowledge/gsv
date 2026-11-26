@@ -33,7 +33,7 @@ import {
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
   validateAdapterMediaBody,
 } from "../../shared/src/media-body";
-import { adapterActionText, type AdapterSendAction } from "../../../../packages/gsv/src/protocol/adapters.js";
+import { adapterActionText, type AdapterDeliveryRefusal, type AdapterSendAction } from "../../../../packages/gsv/src/protocol/adapters.js";
 import { messageChoicesText } from "../../../../packages/gsv/src/protocol/message-choices.js";
 import type {
   AdapterOutboundMessage,
@@ -176,7 +176,8 @@ type DeliveryOptions = {
 /** One provider message of a delivery; resolves to the WhatsApp message id it produced. */
 type DeliveryPart = () => Promise<string | undefined>;
 type ClaimedDelivery = Extract<DeliveryClaim, { claimed: true }>;
-type FailDelivery = (kind: DeliveryFailureKind, detail?: string, cause?: unknown) => Promise<AdapterSendResult>;
+/** `reason` names a definite refusal the sender can act on, and is kept only for a permanent failure. */
+type FailDelivery = (kind: DeliveryFailureKind, detail?: string, cause?: unknown, reason?: AdapterDeliveryRefusal) => Promise<AdapterSendResult>;
 type ManagedPairingStub = { bind(surfaceId: string): Promise<AdapterPairingLinkBinding | null> };
 /** A link code bound to this sender, as the Kernel redeems it. */
 type BoundLink = Pick<AdapterPairingLinkBinding, "claimId" | "expiresAt" | "installationId"> & { code: string };
@@ -1145,7 +1146,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const legacyGrouping = partition === "legacy";
     const grouping = legacyGrouping || options.splitParagraphs !== false ? partition : null;
 
-    const fail: FailDelivery = async (kind, detail, cause) => {
+    const fail: FailDelivery = async (kind, detail, cause, reason) => {
       const error = detail ?? `WhatsApp delivery failed (${kind})`;
       const diagnostics = exceptionDiagnostics(cause ?? error);
       if (kind === "retryable") {
@@ -1160,8 +1161,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
         return { ok: false, error, ambiguous: true, diagnostics };
       }
-      await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error, diagnostics);
-      return { ok: false, error, diagnostics };
+      await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error, diagnostics, reason);
+      return { ok: false, error, diagnostics, ...(reason === undefined ? undefined : { reason }) };
     };
 
     // Platform pairing responses require an open window. Kernel deliveries
@@ -1176,7 +1177,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const issue = this.deliveryContextIssue(current, context);
       if (issue) throw new Error(issue);
       if (!whatsAppWindowOpen(current, Date.now())) {
-        if (!fallbackOwner || claim.progress.sent > 0) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR);
+        if (!fallbackOwner || claim.progress.sent > 0) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR, undefined, "reply-required");
         return await this.deliverOutsideWindow(message, fallbackOwner, claim, options, fail, current);
       }
       const token = this.accessToken();
@@ -1275,7 +1276,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
         // A definite rejection resumes at the first unsent part on retry; an
         // unknown provider outcome stays ambiguous and is never replayed.
-        return await fail(error.kind, error.message, error);
+        return await fail(error.kind, error.message, error, error.windowClosed ? "reply-required" : undefined);
       }
       return await fail(attemptedProviderSend ? "ambiguous" : "retryable", undefined, error);
     }
@@ -1291,8 +1292,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     observed: ManagedWhatsAppPeerState,
   ): Promise<AdapterSendResult> {
     const template = managedWhatsAppTemplate(this.env);
-    if (!template) return await fail("permanent", WHATSAPP_NO_TEMPLATE_ERROR);
-    if (message.media?.length) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR);
+    if (!template) return await fail("permanent", WHATSAPP_NO_TEMPLATE_ERROR, undefined, "reply-required");
+    if (message.media?.length) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR, undefined, "attachments-need-reply");
     // Templates cannot carry approval buttons. Direct the person to the
     // original request in GSV instead of attaching a fake interactive anchor.
     const offered = message.choices ? messageChoicesText(message.text, message.choices) : message.text;

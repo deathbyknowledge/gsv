@@ -4071,6 +4071,21 @@ describe("adapter lifecycle handlers", () => {
     expect(JSON.stringify(result)).not.toContain("private user message");
   });
 
+  it.each([
+    { reason: "reply-required", text: "WhatsApp delivers this only after the person writes to you again. Reach them another way, or wait until they write." },
+    { reason: "attachments-need-reply", text: "WhatsApp delivers attachments only after the person writes to you again. Send the text without attachments now, and the attachments once they reply." },
+  ])("words an adapter's $reason refusal for the Ship in the Kernel's own text", async ({ reason, text }) => {
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (_installation, _context, frame) => ({
+      type: "res", id: frame.id, ok: true,
+      data: { ok: false, error: "private provider context", retryable: false, reason },
+    }));
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, { upsert: vi.fn() });
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
+    const result = await handleAdapterSend({ adapter: "whatsapp", accountId: "primary", deliveryId: `refused-${reason}`, surface: { kind: "dm", id: "dm-1" }, text: "a chart" }, ctx);
+    // The provider's text stays in diagnostics, for authorized inspection only.
+    expect(result).toMatchObject({ ok: false, retryable: false, reason, error: text });
+  });
+
   it("sanitizes malformed activity results at the gateway boundary", async () => {
     const privatePayload = "private-activity-payload";
     const warningLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
