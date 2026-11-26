@@ -349,6 +349,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
     connectionId: null,
     server: null,
     message: { key: "session.status.booting" },
+    // Known before the Ship answers, so a new owner sees their Ship opening instead of sign-in.
+    ...(signupArrival ? { arrivedFromSignup: true } : undefined),
   };
 
   let refreshTimerId: number | null = null;
@@ -801,7 +803,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
     const username = input.username?.trim() ?? "";
     const password = input.password?.trim();
     const credential = password === undefined ? currentSetupCredential ??= setupCredential(storage) : undefined;
-    // What the Ship said about its setup still holds when this attempt fails, so the screen retries the same way.
+    // What the Ship said about its setup holds while this attempt runs and when it fails, so the screen keeps showing
+    // the same setup and retries it the same way.
     const facts: SetupFacts = snapshot.phase === "setup"
       ? { arrivedFromSignup: snapshot.arrivedFromSignup, setupConsentRequired: snapshot.setupConsentRequired, setupEmailSignIn: snapshot.setupEmailSignIn }
       : setupFacts(signupArrival);
@@ -812,6 +815,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       username: username || snapshot.username,
       connectionId: null,
       message: { key: "session.status.creatingAccount" },
+      ...facts,
     });
 
     let result: SysSetupResult;

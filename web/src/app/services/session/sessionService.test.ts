@@ -246,6 +246,23 @@ describe("account setup", () => {
     service.dispose?.();
   });
 
+  it("keeps what the Ship said about its setup while setup runs, so the screen never shows a password form", async () => {
+    installWindow();
+    const client = createSetupClient();
+    let answer!: (value: typeof setupResult & { session: { tokenId: string; expiresAt: number } }) => void;
+    client.requestOnce.mockRejectedValueOnce({ code: 425, details: { setupMode: true, consentRequired: false, setupFeatures: ["language", "email-sign-in"] } })
+      .mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, signup: true, complete: vi.fn(), discard: vi.fn() } });
+    await service.start();
+    const running = service.setup({ timezone: "Europe/Madrid" });
+    await vi.waitFor(() => expect(client.requestOnce).toHaveBeenCalledTimes(2));
+    expect(service.snapshot()).toMatchObject({ phase: "authenticating", arrivedFromSignup: true, setupConsentRequired: false, setupEmailSignIn: true });
+    answer({ ...setupResult, session: { tokenId: "token-1", expiresAt: 2_000 } });
+    await running;
+    expect(service.snapshot().phase).toBe("ready");
+    service.dispose?.();
+  });
+
   it("retries setup with the same session credential when this browser cannot save it", async () => {
     installWindow();
     const client = createSetupClient();

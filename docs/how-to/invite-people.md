@@ -8,8 +8,8 @@ An operator can host separate Ships for a [whole team](/how-to/organisations).
 ## Create a Ship {#create-a-space}
 
 Open your operator's signup page or choose **Create your Ship** in Desktop.
-Choose a handle, enter your email and agree to the terms. Verify your email, then
-activate your Ship; you sign in with that email, so there is no password to choose.
+Choose a handle, enter your email and agree to the terms. Verify your email, and
+your Ship activates and opens; you sign in with that email, so there is no password to choose.
 Registration needs no invite code when the operator enables
 it. One verified email can create one Ship. Sign in with the same email to reopen it.
 

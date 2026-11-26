@@ -16,6 +16,10 @@ type SetupScreenProps = {
   arrivedFromSignup?: boolean;
   /** The owner signs in by email, so setup asks for no password. */
   emailSignIn?: boolean;
+  /** Setup asks nothing at all, so it started on its own; the form only offers a retry. */
+  asksNothing?: boolean;
+  /** The Ship is opening: nothing to fill in. */
+  opening?: boolean;
   step: "credentials" | "consent";
   /** False when signup already collected the terms agreement. */
   consentRequired: boolean;
@@ -34,24 +38,33 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, emailSignIn = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, emailSignIn = false, asksNothing = false, opening = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const t = useT();
   const consentId = useId();
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const dot = space.indexOf(".");
   const [handle, domain] = dot > 0 ? [space.slice(0, dot), space.slice(dot)] : [space, ""];
   const credentials = step === "credentials";
+  const greeting = rich(t("session.setup.welcome"), { space: <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span> });
+  if (opening) return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
+    <section class="gsv-setup-panel" data-session-setup-view data-setup-opening aria-labelledby="setup-heading" aria-busy="true">
+      <div class="gsv-setup-head">
+        <h1 id="setup-heading" class="gsv-setup-greeting">{greeting}</h1>
+        <p role="status">{t("session.setup.opening")}<span class="gsv-setup-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></p>
+      </div>
+    </section>
+  </AuthLayout>;
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
-      {arrivedFromSignup && credentials && !noticeDismissed && <div class="gsv-setup-notice" role="status">
+      {arrivedFromSignup && credentials && !asksNothing && !noticeDismissed && <div class="gsv-setup-notice" role="status">
         <Alert variant="success" text={t("session.setup.created")} onDismiss={() => setNoticeDismissed(true)} />
       </div>}
       <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
         {consentRequired && <p class="gsv-setup-space">{space}</p>}
         <h1 id="setup-heading" class={credentials ? "gsv-setup-greeting" : undefined} data-setup-heading tabIndex={-1}>{credentials
-          ? rich(t("session.setup.welcome"), { space: <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span> })
+          ? greeting
           : t("session.setup.beforeYouBegin")}</h1>
-        {credentials ? <p>{t(emailSignIn ? "session.setup.emailSignIn" : "session.setup.choosePassword")}</p> : null}
+        {credentials && !asksNothing ? <p>{t(emailSignIn ? "session.setup.emailSignIn" : "session.setup.choosePassword")}</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
         {credentials ? emailSignIn ? null : <>
@@ -89,7 +102,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, e
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
             {busy ? <span role="status" aria-label={t("session.setup.opening")}>
               <span aria-hidden="true">{t("session.setup.opening")}<span class="gsv-setup-loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
-            </span> : t(credentials && consentRequired ? "session.continue" : "session.setup.activate")}
+            </span> : t(asksNothing ? "session.retry" : credentials && consentRequired ? "session.continue" : "session.setup.activate")}
           </button>
         </div>
       </form>
