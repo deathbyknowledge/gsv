@@ -64,13 +64,14 @@ export class EntitlementCache {
       const value = await this.service.getEntitlements({ version: 1, installationId: this.installationId });
       outcome = "invalid";
       const result = snapshotSchema.parse(value);
-      const receivedAt = Math.max(now, Date.now());
-      if (result.installationId !== this.installationId || result.issuedAt > receivedAt || result.expiresAt <= receivedAt) {
-        throw new Error("Invalid entitlement snapshot");
-      }
-      this.cached = result;
+      if (result.installationId !== this.installationId) throw new Error("Invalid entitlement snapshot");
+      // The issuer stamps its answer with its own clock, which can run ahead of or behind this one.
+      // Its lifetime counts from this request instead, so the two clocks are never compared.
+      const snapshot = { ...result, issuedAt: now, refreshAfter: now + result.refreshAfter - result.issuedAt,
+        expiresAt: now + result.expiresAt - result.issuedAt };
+      this.cached = snapshot;
       outcome = "refreshed";
-      return result;
+      return snapshot;
     } finally {
       if (this.telemetry) emitTelemetry(this.telemetry.env, {
         installationId: this.installationId, component: this.telemetry.component,

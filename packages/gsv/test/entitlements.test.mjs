@@ -26,13 +26,23 @@ test("coalesces refreshes, adopts changed policy at expiry, and never admits exp
   await assert.rejects(cache.get(now + 600_000), /temporarily unavailable/);
 });
 
-test("rejects foreign, expired, future and overlong snapshots", async () => {
+test("rejects foreign and overlong snapshots", async () => {
   const now = Date.now();
-  for (const value of [
-    { ...snapshot(now), installationId: "space-b" }, snapshot(now - 300_001), snapshot(now + 10_000),
-    { ...snapshot(now), expiresAt: now + 300_001 },
-  ]) {
+  for (const value of [{ ...snapshot(now), installationId: "space-b" }, { ...snapshot(now), expiresAt: now + 300_001 }]) {
     await assert.rejects(new EntitlementCache({ getEntitlements: async () => value }, "space-a").get(now), /unavailable/);
+  }
+});
+
+test("counts a snapshot's lifetime from the request, whatever the issuer's clock reads", async () => {
+  const now = Date.now();
+  for (const skew of [15, 10_000, -300_001]) {
+    let calls = 0;
+    const cache = new EntitlementCache({ getEntitlements: async () => { calls++; return snapshot(now + skew, { enabled: true }); } }, "space-a");
+    assert.equal((await cache.get(now)).values.enabled, true);
+    assert.equal((await cache.get(now + 299_999)).values.enabled, true);
+    assert.equal(calls, 1);
+    await cache.get(now + 300_000);
+    assert.equal(calls, 2);
   }
 });
 
