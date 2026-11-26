@@ -250,12 +250,13 @@ it("accepts the maximum delivery id without deriving a second replay id", async 
 
 it("rejects out-of-window media explicitly and consumes its body", async () => {
   const { peer, route, message } = await seed("34690221111", true);
-  const body = binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4]));
-  using result = await peer.sendMessage(route.installationId, {
-    ...message, media: [{ type: "image", mimeType: "image/png", size: 4, body: { offset: 0, length: 4 } }],
-  }, body);
-  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("cannot deliver attachments") });
+  const withImage = { ...message, media: [{ type: "image" as const, mimeType: "image/png", size: 4, body: { offset: 0, length: 4 } }] };
+  using result = await peer.sendMessage(route.installationId, withImage, binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4])));
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("cannot deliver attachments"), reason: "attachments-need-reply" });
   expect(await messages(message.actorId)).toEqual([]);
+  // A replay of the same delivery gives the same reason.
+  using replay = await peer.sendMessage(route.installationId, withImage, binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4])));
+  expect(replay).toMatchObject({ ok: false, reason: "attachments-need-reply" });
 });
 
 it("reports disabled templates instead of claiming a delivery", async () => {

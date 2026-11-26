@@ -709,7 +709,9 @@ delivery ledger as every other outbound message. Outbound
 `adapter.send` calls that are retried must reuse `deliveryId`; the successful
 result echoes it and reports `deliveryState` as `sent`, `deduplicated`, or
 `ambiguous`. A retryable failure means only that replaying the same delivery id
-with the same destination and content is safe. Adapter account ledgers bind the
+with the same destination and content is safe. A definite refusal the sender can
+act on carries a `reason`, `reply-required` or `attachments-need-reply`, which
+the adapter keeps for replays of that id. Adapter account ledgers bind the
 id to a request fingerprint and reject a replay whose destination, reply
 context, text, media metadata, or binary media bytes differ. A new id always
 denotes a new logical message.

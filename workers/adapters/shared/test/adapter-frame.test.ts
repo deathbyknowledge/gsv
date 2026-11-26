@@ -160,6 +160,13 @@ describe("handleAdapterFrame", () => {
     } });
   });
 
+  it("passes a refusal the sender can act on through the public frame", async () => {
+    const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), {
+      send: async () => ({ ok: false, error: "Provider refused attachments", reason: "attachments-need-reply" }),
+    });
+    expect(result).toMatchObject({ type: "res", ok: true, data: { ok: false, retryable: false, reason: "attachments-need-reply" } });
+  });
+
   it("retains diagnostics when the provider handler throws", async () => {
     const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), { send: async () => {
       throw Object.assign(new TypeError("Provider disconnected token=private-key"), { request: { body: "private message" } });

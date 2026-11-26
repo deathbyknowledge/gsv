@@ -1,5 +1,6 @@
 import type { ExceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import { sameAdapterDataOwner, type AdapterDataScope, type AdapterRetirement } from "./retirement";
+import { adapterDeliveryRefusalSchema, type AdapterDeliveryRefusal } from "../../../../packages/gsv/src/protocol/adapters.js";
 import type {
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -63,6 +64,8 @@ type DeliveryRecord = (
       requestFingerprint: string;
       error: string;
       diagnostics?: ExceptionDiagnostics;
+      /** A refusal the sender can act on; only a failed delivery has one. */
+      reason?: AdapterDeliveryRefusal;
       createdAt: number;
       expiresAt: number;
     }) & { owner?: AdapterDataScope };
@@ -354,6 +357,7 @@ export class DeliveryLedger {
     attemptId: string,
     error: string,
     diagnostics?: ExceptionDiagnostics,
+    reason?: AdapterDeliveryRefusal,
   ): Promise<void> {
     await this.replaceAttempt(deliveryId, attemptId, (attempt) => ({
       state: "failed",
@@ -361,6 +365,7 @@ export class DeliveryLedger {
       requestFingerprint: attempt.requestFingerprint,
       error: truncate(error, MAX_ERROR_LENGTH),
       diagnostics,
+      ...(reason === undefined ? undefined : { reason }),
       createdAt: attempt.createdAt,
       expiresAt: attempt.expiresAt,
     }));
@@ -443,7 +448,8 @@ function claimFromExisting(record: DeliveryRecord): DeliveryClaim {
     case "failed":
       return {
         claimed: false,
-        result: { ok: false, error: record.error, diagnostics: record.diagnostics },
+        result: { ok: false, error: record.error, diagnostics: record.diagnostics,
+          ...(record.reason === undefined ? undefined : { reason: record.reason }) },
       };
     case "ambiguous":
       return {
@@ -521,7 +527,8 @@ function isDeliveryRecord(value: DeliveryMeta | DeliveryRecord | null | undefine
       && isMessageIds(record.messageIds);
   }
   if (record.state === "ambiguous" || record.state === "failed") {
-    return isStringValue(record.error);
+    return isStringValue(record.error)
+      && (record.reason === undefined || (record.state === "failed" && adapterDeliveryRefusalSchema.safeParse(record.reason).success));
   }
   return false;
 }

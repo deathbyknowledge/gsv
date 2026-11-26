@@ -438,6 +438,15 @@ export function isAdapterWorkerDisconnectResult(
 }
 
 /** Provider delivery result normalized by an adapter's canonical frame handler. */
+/**
+ * Why a messenger refused a delivery outright, where the sender can act on it. The Kernel words it for the sender, so
+ * provider text never has to.
+ * - `reply-required`: nothing reaches the person until they write again.
+ * - `attachments-need-reply`: text alone can go now; attachments only after they write again.
+ */
+export type AdapterDeliveryRefusal = "reply-required" | "attachments-need-reply";
+export const adapterDeliveryRefusalSchema = z.enum(["reply-required", "attachments-need-reply"]);
+
 export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
@@ -451,7 +460,9 @@ export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
     diagnostics: z.optional(exceptionDiagnosticsSchema),
     retryable: z.optional(z.boolean()),
     ambiguous: z.optional(z.boolean()),
-  }).check(z.refine((result) => !(result.retryable === true && result.ambiguous === true))),
+    reason: z.optional(adapterDeliveryRefusalSchema),
+  }).check(z.refine((result) => !(result.retryable === true && result.ambiguous === true)
+    && (result.reason === undefined || (result.retryable !== true && result.ambiguous !== true)))),
 ]);
 
 export type AdapterProviderSendResult =
@@ -471,6 +482,8 @@ export type AdapterProviderSendResult =
       retryable?: boolean;
       /** The provider may have accepted the delivery; retrying could duplicate it. */
       ambiguous?: boolean;
+      /** Set only on a definite refusal the sender can act on. */
+      reason?: AdapterDeliveryRefusal;
     };
 
 /** Validate an adapter Worker's private send RPC result. */
