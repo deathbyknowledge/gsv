@@ -106,6 +106,20 @@ export const ripgitRouteSchema = z.enum([
   "other",
 ]);
 
+/** Why an entitlement cache refused an Accounts answer. */
+export const entitlementRejectionSchema = z.enum(["schema", "installation-mismatch"]);
+/** The first failing field, as schema keys joined with "."; "(root)" is the answer itself. */
+export const entitlementSchemaPathSchema = z.string().check(
+  z.maxLength(128),
+  z.regex(/^(?:\(root\)|[A-Za-z0-9_.*-]+)$/),
+);
+/** Zod's issue codes; any code a later Zod adds is recorded as "other". */
+export const entitlementSchemaCodeSchema = z.enum([
+  "invalid_type", "too_big", "too_small", "invalid_format", "not_multiple_of", "unrecognized_keys",
+  "invalid_union", "invalid_key", "invalid_element", "invalid_value", "custom", "other",
+]);
+export type EntitlementSchemaCode = z.infer<typeof entitlementSchemaCodeSchema>;
+
 export const telemetryComponentSchema = z.enum([
   "gateway",
   "accounts",
@@ -619,6 +633,10 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
     stream: z.literal("operational"), name: z.literal("entitlements.refresh.finished"),
     properties: z.strictObject({
       outcome: z.enum(["refreshed", "unavailable", "invalid"]), durationMs: nonNegativeIntegerSchema,
+      // Why an invalid answer was rejected: closed reasons and bounded shape metadata, never values.
+      rejection: z.optional(entitlementRejectionSchema),
+      schemaPath: z.optional(entitlementSchemaPathSchema),
+      schemaCode: z.optional(entitlementSchemaCodeSchema),
     }),
   }),
   z.strictObject({
