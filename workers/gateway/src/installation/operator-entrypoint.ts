@@ -1,5 +1,4 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { operatorCampaignSchema, type OperatorCampaign, type OperatorCampaignResult } from "../kernel/operator-campaign";
 import {
   operatorShipSnapshotRequestSchema,
   operatorShipSnapshotSchema,
@@ -41,15 +40,6 @@ export class OperatorGatewayEntrypoint extends WorkerEntrypoint<GatewayEnv, { au
     const kernel = await this.kernelOf(parseInstallationId(request.installationId));
     if (!kernel) return { found: false };
     return { found: true, copy: profileCopyChangeSchema.parse(await kernel.operatorTakedownsChanged()) };
-  }
-
-  /** Temporary: schedules a one-off operator message in one Ship. */
-  async operatorCampaign(input: { installationId: string } & OperatorCampaign): Promise<{ found: true; result: OperatorCampaignResult } | { found: false }> {
-    this.requireOperator();
-    const { installationId, ...campaign } = input;
-    const kernel = await this.kernelOf(parseInstallationId(installationId));
-    if (!kernel) return { found: false };
-    return { found: true, result: await kernel.operatorCampaign(operatorCampaignSchema.parse(campaign)) };
   }
 
   private requireOperator(): void {
