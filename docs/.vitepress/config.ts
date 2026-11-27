@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "Ship docs",
   description:
-    "Ship docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
+    "Ship docs — Ship is an open-source personal AI assistant built on GSV, a distributed stack that acts across all your devices and runs in your own Cloudflare account.",
   cleanUrls: true,
 
   redirects: {
@@ -70,7 +70,7 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "Ship docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
+          "Ship docs — Ship is an open-source personal AI assistant built on GSV, a distributed stack that acts across all your devices and runs in your own Cloudflare account.",
       },
     ],
     ["meta", { property: "og:title", content: "Ship docs" }],
