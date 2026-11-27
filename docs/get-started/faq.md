@@ -65,6 +65,11 @@ Ship is reserved, and nothing about it is kept afterwards. It never includes
 who you are, the link's own wording or an ad network's click id; anything
 outside the fixed list is reported as `other` or dropped.
 
+If your Ship is suspended, reactivated, reset or deleted, Accounts reports
+only that it happened, under the same pseudonym as the rest of your Ship's
+product events, so a count of Ships can leave it out. It never includes why,
+who did it or anything about you.
+
 ### Is anything exposed to the internet?
 
 No open ports, no VPN, no box sitting exposed. Your devices connect outbound through the gateway using tokens, so nothing comes inbound to your machines. Only your Ship URL is public, everything else is private.

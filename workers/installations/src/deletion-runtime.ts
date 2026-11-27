@@ -1,3 +1,5 @@
+import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import { reportInstallationLifecycle } from "./lifecycle-telemetry";
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { installationDeletionInventoryImportSchema, installationDeletionInspectionResultSchema,
@@ -26,7 +28,7 @@ export type AccountsDeletionEnvironment = {
   OPERATOR_DELETION_CATALOG?: OperatorResourceCatalog;
 };
 
-export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDeletionEnvironment): AccountsDeletionRuntime {
+export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDeletionEnvironment, telemetry?: TelemetryEnvironment): AccountsDeletionRuntime {
   const owners: Record<string, DiscoverableDeletionOwner> = {};
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith("DELETION_OWNER_") || !value) continue;
@@ -40,7 +42,7 @@ export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDelet
       gateway: env.DELETION_OWNER_GATEWAY,
       owners,
       namespaces: accountsDeletionNamespacesSchema.parse(env.DELETION_DISCOVERY_NAMESPACES ?? {}),
-    }, env.OPERATOR_DELETION_CATALOG, env.PDS_MODERATION);
+    }, env.OPERATOR_DELETION_CATALOG, env.PDS_MODERATION, telemetry);
 }
 
 export class AccountsDeletionRuntime {
@@ -59,6 +61,7 @@ export class AccountsDeletionRuntime {
     private readonly discovery: AccountsDeletionDiscovery = {},
     operatorCatalog?: OperatorResourceCatalog,
     private readonly openNetwork?: PdsModerationService,
+    private readonly telemetry?: TelemetryEnvironment,
   ) {
     this.inspections = new AccountsDeletionInspections(db, clock);
     this.accountOwner = new AccountsDeletionOwner(db, backupRetentionMs, clock);
@@ -171,12 +174,18 @@ export class AccountsDeletionRuntime {
       await followOnOpenNetwork(this.openNetwork, installationId, "retained");
       return this.accountOwner.installationDeletionStatus({ version: 1, operationId, installationId });
     }
+    const before = await this.db.prepare("SELECT state, activated_at FROM installations WHERE id = ?")
+      .bind(installationId).first<{ state: string; activated_at: number | null }>();
     const changed = await this.db.prepare(`UPDATE installations SET state = 'retained', reservation_expires_at = NULL
       WHERE id = ? AND handle = ? AND state IN ('active', 'restricted', 'reserved', 'provisioning', 'retained')
         AND NOT EXISTS (SELECT 1 FROM installation_reset_operations r JOIN installation_reset_participants p USING(operation_id)
           WHERE (r.previous_installation_id = installations.id OR r.replacement_installation_id = installations.id) AND p.state != 'prepared')`)
       .bind(installationId, handle).run();
     if (changed.meta.changes !== 1) throw new Error("installation cannot retire from its current state or reset preparation is pending");
+    // Only a Ship that was activated and is not already retired by a reset has anything to take back.
+    if (before && before.activated_at !== null && before.state !== "retained") {
+      reportInstallationLifecycle(this.telemetry, installationId, "installation.retired");
+    }
     // The Ship's public repository stops being served once the PDS follows.
     await followOnOpenNetwork(this.openNetwork, installationId, "retained");
     return this.accountOwner.quiesceInstallation({ version: 1, operationId, installationId });

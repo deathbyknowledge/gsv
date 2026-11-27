@@ -464,6 +464,29 @@ describe("ship.message.committed", () => {
   });
 });
 
+describe("installation lifecycle", () => {
+  const record = (component, name, properties = {}) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name, properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch (error) {
+      return { success: false, error };
+    }
+  };
+
+  it("accepts a suspension, a reactivation and a retirement only from Accounts and with no detail", () => {
+    for (const name of ["installation.restricted", "installation.unrestricted", "installation.retired"]) {
+      assert.equal(record("accounts", name).success, true);
+      assert.equal(record("gateway", name).success, false);
+      assert.equal(record("accounts", name, { reason: "abuse" }).success, false);
+    }
+    assert.equal(record("accounts", "installation.deleted").success, false);
+  });
+});
+
 describe("installation.attributed", () => {
   const record = (component, properties) => {
     try {

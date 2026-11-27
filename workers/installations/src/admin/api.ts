@@ -11,7 +11,7 @@ import { OpenNetworkFollowError, RESET_CONSEQUENCES, type InstallationAdminServi
 
 type AdminService = Pick<InstallationAdminService,
   "listInstallations" | "getInstallation" | "create" | "reissueOnboarding" | "resetInstallation" | "setInstallationState"
->;
+> & Partial<Pick<InstallationAdminService, "reportLifecycle">>;
 
 /** Installation API admission is shared by the reference Worker and operator overlays. */
 export class InstallationAdminApi {
@@ -27,13 +27,22 @@ export class InstallationAdminApi {
     const url = new URL(request.url);
     const collection = url.pathname === "/admin/api/installations";
     const route = /^\/admin\/api\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
-    if (!collection && !route) return null;
+    const lifecycleReport = url.pathname === "/admin/api/installation-lifecycle-report";
+    if (!collection && !route && !lifecycleReport) return null;
     if (!await this.access.allows(request)) {
       return new Response("Forbidden", { status: 403, headers: noStoreHeaders({ "content-type": "text/plain; charset=utf-8" }) });
     }
     if (request.method !== "GET" && request.method !== "POST") return json({ error: "Not Found" }, 404);
     if (request.method === "POST" && !hasExpectedOrigin(request, this.origin)) return json({ error: "Forbidden" }, 403);
     try {
+      if (lifecycleReport) {
+        const report = this.service.reportLifecycle?.bind(this.service);
+        if (request.method !== "POST" || !report) return json({ error: "Not Found" }, 404);
+        const { after } = await readJsonObject(request);
+        if (after !== undefined && typeof after !== "string") throw new Error("request after is invalid");
+        return json(await this.audited(request, { name: "telemetry.lifecycle.report" }, () => report(after),
+          (result) => ({ detail: { reported: String(result.reported) } })));
+      }
       if (collection) {
         if (request.method === "GET") return json(await this.service.listInstallations(readInstallationListQuery(url)));
         const body = await readJsonObject(request);

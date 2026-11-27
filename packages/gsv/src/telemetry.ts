@@ -301,6 +301,18 @@ const installationActivatedSchema = z.strictObject({
   properties: z.strictObject({}),
 });
 
+// What became of an activated Ship afterwards, under the same pseudonym as its
+// activation, so a count of activated Ships can leave out the ones that are
+// suspended or gone. `retired` covers an operator reset and an account deletion
+// alike: the installation stops being a Ship either way. No reason, operator or
+// deletion detail travels with any of them.
+const installationLifecycleSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.enum(["installation.restricted", "installation.unrestricted", "installation.retired"]),
+  properties: z.strictObject({}),
+});
+export type InstallationLifecycleEventName = z.infer<typeof installationLifecycleSchema>["name"];
+
 // Cloudflare's coarse IP country only; XX means unknown and T1 means Tor.
 // Never accept an address, location coordinates or a client-supplied label.
 export const ipCountrySchema = z.string().check(z.regex(/^(?!XX$)[A-Z]{2}$/));
@@ -684,6 +696,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceRequestFinishedSchema,
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
+  installationLifecycleSchema,
   installationAttributedSchema,
   contactInviteSignupSchema,
   shipOwnerConnectedSchema,
@@ -727,6 +740,9 @@ export const telemetryEventComponents = {
   "inference.request.finished": ["inference"],
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
+  "installation.restricted": ["accounts"],
+  "installation.unrestricted": ["accounts"],
+  "installation.retired": ["accounts"],
   "installation.attributed": ["accounts"],
   "contact.invite.signup": ["accounts"],
   "ship.owner.connected": ["gateway"],

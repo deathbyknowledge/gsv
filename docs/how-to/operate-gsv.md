@@ -291,6 +291,16 @@ sets the same state again: Accounts changes nothing, tells relays, and records
 the attempt in the audit log. Through the operator JSON API, send the same
 state again.
 
+With deployment telemetry enabled, Accounts reports a suspension, a
+reactivation, a reset and a deletion as product events, so a count of activated
+Ships can leave out the ones that are suspended or gone. To report the Ships
+that were already suspended, retired or erased before your deployment had
+these events, `POST <admin-origin>/admin/api/installation-lifecycle-report`
+with `{}`. It reports up to 200 Ships and returns `reported` and `next`; send
+`{"after": "<next>"}` until `next` is `null`. Running it again reports the same
+states again, which a reader that takes each Ship's latest record ignores.
+Without telemetry it returns an error and reports nothing.
+
 ## Take down what a Ship publishes {#take-down-what-a-ship-publishes}
 
 When a Ship publishes something that breaks your rules, you can take down just

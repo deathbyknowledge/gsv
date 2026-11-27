@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 import type { JsonValue } from "./http";
 import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { RequestReports } from "./request-reports";
@@ -264,6 +265,33 @@ describe("Accounts deletion runtime", () => {
       { installationId: state.old.installationId, state: "retained" },
       { installationId: state.old.installationId, state: "retained" },
     ]);
+  });
+
+  it("reports an activated Ship as retired once, and a Ship that was never activated not at all", async () => {
+    const retiredRecords = async (activatedAt: number | null) => {
+      const state = await fixture();
+      await state.db.prepare("UPDATE installations SET activated_at = ? WHERE id = ?").bind(activatedAt, state.old.installationId).run();
+      const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, undefined,
+        { GSV_TELEMETRY_ENABLED: "1" });
+      const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await runtime.retire(state.old.installationId, input);
+        await runtime.retire(state.old.installationId, input);
+        return { installationId: state.old.installationId, records: log.mock.calls.flatMap(([value]) => {
+          const record = telemetryRecordSchema.safeParse(value);
+          return record.success ? [{ installationId: record.data.installationId, event: record.data.event }] : [];
+        }) };
+      } finally {
+        log.mockRestore();
+      }
+    };
+
+    const activated = await retiredRecords(1);
+    expect(activated.records).toEqual([{
+      installationId: activated.installationId, event: { stream: "product", name: "installation.retired", properties: {} },
+    }]);
+    expect((await retiredRecords(null)).records).toEqual([]);
   });
 
   it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {
