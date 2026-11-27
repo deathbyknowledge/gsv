@@ -256,6 +256,19 @@ explicit country rather than geolocating their own export request.
   no copy: the record is the only one. This is not a full signup funnel;
   anonymous invite/email steps intentionally do not invent an installation
   identity or export addresses.
+- Accounts: what became of an activated Ship. `installation.restricted` and
+  `installation.unrestricted` are reported when an operator suspends or
+  reactivates a Ship, and `installation.retired` when an operator reset or an
+  account deletion retires one. Each carries no properties and uses the same
+  pseudonym as the Ship's `installation.activated`, so a count of activated
+  Ships can leave out the ones that are suspended or gone; a Ship's latest
+  record is its state. A change that is repeated reports nothing again, and a
+  Ship that was never activated reports nothing when it is retired. No reason,
+  operator or deletion step is included. A reset's replacement is a new
+  installation with its own activation. An operator can report the present
+  state of every suspended, retired and erased Ship once, for changes that
+  happened before these events existed; an erased Ship is reported from the
+  deletion record that keeps its installation ID from being reused.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and

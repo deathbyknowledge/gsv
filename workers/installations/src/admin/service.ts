@@ -6,6 +6,8 @@ import { parseOpaqueId } from "../domain";
 import { InstallationOnboardingStore, type IssuedInstallationOnboarding } from "../onboarding";
 import { InstallationResetCoordinator } from "../reset-preparation";
 import { AccountStore, type InstallationDataDeletionState } from "../store";
+import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import { reportInstallationLifecycle, reportInstallationLifecycleBackfill, type InstallationLifecycleReport } from "../lifecycle-telemetry";
 
 export type IssuedAdminInstallation = {
   installation: AdminInstallation;
@@ -59,6 +61,7 @@ export class InstallationAdminService extends InstallationAdminStore {
     participants: Readonly<Record<string, InstallationResetService>>,
     /** The deployment's PDS, which tells relays when a Ship is suspended or reactivated. */
     private readonly pds?: PdsModerationService,
+    private readonly telemetry?: TelemetryEnvironment,
   ) {
     super(database);
     this.resets = new InstallationResetCoordinator(database, accounts, participants);
@@ -70,8 +73,18 @@ export class InstallationAdminService extends InstallationAdminStore {
    * repeating it tells the PDS.
    */
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
+    // Repeating a change that already happened tells the PDS again but reports nothing again.
+    const before = (await this.getInstallation(installationId))?.state;
     await super.setInstallationState(installationId, state);
+    if (before !== undefined && before !== state) {
+      reportInstallationLifecycle(this.telemetry, installationId, state === "restricted" ? "installation.restricted" : "installation.unrestricted");
+    }
     await followOnOpenNetwork(this.pds, installationId, state);
+  }
+
+  /** Reports the Ships that were suspended, retired or erased before those changes were reported as they happen. */
+  reportLifecycle(after?: string): Promise<InstallationLifecycleReport> {
+    return reportInstallationLifecycleBackfill(this.database, this.telemetry, after);
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {
@@ -107,6 +120,8 @@ export class InstallationAdminService extends InstallationAdminStore {
   ): Promise<IssuedAdminInstallation> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const reset = await this.resets.reset({ installationId, operationId: input.operationId, confirmHandle: input.confirmHandle });
+    // The replacement is a new installation and reports its own activation, so the Ship it replaces is reported gone.
+    reportInstallationLifecycle(this.telemetry, reset.previousInstallationId, "installation.retired");
     // The retired Ship's public repository stops being served once the PDS follows.
     await followOnOpenNetwork(this.pds, reset.previousInstallationId, "retained");
     const onboarding = await this.onboarding.begin(reset.installationId);
