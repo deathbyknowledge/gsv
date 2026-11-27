@@ -2,7 +2,6 @@ import type { OperatorShipSnapshot, ProfileCopyChange } from "@humansandmachines
 import type { RedeemAdapterPairingInput, RedeemAdapterPairingResult } from "@humansandmachines/gsv/services/adapters";
 import { redeemAdapterPairingLink } from "./adapter-pairing";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
-import { scheduleOperatorCampaign, type OperatorCampaign, type OperatorCampaignResult } from "./operator-campaign";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
@@ -896,12 +895,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
       now: () => Date.now(),
     });
-  }
-
-  /** Temporary: schedules a one-off operator message for the Ship's owner. */
-  async operatorCampaign(input: OperatorCampaign): Promise<OperatorCampaignResult> {
-    this.retirement.assertActive();
-    return await scheduleOperatorCampaign(this, input);
   }
 
   /** Brings Bluesky's copy of the published profile in line with the host's takedowns, which the operator has just changed. */

@@ -15,12 +15,11 @@ function fixture(authority: string | undefined, state = "active", found = true, 
   Object.defineProperty(ctx, "props", { value: authority ? { authority } : {} });
   const operatorShipSnapshot = vi.fn(async () => result);
   const operatorTakedownsChanged = vi.fn(async () => copy);
-  const operatorCampaign = vi.fn(async () => ({ status: "scheduled", atMs: 1, timezone: "Europe/Madrid", messengers: 1, lastActiveAt: null }));
-  const getByName = vi.fn(() => ({ operatorShipSnapshot, operatorTakedownsChanged, operatorCampaign }));
+  const getByName = vi.fn(() => ({ operatorShipSnapshot, operatorTakedownsChanged }));
   const resolveInstallation = vi.fn(async (installationId: string) => ({ found, installationId, state }));
   // SAFETY: The entrypoint reads exactly these binding props, directory records and Kernel RPC methods.
   const entrypoint = new OperatorGatewayEntrypoint(ctx as never, { KERNEL: { getByName }, INSTALLATION_DIRECTORY: { resolveInstallation } } as never);
-  return { entrypoint, getByName, resolveInstallation, operatorShipSnapshot, operatorTakedownsChanged, operatorCampaign };
+  return { entrypoint, getByName, resolveInstallation, operatorShipSnapshot, operatorTakedownsChanged };
 }
 
 describe("operator gateway binding", () => {
@@ -93,24 +92,5 @@ describe("telling a Ship its takedowns changed", () => {
     expect(f.resolveInstallation).not.toHaveBeenCalled();
     const odd = fixture("installation-operator", "active", true, snapshot, "deleted");
     await expect(odd.entrypoint.operatorTakedownsChanged(request)).rejects.toThrow();
-  });
-
-  describe("one-off operator message", () => {
-    const campaign = { name: "Check-in", message: "Say hello.", slots: ["2026-11-26T11:00", "2026-11-26T14:00"], latest: "2026-11-26T19:00", dryRun: true };
-
-    it("needs the operator authority and an active or suspended Ship", async () => {
-      const refused = fixture("installation-deletion");
-      await expect(refused.entrypoint.operatorCampaign({ installationId: "inst_operator", ...campaign })).rejects.toThrow("authority");
-      const retained = fixture("installation-operator", "retained");
-      await expect(retained.entrypoint.operatorCampaign({ installationId: "inst_operator", ...campaign })).resolves.toEqual({ found: false });
-      expect(retained.getByName).not.toHaveBeenCalled();
-    });
-
-    it("hands the Kernel only a valid campaign", async () => {
-      const f = fixture("installation-operator");
-      await expect(f.entrypoint.operatorCampaign({ installationId: "inst_operator", ...campaign, slots: ["tomorrow"] })).rejects.toThrow();
-      await expect(f.entrypoint.operatorCampaign({ installationId: "inst_operator", ...campaign })).resolves.toMatchObject({ found: true, result: { status: "scheduled" } });
-      expect(f.operatorCampaign).toHaveBeenCalledWith(campaign);
-    });
   });
 });
